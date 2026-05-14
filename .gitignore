@@ -1,0 +1,7 @@
+__pycache__/
+.pytest_cache/
+*.pyc
+.DS_Store
+.automl/
+.automl-goal-draft.md
+.codex-dispatch/
