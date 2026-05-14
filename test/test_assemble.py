@@ -23,16 +23,16 @@ def _make_book_dir(tmp_path: Path) -> Path:
         "<html><body><h1>Chapter 1</h1><p>Hello.</p><p>World.</p></body></html>",
         encoding="utf-8",
     )
-    # Translation paragraph count matches source (after heading is deduped against <h1>).
+    # Translation paragraph count matches source text nodes, including headings.
     (chapters / "ch_01_translation.txt").write_text(
-        "你好。\n\n世界。", encoding="utf-8",
+        "第一章\n\n你好。\n\n世界。", encoding="utf-8",
     )
     (chapters / "item_003.html").write_text(
         "<html><body><h1>Chapter 2</h1><p>Foo.</p><p>Bar.</p><p>Baz.</p></body></html>",
         encoding="utf-8",
     )
     (chapters / "ch_02_translation.txt").write_text(
-        "傅。\n\n吧。\n\n巴。", encoding="utf-8",
+        "第二章\n\n傅。\n\n吧。\n\n巴。", encoding="utf-8",
     )
     manifest = {
         "book_stem": "tiny_book",
@@ -40,17 +40,20 @@ def _make_book_dir(tmp_path: Path) -> Path:
         "authors": ["Test Author"],
         "language": "en",
         "spine": [
-            {"id": "item_001", "src_idref": "title", "src_href": "title.xhtml",
+            {"id": "item_001", "src_idref": "title", "original_idref": "title",
+             "src_href": "OEBPS/xhtml/title.xhtml", "original_path": "OEBPS/xhtml/title.xhtml",
              "href": "chapters/item_001.html", "linear": "yes",
              "media_type": "application/xhtml+xml", "role": "title_page",
              "char_count": 9, "first_heading": "Title Page",
              "output_strategy": "source_only"},
-            {"id": "item_002", "src_idref": "x", "src_href": "x.xhtml",
+            {"id": "item_002", "src_idref": "x", "original_idref": "x",
+             "src_href": "OEBPS/xhtml/x.xhtml", "original_path": "OEBPS/xhtml/x.xhtml",
              "href": "chapters/item_002.html", "linear": "yes",
              "media_type": "application/xhtml+xml", "role": "body",
              "char_count": 12, "first_heading": "Chapter 1",
              "output_strategy": "translate", "translation_id": "ch_01"},
-            {"id": "item_003", "src_idref": "y", "src_href": "y.xhtml",
+            {"id": "item_003", "src_idref": "y", "original_idref": "y",
+             "src_href": "OEBPS/xhtml/y.xhtml", "original_path": "OEBPS/xhtml/y.xhtml",
              "href": "chapters/item_003.html", "linear": "yes",
              "media_type": "application/xhtml+xml", "role": "body",
              "char_count": 9, "first_heading": "Chapter 2",
@@ -58,10 +61,12 @@ def _make_book_dir(tmp_path: Path) -> Path:
         ],
         "chapters": [
             {"id": "ch_01", "spine_id": "item_002", "href": "chapters/item_002.html",
-             "src_href": "x.xhtml", "char_count": 12, "first_heading": "Chapter 1",
+             "src_href": "OEBPS/xhtml/x.xhtml", "original_path": "OEBPS/xhtml/x.xhtml",
+             "char_count": 12, "first_heading": "Chapter 1",
              "output_strategy": "translate"},
             {"id": "ch_02", "spine_id": "item_003", "href": "chapters/item_003.html",
-             "src_href": "y.xhtml", "char_count": 9, "first_heading": "Chapter 2",
+             "src_href": "OEBPS/xhtml/y.xhtml", "original_path": "OEBPS/xhtml/y.xhtml",
+             "char_count": 9, "first_heading": "Chapter 2",
              "output_strategy": "translate"},
         ],
     }
@@ -81,10 +86,9 @@ def test_assemble_produces_valid_zip(tmp_path: Path):
     with zipfile.ZipFile(out) as z:
         names = z.namelist()
     assert any(n == "mimetype" for n in names)
-    assert any(n.endswith("items/item_001.xhtml") for n in names)
-    assert any(n.endswith("ch_01.xhtml") for n in names)
-    assert any(n.endswith("ch_02.xhtml") for n in names)
-    assert any(n.endswith("style/default.css") for n in names)
+    assert "OEBPS/xhtml/title.xhtml" in names
+    assert "OEBPS/xhtml/x.xhtml" in names
+    assert "OEBPS/xhtml/y.xhtml" in names
 
 
 def test_assemble_interleaves_source_and_translation(tmp_path: Path):
@@ -92,7 +96,7 @@ def test_assemble_interleaves_source_and_translation(tmp_path: Path):
     out = tmp_path / "tiny_bilingual.epub"
     assemble.assemble(book_dir, out)
     with zipfile.ZipFile(out) as z:
-        ch1 = z.read([n for n in z.namelist() if n.endswith("ch_01.xhtml")][0]).decode("utf-8")
+        ch1 = z.read("OEBPS/xhtml/x.xhtml").decode("utf-8")
     # Hello / World source must appear; 你好 / 世界 translation must appear
     assert "Hello." in ch1 and "你好" in ch1
     assert "World." in ch1 and "世界" in ch1
@@ -111,10 +115,11 @@ def test_assemble_warns_on_paragraph_count_mismatch(tmp_path: Path, capsys):
     assert "ch_02" in err
     # Output still produced
     assert out.is_file()
-    # Unpaired source paragraphs flagged in body
+    # Missing translations stay source-only instead of receiving placeholder tgt text.
     with zipfile.ZipFile(out) as z:
-        ch2 = z.read([n for n in z.namelist() if n.endswith("ch_02.xhtml")][0]).decode("utf-8")
-    assert "unpaired" in ch2
+        ch2 = z.read("OEBPS/xhtml/y.xhtml").decode("utf-8")
+    assert "Bar." in ch2 and "Baz." in ch2
+    assert "繁中：" not in ch2
 
 
 def test_assemble_embeds_inline_images(tmp_path: Path):
@@ -133,7 +138,7 @@ def test_assemble_embeds_inline_images(tmp_path: Path):
     )
     # Translation has the same 2 text paragraphs (image not translated)
     (book_dir / "chapters" / "ch_01_translation.txt").write_text(
-        "你好。\n\n世界。", encoding="utf-8",
+        "第一章\n\n你好。\n\n世界。", encoding="utf-8",
     )
     # Place the referenced image file in book_dir/images/
     (book_dir / "images").mkdir(exist_ok=True)
@@ -152,9 +157,9 @@ def test_assemble_embeds_inline_images(tmp_path: Path):
         names = z.namelist()
         # image file embedded in EPUB
         assert any(n.endswith("images/diagram.png") for n in names)
-        # chapter xhtml references it as 'images/diagram.png'
-        ch1 = z.read([n for n in names if n.endswith("ch_01.xhtml")][0]).decode("utf-8")
-        assert 'src="images/diagram.png"' in ch1
+        # chapter xhtml preserves the original relative image href.
+        ch1 = z.read("OEBPS/xhtml/x.xhtml").decode("utf-8")
+        assert 'src="../images/diagram.png"' in ch1
         # image block sits between the two text-block pairs
         assert ch1.index("Hello.") < ch1.index("diagram.png") < ch1.index("World.")
         # Source paragraphs still pair with translations correctly
@@ -199,6 +204,35 @@ def test_assemble_source_only_items_in_output_spine(tmp_path: Path):
     assemble.assemble(book_dir, out)
     b = assemble.epub.read_epub(str(out), options={"ignore_ncx": True})
     spine_ids = [item[0] if isinstance(item, tuple) else item for item in b.spine]
-    assert "item_001" in spine_ids
-    assert "item_002" in spine_ids
-    assert "item_003" in spine_ids
+    assert "title" in spine_ids
+    assert "x" in spine_ids
+    assert "y" in spine_ids
+
+
+def test_assemble_embeds_all_images_not_just_referenced(tmp_path: Path):
+    book_dir = _make_book_dir(tmp_path)
+    images = book_dir / "images"
+    images.mkdir(exist_ok=True)
+    (images / "unused.jpg").write_bytes(b"\xff\xd8\xff\xd9")
+    out = tmp_path / "out.epub"
+    assemble.assemble(book_dir, out)
+    with zipfile.ZipFile(out) as z:
+        assert "OEBPS/images/unused.jpg" in z.namelist()
+
+
+def test_assemble_emits_source_only_at_original_relative_path(tmp_path: Path):
+    book_dir = _make_book_dir(tmp_path)
+    out = tmp_path / "out.epub"
+    assemble.assemble(book_dir, out)
+    with zipfile.ZipFile(out) as z:
+        assert "OEBPS/xhtml/title.xhtml" in z.namelist()
+
+
+def test_assemble_inserts_translation_after_each_english_paragraph(tmp_path: Path):
+    book_dir = _make_book_dir(tmp_path)
+    out = tmp_path / "out.epub"
+    assemble.assemble(book_dir, out)
+    with zipfile.ZipFile(out) as z:
+        ch1 = z.read("OEBPS/xhtml/x.xhtml").decode("utf-8")
+    assert ch1.index("Hello.") < ch1.index("你好。") < ch1.index("World.") < ch1.index("世界。")
+    assert "tgt-zh" in ch1

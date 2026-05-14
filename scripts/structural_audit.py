@@ -212,7 +212,12 @@ def _entry_represented(entry: dict, output_idrefs: list[str]) -> bool:
         return bool(str(entry.get("reason", "")).strip())
     if strategy == "nav_generated":
         return "nav" in output_idrefs
-    return str(entry.get("id")) in output_idrefs
+    ids = {
+        str(entry.get("id", "")),
+        str(entry.get("original_idref", "")),
+        str(entry.get("src_idref", "")),
+    }
+    return any(value and value in output_idrefs for value in ids)
 
 
 def _expected_source_count(source_spine: list[dict], manifest_entries: list[dict]) -> int:
@@ -272,7 +277,12 @@ def _invalid_state_statuses(state_data: dict | None) -> list[str]:
 
 def _output_has_cover(manifest_entries: list[dict], output_idrefs: list[str], output_items: dict[str, str]) -> bool:
     for entry in manifest_entries:
-        if entry.get("role") == "cover" and entry.get("id") in output_idrefs:
+        ids = {
+            str(entry.get("id", "")),
+            str(entry.get("original_idref", "")),
+            str(entry.get("src_idref", "")),
+        }
+        if entry.get("role") == "cover" and any(value and value in output_idrefs for value in ids):
             return True
     for idref, href in output_items.items():
         if "cover" in f"{idref} {href}".lower():
@@ -317,7 +327,12 @@ def _zip_image_basenames(epub_path: Path) -> set[str]:
 
 def _output_has_body_chapter(manifest_entries: list[dict], output_idrefs: list[str], output_items: dict[str, str]) -> bool:
     for entry in manifest_entries:
-        if entry.get("role") in {"body", "epilogue"} and entry.get("id") in output_idrefs:
+        ids = {
+            str(entry.get("id", "")),
+            str(entry.get("original_idref", "")),
+            str(entry.get("src_idref", "")),
+        }
+        if entry.get("role") in {"body", "epilogue"} and any(value and value in output_idrefs for value in ids):
             return True
     return any(idref != "nav" and "nav" not in href.lower() for idref, href in output_items.items())
 

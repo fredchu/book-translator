@@ -1,0 +1,137 @@
+"""Audit adjacent zh-TW coverage for English paragraphs in an EPUB."""
+
+from __future__ import annotations
+
+import argparse
+import posixpath
+import re
+import sys
+import zipfile
+from pathlib import Path
+
+from bs4 import BeautifulSoup
+
+TEXT_TAGS = ["p", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "li", "pre", "dt", "dd"]
+HAN_RE = re.compile(r"[\u4e00-\u9fff]")
+
+
+def audit(source: Path, output: Path) -> tuple[bool, list[str]]:
+    del source
+    failures: list[str] = []
+    with zipfile.ZipFile(output) as z:
+        opf_path = _find_opf_path(z)
+        spine_paths = _spine_xhtml_paths(z, opf_path)
+        for path in spine_paths:
+            soup = BeautifulSoup(z.read(path), "html.parser")
+            for node in _english_nodes(soup):
+                sibling = _next_tag(node)
+                if sibling is None or not HAN_RE.search(sibling.get_text(" ", strip=True)):
+                    text = _clean(node.get_text(" ", strip=True))
+                    failures.append(f"{path}: missing adjacent zh after: {text[:120]}")
+    return not failures, failures
+
+
+def _find_opf_path(z: zipfile.ZipFile) -> str:
+    soup = BeautifulSoup(z.read("META-INF/container.xml"), "lxml-xml")
+    rootfile = soup.find("rootfile", attrs={"media-type": "application/oebps-package+xml"})
+    if rootfile and rootfile.get("full-path"):
+        return str(rootfile.get("full-path"))
+    return next(name for name in z.namelist() if name.lower().endswith(".opf"))
+
+
+def _spine_xhtml_paths(z: zipfile.ZipFile, opf_path: str) -> list[str]:
+    soup = BeautifulSoup(z.read(opf_path), "lxml-xml")
+    opf_dir = posixpath.dirname(opf_path)
+    manifest: dict[str, tuple[str, str, str]] = {}
+    for item in soup.find_all("item"):
+        item_id = str(item.get("id") or "")
+        href = str(item.get("href") or "")
+        media_type = str(item.get("media-type") or "")
+        properties = str(item.get("properties") or "")
+        if item_id:
+            manifest[item_id] = (href, media_type, properties)
+    paths: list[str] = []
+    for itemref in soup.find_all("itemref"):
+        idref = str(itemref.get("idref") or "")
+        href, media_type, properties = manifest.get(idref, ("", "", ""))
+        if media_type != "application/xhtml+xml" or "nav" in properties.split():
+            continue
+        full = posixpath.normpath(posixpath.join(opf_dir, href)) if opf_dir else href
+        if full in z.namelist():
+            paths.append(full)
+    return paths
+
+
+def _english_nodes(soup: BeautifulSoup) -> list:
+    nodes = []
+    emitted_node_ids: set[int] = set()
+    for node in soup.find_all(TEXT_TAGS):
+        if any(id(ancestor) in emitted_node_ids for ancestor in node.parents):
+            continue
+        text = _clean(node.get_text(" ", strip=True))
+        if text:
+            emitted_node_ids.add(id(node))
+        if _is_english_content(text) and not _is_target(node) and not _covered_by_ancestor(node):
+            nodes.append(node)
+    return nodes
+
+
+def _is_target(node) -> bool:
+    classes = set(node.get("class", []))
+    return bool(classes & {"tgt", "tgt-zh"})
+
+
+def _covered_by_ancestor(node) -> bool:
+    for ancestor in node.parents:
+        if not getattr(ancestor, "name", None):
+            continue
+        classes = set(ancestor.get("class", []))
+        if "src" not in classes:
+            continue
+        sibling = _next_tag(ancestor)
+        if sibling is not None and HAN_RE.search(sibling.get_text(" ", strip=True)):
+            return True
+    return False
+
+
+def _is_english_content(text: str) -> bool:
+    if len(text) < 50 or HAN_RE.search(text):
+        return False
+    letters = sum(1 for char in text if "A" <= char <= "Z" or "a" <= char <= "z")
+    return letters >= max(20, int(len(text) * 0.35))
+
+
+def _next_tag(node):
+    sibling = node.next_sibling
+    while sibling is not None:
+        if getattr(sibling, "name", None):
+            return sibling
+        sibling = sibling.next_sibling
+    return None
+
+
+def _clean(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--source", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    args = parser.parse_args(argv)
+    for path in (args.source, args.output):
+        if not path.is_file():
+            print(f"not a file: {path}", file=sys.stderr)
+            return 2
+    passed, failures = audit(args.source, args.output)
+    print(f"bilingual_coverage_audit: {'PASS' if passed else 'FAIL'}")
+    if failures:
+        for failure in failures:
+            print(f"  - {failure}")
+    else:
+        print("all English content paragraphs have adjacent Han translations")
+    return 0 if passed else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

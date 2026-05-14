@@ -2,7 +2,12 @@
 
 Output layout:
     <out_dir>/<book_stem>/
+        source.opf
         manifest.json
+        css/
+        fonts/
+        images/
+        xhtml/
         chapters/
             item_001.html
             item_002.html
@@ -50,6 +55,8 @@ class SpineEntry:
     id: str
     src_idref: str
     src_href: str
+    original_idref: str
+    original_path: str
     href: str
     linear: str
     media_type: str
@@ -90,8 +97,11 @@ def extract(
     authors = [v for v, _ in book.get_metadata("DC", "creator")]
     language = _first_meta(book, "language") or "und"
     opf_path, opf_manifest = _read_opf_manifest(epub_path)
+    _copy_source_opf(epub_path, book_out, opf_path)
+    css_files = _extract_tree(epub_path, book_out, opf_path, "css")
+    font_files = _extract_tree(epub_path, book_out, opf_path, "fonts")
     cover_filename = _extract_cover(epub_path, book_out)
-    images_extracted = _extract_inline_images(epub_path, book_out, cover_filename)
+    images = _extract_images(epub_path, book_out)
 
     entries: list[SpineEntry] = []
     translate_counter = 0
@@ -109,6 +119,8 @@ def extract(
         out_path.write_text(html, encoding="utf-8")
         first_heading = _first_heading(soup) or _first_text(text) or "(untitled)"
         src_href = str(opf_item.get("href") or item.get_name())
+        original_path = src_href
+        _copy_original_xhtml(epub_path, book_out, original_path, opf_path)
         role = infer_role(
             src_idref=src_idref,
             src_href=src_href,
@@ -127,6 +139,8 @@ def extract(
                 id=item_id,
                 src_idref=src_idref,
                 src_href=src_href,
+                original_idref=src_idref,
+                original_path=original_path,
                 href=f"chapters/{item_id}.html",
                 linear=linear,
                 media_type=media_type or "application/xhtml+xml",
@@ -146,7 +160,10 @@ def extract(
         "language": language,
         "source_epub": str(epub_path),
         "cover": cover_filename,
-        "images_extracted": images_extracted,
+        "css_files": css_files,
+        "font_files": font_files,
+        "images": images,
+        "images_extracted": len(images),
         "opf_path": opf_path,
         "spine": spine,
         # Compatibility alias for current dispatch/e2e callers. The full spine
@@ -172,6 +189,8 @@ def chapters_from_spine(spine: list[dict]) -> list[dict]:
                 "spine_id": entry["id"],
                 "href": entry["href"],
                 "src_href": entry["src_href"],
+                "original_idref": entry.get("original_idref", entry.get("src_idref")),
+                "original_path": entry.get("original_path", entry.get("src_href")),
                 "char_count": entry["char_count"],
                 "first_heading": entry["first_heading"],
                 "role": entry.get("role", "body"),
@@ -276,8 +295,44 @@ def _find_opf_path(z: zipfile.ZipFile) -> str | None:
     return next((n for n in z.namelist() if n.lower().endswith(".opf")), None)
 
 
-def _extract_inline_images(epub_path: Path, book_out: Path, cover_filename: str | None) -> int:
-    """Copy every inline image from the EPUB into ``book_out/images/``.
+def _copy_source_opf(epub_path: Path, book_out: Path, opf_path: str | None) -> None:
+    if not opf_path:
+        return
+    with zipfile.ZipFile(epub_path) as z:
+        if opf_path in z.namelist():
+            (book_out / "source.opf").write_bytes(z.read(opf_path))
+
+
+def _copy_original_xhtml(epub_path: Path, book_out: Path, original_path: str, opf_path: str | None) -> None:
+    if not original_path:
+        return
+    local_path = _local_book_path(original_path, opf_path)
+    out_path = book_out / local_path
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(epub_path) as z:
+        if original_path in z.namelist():
+            out_path.write_bytes(z.read(original_path))
+
+
+def _extract_tree(epub_path: Path, book_out: Path, opf_path: str | None, dirname: str) -> list[str]:
+    """Copy files under the EPUB OPF sibling directory into book_out/<dirname>/."""
+    copied: list[str] = []
+    with zipfile.ZipFile(epub_path) as z:
+        opf_dir = posixpath.dirname(opf_path or "")
+        prefix = f"{opf_dir}/{dirname}/" if opf_dir else f"{dirname}/"
+        for name in z.namelist():
+            if name.endswith("/") or not name.startswith(prefix):
+                continue
+            rel = posixpath.relpath(name, opf_dir) if opf_dir else name
+            out_path = book_out / rel
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_bytes(z.read(name))
+            copied.append(rel)
+    return sorted(copied)
+
+
+def _extract_images(epub_path: Path, book_out: Path) -> list[str]:
+    """Copy every EPUB image into ``book_out/images/`` with no cover skip.
 
     Filenames are flattened (just the basename, no zip directory tree). The
     cover image is intentionally kept here too because cover XHTML pages often
@@ -286,7 +341,7 @@ def _extract_inline_images(epub_path: Path, book_out: Path, cover_filename: str 
     """
     images_dir = book_out / "images"
     images_dir.mkdir(exist_ok=True)
-    count = 0
+    copied: list[str] = []
     with zipfile.ZipFile(epub_path) as z:
         for name in z.namelist():
             lower = name.lower()
@@ -294,8 +349,15 @@ def _extract_inline_images(epub_path: Path, book_out: Path, cover_filename: str 
                 continue
             basename = Path(name).name
             (images_dir / basename).write_bytes(z.read(name))
-            count += 1
-    return count
+            copied.append(basename)
+    return sorted(copied)
+
+
+def _local_book_path(original_path: str, opf_path: str | None) -> str:
+    opf_dir = posixpath.dirname(opf_path or "")
+    if opf_dir and original_path.startswith(f"{opf_dir}/"):
+        return posixpath.relpath(original_path, opf_dir)
+    return original_path
 
 
 def _extract_cover(epub_path: Path, book_out: Path) -> str | None:
@@ -350,8 +412,11 @@ def _extract_cover(epub_path: Path, book_out: Path) -> str | None:
 def _first_heading(soup: BeautifulSoup) -> str | None:
     for tag in ("h1", "h2", "h3", "h4"):
         node = soup.find(tag)
-        if node and node.get_text(strip=True):
-            return re.sub(r"\s+", " ", node.get_text(strip=True))
+        if node:
+            text = node.get_text(" ", strip=True)
+            text = re.sub(r"\s+", " ", text).strip()
+            if text:
+                return text
     return None
 
 

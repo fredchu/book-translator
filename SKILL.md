@@ -53,8 +53,8 @@ Given an EPUB and target language (default: 台灣繁體中文), this skill:
 2. Translates chapter 1 in the main session as the **style sample**.
 3. Asks the user to confirm tone / edit glossary before fan-out.
 4. Dispatches parallel subagents (Opus 4.7, concurrency 5) to translate remaining `translate` spine items — each receives glossary + style sample + last-paragraph carryover.
-5. Assembles a bilingual EPUB from the full OPF spine: translated prose is interleaved; source-only structural pages are preserved; nav is regenerated.
-6. Runs structural QA (`structural_audit.py`) and a separate translation spot-check pass (random 5 paragraphs + character name audit) before shipping.
+5. Assembles a full-fidelity bilingual EPUB from the full OPF spine: original XHTML paths, OPF idrefs, CSS, fonts, images, class names, and internal href targets are preserved; Traditional Chinese paragraphs are inserted after English text blocks.
+6. Runs structural QA (`structural_audit.py`), bilingual coverage QA (`bilingual_coverage_audit.py`), href resolution QA (`href_resolve_audit.py`), translation placeholder/length QA (`translation_quality_audit.py`), and a separate translation spot-check pass (random 5 paragraphs + character name audit) before shipping.
 7. Crash-safe: every step persists to `{book}_state.json`; re-running resumes from last completed chapter.
 
 ## Architecture
@@ -97,11 +97,16 @@ Main session (Claude Code, Opus 4.7)
 python3 {baseDir}/scripts/extract_epub.py "<book_path>" --out "<out_dir>"
 ```
 
-Produces `<out_dir>/<book_stem>/chapters/item_NNN.html` and `manifest.json`.
+Produces `<out_dir>/<book_stem>/source.opf`, verbatim asset directories
+(`css/`, `fonts/`, `images/`), original XHTML copies under `xhtml/`,
+compatibility files in `chapters/item_NNN.html`, and `manifest.json`.
 The manifest source of truth is `spine[]`, not `chapters[]`. Every original OPF
 spine item is represented unless it is explicitly `drop_explicit` with a
 non-empty reason. The compatibility `chapters[]` list contains only
 `translate` items for current dispatch tooling.
+Each spine entry records the original EPUB package path (`original_path`) and
+original OPF idref (`original_idref`) so assembly can emit the source layout
+instead of synthetic chapter filenames.
 
 Output strategies:
 
@@ -113,10 +118,12 @@ Output strategies:
   output spine.
 - `drop_explicit` — omit only with a visible, non-empty reason.
 
-Default policy: body prose and epilogue translate; cover/title/copyright/
-dedication/contents/part dividers/notes/promo pages are source-only; nav is
-regenerated. Acknowledgments/about-author may be translated by default, or
-marked source-only for a specific run when that scope is explicit.
+Default policy: body prose, epilogue, and English structural prose use
+translation files. Structural pages may be kept `source_only` only when they
+are genuinely image-only or deliberately listed in
+`translations/source_only.json`; the assembler no longer invents placeholder
+translations for missing paragraphs. The source nav is replaced with a
+deterministic bilingual nav at the original nav path.
 
 ### Step 3: Build glossary
 
@@ -192,7 +199,10 @@ python3 {baseDir}/scripts/assemble.py \
   --out "<book_stem>_bilingual.epub"
 ```
 
-Per-chapter structure: `<p>EN para</p><p>ZH para</p>` interleaved at paragraph granularity — readable side-by-side in any EPUB reader.
+Per-page structure: original English text nodes keep their source classes and
+also receive `src`; inserted Traditional Chinese sibling paragraphs receive
+`tgt tgt-zh` plus the inherited source classes. Original relative paths and
+internal hrefs are not rewritten.
 
 Assembly fails closed: any `translate` item missing its `item_NNN_translation.txt`
 is a hard error. Source-only pages are emitted without translation, and explicit
@@ -211,6 +221,27 @@ This deterministic gate is separate from translation quality eval. It checks
 source-vs-output spine representation, missing translations for translate
 items, state schema validity, cover page presence in the output spine,
 source-only image preservation, and at least one body chapter.
+
+Also run:
+
+```bash
+python3 {baseDir}/scripts/bilingual_coverage_audit.py \
+  --source "<book_path>" \
+  --output "<book_stem>_bilingual.epub"
+
+python3 {baseDir}/scripts/href_resolve_audit.py \
+  --output "<book_stem>_bilingual.epub"
+
+python3 {baseDir}/scripts/translation_quality_audit.py \
+  --output "<book_stem>_bilingual.epub"
+```
+
+`bilingual_coverage_audit.py` fails when a long English content paragraph lacks
+an adjacent Han-character sibling. `href_resolve_audit.py` fails when any
+internal XHTML link target is missing from the EPUB zip.
+`translation_quality_audit.py` fails on Round-2-style placeholders,
+span-concatenated headings, too-short target paragraphs, or unlisted
+source-only paragraphs.
 
 ### Step 9: Translation spot-check
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import sys
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -108,3 +109,99 @@ def test_extract_preserves_full_spine(tmp_path: Path):
     assert strategies["body"] == "translate"
     assert strategies["notes"] == "source_only"
     assert all((out / entry["href"]).is_file() for entry in manifest["spine"])
+    assert all(entry["original_path"] for entry in manifest["spine"])
+    assert all(entry["original_idref"] for entry in manifest["spine"])
+
+
+def test_extract_copies_css_dir_verbatim(tmp_path: Path):
+    epub_path = _write_asset_epub(tmp_path)
+    out = extract_epub.extract(epub_path, tmp_path / "out")
+    manifest = json.loads((out / "manifest.json").read_text("utf-8"))
+    assert manifest["css_files"] == ["css/book.css", "css/reset.css"]
+    assert (out / "css" / "book.css").read_text("utf-8") == "p { color: red; }"
+    assert (out / "css" / "reset.css").read_text("utf-8") == "body { margin: 0; }"
+
+
+def test_extract_copies_fonts_dir_verbatim(tmp_path: Path):
+    epub_path = _write_asset_epub(tmp_path)
+    out = extract_epub.extract(epub_path, tmp_path / "out")
+    manifest = json.loads((out / "manifest.json").read_text("utf-8"))
+    assert manifest["font_files"] == ["fonts/Book.otf"]
+    assert (out / "fonts" / "Book.otf").read_bytes() == b"fake-font"
+
+
+def test_extract_keeps_all_images_no_cover_skip(tmp_path: Path):
+    epub_path = _write_asset_epub(tmp_path)
+    out = extract_epub.extract(epub_path, tmp_path / "out")
+    manifest = json.loads((out / "manifest.json").read_text("utf-8"))
+    assert manifest["images"] == ["cover.jpg", "unused.jpg"]
+    assert (out / "images" / "cover.jpg").read_bytes() == b"cover"
+    assert (out / "images" / "unused.jpg").read_bytes() == b"unused"
+
+
+def test_first_heading_preserves_whitespace_between_spans():
+    soup = extract_epub.BeautifulSoup(
+        "<h1><span>PART </span><span>I</span></h1>",
+        "html.parser",
+    )
+    assert extract_epub._first_heading(soup) == "PART I"
+
+    soup = extract_epub.BeautifulSoup(
+        '<h2><span class="chapter-number-Run-In"><span>1 </span>'
+        '<span class="CT">CREATING ALIEN MINDS</span></span></h2>',
+        "html.parser",
+    )
+    assert extract_epub._first_heading(soup) == "1 CREATING ALIEN MINDS"
+
+
+def _write_asset_epub(tmp_path: Path) -> Path:
+    epub_path = tmp_path / "asset.epub"
+    with zipfile.ZipFile(epub_path, "w") as z:
+        z.writestr("mimetype", "application/epub+zip", compress_type=zipfile.ZIP_STORED)
+        z.writestr(
+            "META-INF/container.xml",
+            """<?xml version="1.0"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>
+""",
+        )
+        z.writestr(
+            "OEBPS/content.opf",
+            """<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="bookid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:identifier id="bookid">asset</dc:identifier>
+    <dc:title>Asset Book</dc:title>
+    <dc:language>en</dc:language>
+  </metadata>
+  <manifest>
+    <item id="chap" href="xhtml/chapter.xhtml" media-type="application/xhtml+xml"/>
+    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+    <item id="css" href="css/book.css" media-type="text/css"/>
+    <item id="reset" href="css/reset.css" media-type="text/css"/>
+    <item id="font" href="fonts/Book.otf" media-type="font/otf"/>
+    <item id="cover-image" href="images/cover.jpg" media-type="image/jpeg" properties="cover-image"/>
+    <item id="unused" href="images/unused.jpg" media-type="image/jpeg"/>
+  </manifest>
+  <spine>
+    <itemref idref="chap"/>
+  </spine>
+</package>
+""",
+        )
+        z.writestr("OEBPS/xhtml/chapter.xhtml", "<html><body><h1>Chapter</h1><p>Hello world.</p></body></html>")
+        z.writestr(
+            "OEBPS/nav.xhtml",
+            "<html xmlns:epub='http://www.idpf.org/2007/ops'><body>"
+            "<nav epub:type='toc'><ol><li><a href='xhtml/chapter.xhtml'>Chapter</a></li></ol></nav>"
+            "</body></html>",
+        )
+        z.writestr("OEBPS/css/book.css", "p { color: red; }")
+        z.writestr("OEBPS/css/reset.css", "body { margin: 0; }")
+        z.writestr("OEBPS/fonts/Book.otf", b"fake-font")
+        z.writestr("OEBPS/images/cover.jpg", b"cover")
+        z.writestr("OEBPS/images/unused.jpg", b"unused")
+    return epub_path
