@@ -69,14 +69,13 @@ class SpineEntry:
     parent_id: str | None = None
 
 
-TRANSLATE_ROLES = {"body", "epilogue", "acknowledgments", "about_author"}
+TRANSLATE_ROLES = {"body", "epilogue", "acknowledgments", "about_author", "dedication"}
 PART_CHILD_ROLES = {"body", "epilogue", "acknowledgments", "about_author", "notes"}
 PART_CHAIN_BREAK_ROLES = {"cover", "title_page", "copyright", "dedication", "contents", "promo"}
 SOURCE_ONLY_ROLES = {
     "cover",
     "title_page",
     "copyright",
-    "dedication",
     "contents",
     "part_divider",
     "promo",
