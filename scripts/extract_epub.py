@@ -240,6 +240,22 @@ def infer_role(*, src_idref: str, src_href: str, first_heading: str, properties:
         return "copyright"
     if "dedication" in haystack:
         return "dedication"
+    heading_first40 = heading[:40].lower()
+    if (
+        heading.startswith("Copyright ©")
+        or heading.startswith("Copyright (c)")
+        or "all rights reserved" in heading_first40
+    ):
+        return "copyright"
+    if (
+        heading.startswith("To my ")
+        or heading.startswith("To the ")
+        or heading.startswith("Dedicated to ")
+        or heading.startswith("In memory of ")
+        or heading.startswith("For my ")
+        or heading.startswith("For the ")
+    ):
+        return "dedication"
     if "contents" in haystack or "toc" in haystack:
         return "contents"
     if re.match(r"^\s*part\s*([ivxlcdm]+|\d+)\b", heading, flags=re.IGNORECASE):
@@ -258,7 +274,7 @@ def infer_role(*, src_idref: str, src_href: str, first_heading: str, properties:
 
 
 def default_output_strategy(role: str, char_count: int = 0) -> str:
-    if role == "part_divider" and char_count >= 300:
+    if role in {"part_divider", "copyright", "dedication"} and char_count >= 300:
         return "translate"
     if role in TRANSLATE_ROLES:
         return "translate"

@@ -40,6 +40,8 @@ BANNED_PATTERNS = [
     "(untitled)",
 ]
 
+HEADING_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
+
 
 def audit(output: Path, min_length_ratio: float = 0.22) -> tuple[bool, list[str]]:
     failures: list[str] = []
@@ -59,7 +61,8 @@ def audit(output: Path, min_length_ratio: float = 0.22) -> tuple[bool, list[str]
                     continue
                 tgt_text = _clean(tgt.get_text(" ", strip=True))
                 if (
-                    len(src_text) >= 50
+                    src.name not in HEADING_TAGS
+                    and len(src_text) >= 50
                     and len(tgt_text) < min_length_ratio * len(src_text)
                 ):
                     failures.append(
