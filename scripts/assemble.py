@@ -38,27 +38,18 @@ FONT_MEDIA_TYPES = {
 VALID_STRATEGIES = {"translate", "source_only", "nav_generated", "drop_explicit"}
 TEXT_TAGS = ["p", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "li", "pre", "dt", "dd"]
 XHTML_MEDIA_TYPE = "application/xhtml+xml"
+TRANSLATIONS_EXTRA_FILENAME = "translations_extra.json"
 
-ZH_BY_EXACT_TEXT = {
+# Generic structural labels only. Per-book paragraph overrides belong in
+# <book_dir>/translations_extra.json.
+STRUCTURAL_LABELS_ZH_TW = {
     "Contents": "目錄",
     "Introduction": "導論",
-    "Introduction: THREE SLEEPLESS NIGHTS": "導論：三個失眠的夜晚",
     "PART I": "第一部",
     "PART II": "第二部",
-    "1. CREATING ALIEN MINDS": "1. 創造異質心智",
-    "2. ALIGNING THE ALIEN": "2. 對齊異質智能",
-    "3. FOUR RULES FOR CO-INTELLIGENCE": "3. 協同智能的四條法則",
-    "4. AI AS A PERSON": "4. AI 作為一個人",
-    "5. AI AS A CREATIVE": "5. AI 作為創意夥伴",
-    "6. AI AS A COWORKER": "6. AI 作為共事者",
-    "7. AI AS A TUTOR": "7. AI 作為家教",
-    "8. AI AS A COACH": "8. AI 作為教練",
-    "9. AI AS OUR FUTURE": "9. AI 即我們的未來",
-    "Epilogue: AI AS US": "尾聲：AI 即我們",
     "Acknowledgments": "致謝",
     "Notes": "註釋",
     "About the Author": "關於作者",
-    "To Lilach Mollick": "獻給 Lilach Mollick",
     "What’s next on your reading list?": "你的下一本書想讀什麼？",
     "What's next on your reading list?": "你的下一本書想讀什麼？",
     "Discover your next great read!": "發現下一本精彩好書！",
@@ -67,36 +58,28 @@ ZH_BY_EXACT_TEXT = {
     "GO TO NOTE REFERENCE IN TEXT": "返回正文註記位置",
 }
 
-CONTENTS_LINK_LABELS = {
+# Generic structural contents labels only.
+CONTENTS_LINK_LABELS_ZH_TW = {
     "Contents": "目錄",
     "Cover": "封面",
     "Title Page": "書名頁",
     "Copyright": "版權頁",
     "Dedication": "獻辭",
-    "Introduction: THREE SLEEPLESS NIGHTS": "導論：三個失眠的夜晚",
     "PART I": "第一部",
-    "1. CREATING ALIEN MINDS": "第一章：創造異質心智",
-    "2. ALIGNING THE ALIEN": "第二章：對齊異質智能",
-    "3. FOUR RULES FOR CO-INTELLIGENCE": "第三章：協同智能四原則",
     "PART II": "第二部",
-    "4. AI AS A PERSON": "第四章：AI 作為一個人",
-    "5. AI AS A CREATIVE": "第五章：AI 作為創意夥伴",
-    "6. AI AS A COWORKER": "第六章：AI 作為同事",
-    "7. AI AS A TUTOR": "第七章：AI 作為導師",
-    "8. AI AS A COACH": "第八章：AI 作為教練",
-    "9. AI AS OUR FUTURE": "第九章：AI 作為我們的未來",
-    "Epilogue: AI AS US": "尾聲：AI 即我們",
     "Acknowledgments": "致謝",
     "Notes": "註釋",
     "About the Author": "關於作者",
-    "What's Next on Your Reading List?": "延伸閱讀清單",
-    "What’s Next on Your Reading List?": "延伸閱讀清單",
 }
 
 
 def assemble(book_dir: Path, out_path: Path) -> Path:
     manifest = json.loads((book_dir / "manifest.json").read_text(encoding="utf-8"))
-    spine_entries = _manifest_spine(manifest)
+    translations_extra = _load_translations_extra(book_dir)
+    spine_entries = [
+        _entry_with_translations_extra(entry, translations_extra)
+        for entry in _manifest_spine(manifest)
+    ]
     translation_paths = _preflight(book_dir, spine_entries)
     source_epub = Path(str(manifest.get("source_epub", "")))
     opf_path = manifest.get("opf_path") or _fallback_opf_path()
@@ -133,6 +116,28 @@ def assemble(book_dir: Path, out_path: Path) -> Path:
         for warning in warnings:
             print(f"  - {warning}", file=sys.stderr)
     return out_path
+
+
+def _load_translations_extra(book_dir: Path) -> dict:
+    path = book_dir / TRANSLATIONS_EXTRA_FILENAME
+    if not path.is_file():
+        return {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError(f"{path}: translations_extra must be a JSON object")
+    for key in ("by_exact_text", "nav_overrides"):
+        value = data.get(key)
+        if value is not None and not isinstance(value, dict):
+            raise ValueError(f"{path}: {key} must be an object")
+    return data
+
+
+def _entry_with_translations_extra(entry: dict, translations_extra: dict) -> dict:
+    if not translations_extra:
+        return entry
+    copied = dict(entry)
+    copied["_translations_extra"] = translations_extra
+    return copied
 
 
 def _manifest_spine(manifest: dict) -> list[dict]:
@@ -271,7 +276,7 @@ def _bilingualize_contents_links(soup: BeautifulSoup) -> None:
         text = _clean_text(link.get_text(" ", strip=True))
         if "｜" in text:
             continue
-        zh = CONTENTS_LINK_LABELS.get(text)
+        zh = CONTENTS_LINK_LABELS_ZH_TW.get(text)
         if zh:
             link.string = f"{text} ｜ {zh}"
 
@@ -319,10 +324,31 @@ def _add_class(node, cls: str) -> None:
 
 
 def _fallback_translation(text: str, entry: dict) -> str:
-    exact = ZH_BY_EXACT_TEXT.get(text)
+    exact = _exact_translation_for_text(text, entry)
     if exact:
         return exact
     return ""
+
+
+def _exact_translation_for_text(text: str, entry: dict) -> str:
+    extra = _translations_extra_by_exact_text(entry)
+    exact = extra.get(text)
+    if exact:
+        return str(exact)
+    exact = STRUCTURAL_LABELS_ZH_TW.get(text)
+    if exact:
+        return exact
+    return ""
+
+
+def _translations_extra_by_exact_text(entry: dict) -> dict:
+    extra = entry.get("_translations_extra")
+    if not isinstance(extra, dict):
+        return {}
+    by_exact_text = extra.get("by_exact_text")
+    if not isinstance(by_exact_text, dict):
+        return {}
+    return by_exact_text
 
 
 def _ensure_han_translation(translated: str, source_text: str) -> str:
@@ -417,7 +443,10 @@ def _build_nav_xhtml(manifest: dict, entries: list[dict], nav_path: str, opf_dir
 
 def _nav_label(entry: dict) -> str:
     first = _clean_text(str(entry.get("first_heading") or entry.get("id") or ""))
-    zh = ZH_BY_EXACT_TEXT.get(first) or ZH_BY_EXACT_TEXT.get(_contents_style(first))
+    zh = (
+        _exact_translation_for_text(first, entry)
+        or _exact_translation_for_text(_contents_style(first), entry)
+    )
     if not zh:
         zh = _fallback_translation(first, entry) if first else "未命名"
     if first and first != zh and len(first) < 80:
