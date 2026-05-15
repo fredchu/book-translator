@@ -192,6 +192,58 @@ def test_first_heading_preserves_whitespace_between_spans():
     assert extract_epub._first_heading(soup) == "1 CREATING ALIEN MINDS"
 
 
+def test_infer_role_detects_wiley_copyright_heading():
+    role = extract_epub.infer_role(
+        src_idref="Af02",
+        src_href="f02.xhtml",
+        first_heading="Copyright © 2026 by John Wiley & Sons, Inc. All rights reserved",
+    )
+
+    assert role == "copyright"
+
+
+def test_infer_role_detects_dedication_heading_openers():
+    assert (
+        extract_epub.infer_role(
+            src_idref="Af03",
+            src_href="f03.xhtml",
+            first_heading="To my mom, who taught me to imagine a better future",
+        )
+        == "dedication"
+    )
+    assert (
+        extract_epub.infer_role(
+            src_idref="x",
+            src_href="x.xhtml",
+            first_heading="Dedicated to Alice",
+        )
+        == "dedication"
+    )
+    assert (
+        extract_epub.infer_role(
+            src_idref="x",
+            src_href="x.xhtml",
+            first_heading="In memory of my father",
+        )
+        == "dedication"
+    )
+
+
+def test_infer_role_existing_cover_and_chapter_checks_still_work():
+    assert (
+        extract_epub.infer_role(src_idref="cover-page", src_href="cover.xhtml", first_heading="")
+        == "cover"
+    )
+    assert (
+        extract_epub.infer_role(
+            src_idref="c01",
+            src_href="c01.xhtml",
+            first_heading="Chapter 1 Something",
+        )
+        == "body"
+    )
+
+
 def _write_asset_epub(tmp_path: Path) -> Path:
     epub_path = tmp_path / "asset.epub"
     with zipfile.ZipFile(epub_path, "w") as z:

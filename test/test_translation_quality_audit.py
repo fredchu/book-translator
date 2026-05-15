@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import zipfile
 import inspect
@@ -52,6 +53,44 @@ def test_translation_quality_audit_fails_banned_placeholder(tmp_path: Path):
     passed, failures = translation_quality_audit.audit(epub)
     assert not passed
     assert any("版權頁說明" in failure for failure in failures)
+
+
+def test_translation_quality_audit_skips_length_ratio_for_headings(tmp_path: Path):
+    epub = _write_epub(
+        tmp_path,
+        '<h1 class="src">CHAPTER 1 The Past Present and Future of Artificial Intelligence</h1>'
+        '<p class="tgt tgt-zh">第一章　人工智慧的過去、現在與未來</p>',
+    )
+
+    passed, failures = translation_quality_audit.audit(epub, min_length_ratio=0.30)
+
+    assert passed
+    assert failures == []
+
+
+def test_translation_quality_audit_still_checks_banned_patterns_in_headings(tmp_path: Path):
+    epub = _write_epub(
+        tmp_path,
+        '<h1 class="src">CHAPTER 1 The Past Present and Future of Artificial Intelligence</h1>'
+        '<p class="tgt tgt-zh">版權頁說明</p>',
+    )
+
+    passed, failures = translation_quality_audit.audit(epub, min_length_ratio=0.30)
+
+    assert not passed
+    assert any("版權頁說明" in failure for failure in failures)
+
+
+def test_register_hints_non_fiction_narrative_uses_looser_ratio():
+    hints_path = Path(__file__).resolve().parent.parent / "assets" / "register_hints.json"
+    data = json.loads(hints_path.read_text("utf-8"))
+    ratios = {register["id"]: register["min_length_ratio"] for register in data["registers"]}
+
+    assert ratios == {
+        "literary_fiction": 0.22,
+        "non_fiction_narrative": 0.22,
+        "academic_technical": 0.30,
+    }
 
 
 def test_translation_quality_audit_fails_missing_unlisted_target(tmp_path: Path):
