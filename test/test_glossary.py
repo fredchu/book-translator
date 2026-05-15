@@ -37,6 +37,14 @@ def test_register_hints_file_exists_and_parses():
     ]
 
 
+def test_register_hints_load_subagent_rules():
+    data = json.loads(REGISTER_HINTS_PATH.read_text("utf-8"))
+    for register in data["registers"]:
+        assert isinstance(register["subagent_rules"], list)
+        assert len(register["subagent_rules"]) >= 3
+        assert all(isinstance(rule, str) and rule.strip() for rule in register["subagent_rules"])
+
+
 def test_glossary_prompt_contains_all_register_descriptions():
     data = json.loads(REGISTER_HINTS_PATH.read_text("utf-8"))
     for register in data["registers"]:

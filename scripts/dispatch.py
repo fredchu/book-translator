@@ -11,8 +11,16 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 
 from bs4 import BeautifulSoup
+
+try:  # pragma: no cover - import mode depends on caller
+    from .glossary import resolve_register
+except ImportError:  # pragma: no cover
+    from glossary import resolve_register
+
+_REGISTER_HINTS_PATH = Path(__file__).parent.parent / "assets" / "register_hints.json"
 
 SUBAGENT_PROMPT_TEMPLATE = """\
 You are translating Chapter {chapter_label} of "{book_title}" from English to
@@ -45,18 +53,11 @@ Requirements:
   3. Translate every character / place / term from the glossary using the
      glossary's exact target form.
   4. Do not omit any paragraph. Translate every paragraph in order.
-  5. 專有名詞 / 縮寫 / 技術詞首次在本章出現時，用「中文（English）」並列格式
-     （例：「大型語言模型（LLM）」、「人類回饋強化學習（RLHF）」、「通用人工智慧
-     （AGI）」），後續再出現只用中文。同章內保持一致。
-  6. 保留作者第一人稱敘事口吻。"I asked AI...", "I tried...", "I found..." 翻成
-     「我問 AI⋯」「我試了⋯」「我發現⋯」。**不要**改成「筆者」「作者」「我們」
-     ——會失去 narrative 親近感、把口語回憶錄變成論文。
-  7. 例句、AI 對話、打油詩、引述：保留原作風格與幽默。AI 生成的 limerick / 詩可
-     重組押韻不必逐字（中文押韻為主），但機智 / 反差 / 自嘲口吻必須留住。對話翻
-     成口語體（不要文謅謅、不要「閣下」「在下」）。
-  8. 整體 register：商管科普 narrative。**不要學術化**。短句優於長句、口語優於
-     書面、具體例子優於抽象詞、白話優於成語堆疊。
-  9. {custom_instructions}
+
+REGISTER-SPECIFIC RULES (matched to glossary.style_anchor.register):
+{register_specific_rules}
+
+  {custom_rule_number}. {custom_instructions}
 """
 
 DEFAULT_CUSTOM_INSTRUCTIONS = (
@@ -64,6 +65,13 @@ DEFAULT_CUSTOM_INSTRUCTIONS = (
     "「網路」not「网络」). Avoid 翻譯腔. Prefer short sentences over four-character "
     "literary clichés."
 )
+
+GENERIC_SUBAGENT_RULES = [
+    "Plain target-language prose. Match the glossary's prefer/avoid lists in style_anchor.",
+    "Glossary names are mandatory — use them verbatim throughout.",
+    "Preserve paragraph boundaries and source paragraph count.",
+    "Avoid 翻譯腔. Default to short, natural sentences over literary clichés.",
+]
 
 
 def html_to_paragraphs(html: str) -> list[str]:
@@ -220,9 +228,13 @@ def build_subagent_prompt(
     carryover: str,
     chapter_html: str,
     custom_instructions: str | None = None,
+    register_override: str | None = None,
 ) -> str:
     target_lang_long = _target_long(target_lang)
     chapter_text = chapter_text_for_prompt(chapter_html)
+    register_rules = _subagent_rules_for_register(glossary, register_override=register_override)
+    register_specific_rules = _format_register_specific_rules(register_rules, start=5)
+    custom_rule_number = 5 + len(register_rules)
     return SUBAGENT_PROMPT_TEMPLATE.format(
         chapter_label=chapter_label,
         book_title=book_title,
@@ -232,8 +244,41 @@ def build_subagent_prompt(
         style_sample=style_sample or "(no style sample yet — chapter 1)",
         carryover=carryover or "(this is the first chapter — no carryover)",
         chapter_text=chapter_text,
+        register_specific_rules=register_specific_rules,
+        custom_rule_number=custom_rule_number,
         custom_instructions=custom_instructions or DEFAULT_CUSTOM_INSTRUCTIONS,
     )
+
+
+def _subagent_rules_for_register(glossary: dict, *, register_override: str | None = None) -> list[str]:
+    register = _resolve_register_override(register_override) if register_override else resolve_register(glossary)
+    rules = register.get("subagent_rules") if isinstance(register, dict) else None
+    if isinstance(rules, list):
+        cleaned = [str(rule).strip() for rule in rules if str(rule).strip()]
+        if cleaned:
+            return cleaned
+    return GENERIC_SUBAGENT_RULES
+
+
+def _resolve_register_override(register_id: str | None) -> dict | None:
+    if not register_id or not _REGISTER_HINTS_PATH.exists():
+        return None
+    with _REGISTER_HINTS_PATH.open(encoding="utf-8") as fh:
+        data = json.load(fh)
+    registers = data.get("registers", [])
+    if not isinstance(registers, list):
+        return None
+    wanted = register_id.strip().casefold()
+    for register in registers:
+        if not isinstance(register, dict):
+            continue
+        if str(register.get("id", "")).strip().casefold() == wanted:
+            return register
+    return None
+
+
+def _format_register_specific_rules(rules: list[str], *, start: int) -> str:
+    return "\n".join(f"  {index}. {rule}" for index, rule in enumerate(rules, start=start))
 
 
 def validate_translation(translation: str, chapter_html: str, *, min_ratio: float = 0.5) -> list[str]:

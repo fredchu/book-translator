@@ -105,7 +105,7 @@ def test_subagent_prompt_includes_bocky_style_rules():
     prompt = dispatch.build_subagent_prompt(
         chapter_label="3", book_title="Animal Farm", target_lang="zh-tw",
         glossary={"characters": {}, "places": {}, "terms": {},
-                  "style_anchor": {"register": "x", "avoid": [], "prefer": []}},
+                  "style_anchor": {"register": "商管科普 narrative", "avoid": [], "prefer": []}},
         style_sample="範本。", carryover="", chapter_html="<p>I asked AI.</p>",
     )
     # Rule 5: 中英並列 format example
@@ -119,6 +119,43 @@ def test_subagent_prompt_includes_bocky_style_rules():
     # Rule 8: 不學術化
     assert "學術" in prompt
     assert "商管科普" in prompt
+
+
+def test_subagent_prompt_literary_register_rejects_parallel_names():
+    prompt = dispatch.build_subagent_prompt(
+        chapter_label="1", book_title="Test Book", target_lang="zh-tw",
+        glossary={"characters": {"Source Name": "譯名"}, "places": {}, "terms": {},
+                  "style_anchor": {"register": "literary plain prose with fable cadence", "avoid": [], "prefer": []}},
+        style_sample="", carryover="", chapter_html="<p>Source Name looked.</p>",
+    )
+    assert "NO 中英並列" in prompt
+    assert "Plain prose with fable cadence" in prompt
+    assert "商管" not in prompt
+
+
+def test_subagent_prompt_non_fiction_register_uses_parallel_terms():
+    prompt = dispatch.build_subagent_prompt(
+        chapter_label="1", book_title="Test Book", target_lang="zh-tw",
+        glossary={"characters": {}, "places": {}, "terms": {},
+                  "style_anchor": {"register": "商管科普 narrative", "avoid": [], "prefer": []}},
+        style_sample="", carryover="", chapter_html="<p>LLM.</p>",
+    )
+    assert "中英並列" in prompt
+    assert "中文（English）" in prompt
+    assert "商管/社科 narrative" in prompt
+
+
+def test_subagent_prompt_academic_register_uses_precision_rules():
+    prompt = dispatch.build_subagent_prompt(
+        chapter_label="1", book_title="Test Book", target_lang="zh-tw",
+        glossary={"characters": {}, "places": {}, "terms": {},
+                  "style_anchor": {"register": "x", "avoid": [], "prefer": []}},
+        style_sample="", carryover="", chapter_html="<p>Term.</p>",
+        register_override="academic_technical",
+    )
+    assert "precise technical terminology" in prompt
+    assert "學術論述，精確優先" in prompt
+    assert "precision dominates over readability" in prompt
 
 
 def test_html_to_paragraphs_dedups_blockquote_nested_p():
