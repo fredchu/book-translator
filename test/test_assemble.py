@@ -236,3 +236,24 @@ def test_assemble_inserts_translation_after_each_english_paragraph(tmp_path: Pat
         ch1 = z.read("OEBPS/xhtml/x.xhtml").decode("utf-8")
     assert ch1.index("Hello.") < ch1.index("你好。") < ch1.index("World.") < ch1.index("世界。")
     assert "tgt-zh" in ch1
+
+
+def test_insert_bilingual_promotes_header_heading_and_uses_nav_override():
+    src = (
+        "<html><body><section><header><h1>CHAPTER 1 The Past</h1></header>"
+        "<p>Body para one.</p><p>Body para two.</p></section></body></html>"
+    )
+    entry = {
+        "id": "item_008",
+        "original_idref": "Ac01",
+        "first_heading": "CHAPTER 1 The Past",
+        "output_strategy": "translate",
+        "_translations_extra": {"nav_overrides": {"Ac01": "第一章　過去"}},
+    }
+    out_html, warnings = assemble._insert_bilingual(src, entry, ["第一段。", "第二段。"])
+
+    assert warnings == []
+    assert "CHAPTER 1 The Past" in out_html
+    assert "第一章　過去" in out_html
+    assert "第一段。" in out_html and "第二段。" in out_html
+    assert "<header" not in out_html

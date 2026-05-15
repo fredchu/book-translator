@@ -6,6 +6,7 @@ gives the main session:
   - GLOSSARY_PROMPT: the system+user prompt template
   - parse_glossary(): validate and load a JSON glossary returned by the model
   - canonical_form(): merge a user-edited glossary into the on-disk file
+  - write_translations_extra_nav_overrides(): derive nav labels from glossary
 """
 
 from __future__ import annotations
@@ -61,6 +62,15 @@ Read the full text below and extract:
   - places: named places, organizations, factions.
   - terms: domain-specific terminology, invented words, songs/poems referenced
     by name. Anything that must translate consistently across chapters.
+  - chapter_titles_zh: a JSON object mapping each provided spine first_heading
+    from manifest.json::spine[] exactly as written to its {target_lang} chapter
+    title. The main session passes those headings in the prompt context. Leave
+    the value as "" if a heading is empty or looks like body prose over 120
+    characters. Use standard 台灣繁中 for structural pages (Cover, Title Page,
+    Copyright, Dedication, Introduction, Acknowledgments, Notes, About the
+    Author, Index, Glossary). For numbered chapters, use clean readable forms
+    such as "第一章　人工智慧的過去、現在與未來"; for part dividers, use forms
+    such as "第一部　RenAIssance 的基礎".
   - style_anchor: a JSON object describing the author's register so subagent
     translators can match the tone. Fields:
       register: one short phrase (e.g. "literary plain prose")
@@ -78,6 +88,7 @@ Return ONLY valid JSON in this exact shape:
   "characters": {{"<source name>": "<target translation>"}},
   "places":     {{"<source name>": "<target translation>"}},
   "terms":      {{"<source phrase>": "<target translation>"}},
+  "chapter_titles_zh": {{"<source first_heading>": "<target chapter title>"}},
   "style_anchor": {{
     "register": "<one phrase>",
     "avoid":    ["...", "..."],
@@ -113,6 +124,8 @@ def parse_glossary(text: str) -> dict:
     for key in ("register", "avoid", "prefer"):
         if key not in anchor:
             raise ValueError(f"style_anchor missing key: {key}")
+    if "chapter_titles_zh" in data and not isinstance(data["chapter_titles_zh"], dict):
+        raise ValueError("chapter_titles_zh must be an object")
     return data
 
 
@@ -151,16 +164,19 @@ def resolve_register(glossary: dict, register_hints: dict | None = None) -> dict
 
 def canonical_form(glossary: dict) -> dict:
     """Return a glossary with stable key ordering and trimmed whitespace."""
-    return {
+    out = {
         "characters": _trim_dict(glossary.get("characters", {})),
         "places": _trim_dict(glossary.get("places", {})),
         "terms": _trim_dict(glossary.get("terms", {})),
-        "style_anchor": {
-            "register": str(glossary["style_anchor"]["register"]).strip(),
-            "avoid": [str(x).strip() for x in glossary["style_anchor"]["avoid"]],
-            "prefer": [str(x).strip() for x in glossary["style_anchor"]["prefer"]],
-        },
     }
+    if "chapter_titles_zh" in glossary:
+        out["chapter_titles_zh"] = _trim_dict(glossary.get("chapter_titles_zh", {}))
+    out["style_anchor"] = {
+        "register": str(glossary["style_anchor"]["register"]).strip(),
+        "avoid": [str(x).strip() for x in glossary["style_anchor"]["avoid"]],
+        "prefer": [str(x).strip() for x in glossary["style_anchor"]["prefer"]],
+    }
+    return out
 
 
 def write_glossary(out_path: Path, glossary: dict) -> None:
@@ -171,5 +187,65 @@ def write_glossary(out_path: Path, glossary: dict) -> None:
     )
 
 
+def write_translations_extra_nav_overrides(
+    glossary: dict,
+    manifest: dict,
+    book_dir: Path,
+    *,
+    overwrite_existing: bool = False,
+) -> dict:
+    """Populate translations_extra.json nav_overrides from chapter_titles_zh."""
+    titles = glossary.get("chapter_titles_zh", {})
+    if titles is None:
+        titles = {}
+    if not isinstance(titles, dict):
+        raise ValueError("glossary chapter_titles_zh must be an object")
+
+    path = book_dir / "translations_extra.json"
+    if path.is_file():
+        extra = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(extra, dict):
+            raise ValueError(f"{path}: translations_extra must be a JSON object")
+    else:
+        extra = {}
+
+    nav_overrides = extra.get("nav_overrides", {})
+    if nav_overrides is None:
+        nav_overrides = {}
+    if not isinstance(nav_overrides, dict):
+        raise ValueError(f"{path}: nav_overrides must be an object")
+    nav_overrides = dict(nav_overrides)
+
+    for entry in _manifest_spine_entries(manifest):
+        if not isinstance(entry, dict):
+            continue
+        heading = str(entry.get("first_heading") or "")
+        if not heading:
+            continue
+        zh = str(titles.get(heading) or "").strip()
+        if not zh:
+            continue
+        original_idref = str(entry.get("original_idref") or "")
+        if not original_idref:
+            continue
+        if overwrite_existing or original_idref not in nav_overrides:
+            nav_overrides[original_idref] = zh
+
+    extra["nav_overrides"] = nav_overrides
+    book_dir.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(extra, ensure_ascii=False, indent=2), encoding="utf-8")
+    return nav_overrides
+
+
 def _trim_dict(d: dict) -> dict:
     return {str(k).strip(): str(v).strip() for k, v in d.items() if str(k).strip()}
+
+
+def _manifest_spine_entries(manifest: dict) -> list[dict]:
+    entries = manifest.get("spine")
+    if isinstance(entries, list):
+        return entries
+    legacy = manifest.get("chapters")
+    if isinstance(legacy, list):
+        return legacy
+    return []

@@ -56,6 +56,11 @@ def test_glossary_prompt_contains_no_banned_author_names():
         assert author_name not in glossary.GLOSSARY_PROMPT
 
 
+def test_glossary_prompt_requests_chapter_titles():
+    assert "chapter_titles_zh" in glossary.GLOSSARY_PROMPT
+    assert "<source first_heading>" in glossary.GLOSSARY_PROMPT
+
+
 def test_resolve_register_matches_configured_registers():
     literary = glossary.resolve_register(
         {"style_anchor": {"register": "literary plain prose with fable cadence"}}
@@ -70,6 +75,12 @@ def test_resolve_register_matches_configured_registers():
 
 def test_parse_glossary_plain_json():
     assert glossary.parse_glossary(json.dumps(MINIMAL)) == MINIMAL
+
+
+def test_parse_glossary_accepts_optional_chapter_titles():
+    payload = dict(MINIMAL)
+    payload["chapter_titles_zh"] = {"CHAPTER 1": "第一章"}
+    assert glossary.parse_glossary(json.dumps(payload)) == payload
 
 
 def test_parse_glossary_strips_code_fence():
@@ -106,6 +117,12 @@ def test_canonical_form_trims_whitespace():
     assert out["characters"] == {"Napoleon": "拿破崙"}
     assert out["style_anchor"]["register"] == "x"
     assert out["style_anchor"]["avoid"] == ["a"]
+
+
+def test_canonical_form_trims_chapter_titles_when_present():
+    raw = dict(MINIMAL)
+    raw["chapter_titles_zh"] = {" CHAPTER 1 ": "  第一章  "}
+    assert glossary.canonical_form(raw)["chapter_titles_zh"] == {"CHAPTER 1": "第一章"}
 
 
 def test_write_glossary_persists_canonical(tmp_path: Path):
