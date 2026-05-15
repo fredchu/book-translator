@@ -129,6 +129,28 @@ def test_extract_preserves_full_spine(tmp_path: Path):
     ]
 
 
+def test_default_output_strategy_translates_substantive_part_divider():
+    assert extract_epub.default_output_strategy("part_divider", char_count=0) == "source_only"
+    assert extract_epub.default_output_strategy("part_divider", char_count=200) == "source_only"
+    assert extract_epub.default_output_strategy("part_divider", char_count=300) == "translate"
+    assert extract_epub.default_output_strategy("part_divider", char_count=2400) == "translate"
+    assert extract_epub.default_output_strategy("cover") == "source_only"
+    assert extract_epub.default_output_strategy("body") == "translate"
+
+
+def test_extract_translates_substantive_part_divider(tmp_path: Path):
+    epub_path = _write_part_divider_epub(tmp_path, part_text="Substantive prose. " * 20)
+    out = extract_epub.extract(epub_path, tmp_path / "out")
+    manifest = json.loads((out / "manifest.json").read_text("utf-8"))
+    part_entry = manifest["spine"][0]
+
+    assert part_entry["role"] == "part_divider"
+    assert part_entry["char_count"] >= 300
+    assert part_entry["output_strategy"] == "translate"
+    assert part_entry["translation_id"] == "ch_01"
+    assert manifest["chapters"][0]["spine_id"] == part_entry["id"]
+
+
 def test_extract_copies_css_dir_verbatim(tmp_path: Path):
     epub_path = _write_asset_epub(tmp_path)
     out = extract_epub.extract(epub_path, tmp_path / "out")
@@ -220,4 +242,49 @@ def _write_asset_epub(tmp_path: Path) -> Path:
         z.writestr("OEBPS/fonts/Book.otf", b"fake-font")
         z.writestr("OEBPS/images/cover.jpg", b"cover")
         z.writestr("OEBPS/images/unused.jpg", b"unused")
+    return epub_path
+
+
+def _write_part_divider_epub(tmp_path: Path, *, part_text: str) -> Path:
+    epub_path = tmp_path / "part-divider.epub"
+    with zipfile.ZipFile(epub_path, "w") as z:
+        z.writestr("mimetype", "application/epub+zip", compress_type=zipfile.ZIP_STORED)
+        z.writestr(
+            "META-INF/container.xml",
+            """<?xml version="1.0"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>
+""",
+        )
+        z.writestr(
+            "OEBPS/content.opf",
+            """<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="bookid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:identifier id="bookid">part-divider</dc:identifier>
+    <dc:title>Part Divider Book</dc:title>
+    <dc:language>en</dc:language>
+  </metadata>
+  <manifest>
+    <item id="part1" href="xhtml/part1.xhtml" media-type="application/xhtml+xml"/>
+    <item id="chap1" href="xhtml/chapter1.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine>
+    <itemref idref="part1"/>
+    <itemref idref="chap1"/>
+  </spine>
+</package>
+""",
+        )
+        z.writestr(
+            "OEBPS/xhtml/part1.xhtml",
+            f"<html><body><h1>PART I</h1><p>{part_text}</p></body></html>",
+        )
+        z.writestr(
+            "OEBPS/xhtml/chapter1.xhtml",
+            "<html><body><h1>Chapter 1</h1><p>Body text.</p></body></html>",
+        )
     return epub_path
