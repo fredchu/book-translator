@@ -82,6 +82,19 @@ SOURCE_ONLY_ROLES = {
     "promo",
     "notes",
 }
+_HEADING_MAX_LEN = 120
+_ROLE_TO_HEADING = {
+    "cover": "Cover",
+    "title_page": "Title Page",
+    "copyright": "Copyright",
+    "dedication": "Dedication",
+    "contents": "Contents",
+    "notes": "Notes",
+    "about_author": "About the Author",
+    "acknowledgments": "Acknowledgments",
+    "promo": "Promotional",
+    "nav": "Table of Contents",
+}
 
 
 def extract(
@@ -122,16 +135,18 @@ def extract(
         item_id = f"item_{index:03d}"
         out_path = chapters_dir / f"{item_id}.html"
         out_path.write_text(html, encoding="utf-8")
-        first_heading = _first_heading(soup) or _first_text(text) or "(untitled)"
         src_href = str(opf_item.get("href") or item.get_name())
         original_path = src_href
         _copy_original_xhtml(epub_path, book_out, original_path, opf_path)
+        heading = _first_heading(soup)
+        fallback_heading = heading or _first_text(text) or "(untitled)"
         role = infer_role(
             src_idref=src_idref,
             src_href=src_href,
-            first_heading=first_heading,
+            first_heading=fallback_heading,
             properties=str(opf_item.get("properties") or ""),
         )
+        first_heading = heading or _ROLE_TO_HEADING.get(role) or fallback_heading
         strategy = default_output_strategy(role)
         if strategy == "translate" and role == "body" and len(text) == 0:
             strategy = "source_only"
@@ -426,9 +441,13 @@ def _first_heading(soup: BeautifulSoup) -> str | None:
         if node:
             text = node.get_text(" ", strip=True)
             text = re.sub(r"\s+", " ", text).strip()
-            if text:
+            if 0 < len(text) <= _HEADING_MAX_LEN and not _looks_like_body_prose_heading(text):
                 return text
     return None
+
+
+def _looks_like_body_prose_heading(text: str) -> bool:
+    return len(re.findall(r"[.!?。？！]", text)) > 1
 
 
 def _first_text(text: str) -> str | None:

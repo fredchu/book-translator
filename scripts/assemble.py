@@ -16,7 +16,7 @@ import re
 import sys
 import zipfile
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 from bs4 import BeautifulSoup
 from ebooklib import epub  # re-exported for existing tests
@@ -104,6 +104,15 @@ def assemble(book_dir: Path, out_path: Path) -> Path:
     nav_path = _nav_path(manifest, opf_path)
     if nav_path:
         replacements[nav_path] = _build_nav_xhtml(manifest, spine_entries, nav_path, opf_dir).encode("utf-8")
+        warnings.extend(_missing_nav_zh_warnings(spine_entries))
+    if source_epub.is_file():
+        ncx_path = _source_ncx_path(source_epub)
+        if ncx_path:
+            with zipfile.ZipFile(source_epub) as z:
+                replacements[ncx_path] = _patch_toc_ncx(
+                    z.read(ncx_path).decode("utf-8", errors="replace"),
+                    spine_entries,
+                ).encode("utf-8")
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     if source_epub.is_file():
@@ -464,12 +473,16 @@ def _render_nav_item(entry: dict, children: list[dict], nav_path: str, opf_dir: 
         </li>"""
 
 
-def _nav_display_label(entry: dict) -> str:
+def _nav_display_label(entry: dict, missing_zh_collector: list[dict] | None = None) -> str:
     first = _clean_text(str(entry.get("first_heading") or entry.get("id") or ""))
     if not first:
         first = "Untitled"
-    zh = _nav_zh_label(first, entry) or first
-    return f"{first} ｜ {zh}"
+    zh = _nav_zh_label(first, entry)
+    if zh and zh != first:
+        return f"{first} ｜ {zh}"
+    if missing_zh_collector is not None and entry.get("output_strategy") in {"translate", "source_only", "nav"}:
+        missing_zh_collector.append(entry)
+    return first
 
 
 def _nav_zh_label(first: str, entry: dict) -> str:
@@ -498,6 +511,75 @@ def _translations_extra_nav_overrides(entry: dict) -> dict:
     if not isinstance(nav_overrides, dict):
         return {}
     return nav_overrides
+
+
+def _missing_nav_zh_warnings(entries: list[dict]) -> list[str]:
+    missing: list[dict] = []
+    for entry in entries:
+        if entry.get("output_strategy") in {"drop_explicit", "nav_generated"} or entry.get("role") == "nav":
+            continue
+        _nav_display_label(entry, missing)
+    warnings = []
+    for entry in missing:
+        key = str(entry.get("original_idref") or entry.get("src_idref") or entry.get("id") or "")
+        label = _clean_text(str(entry.get("first_heading") or entry.get("id") or "Untitled"))
+        override_key = key or str(entry.get("id") or "unknown")
+        warnings.append(
+            f"{entry.get('id', '(unknown)')}: nav label rendered English-only "
+            f"({label}); add nav_overrides[{override_key!r}] in {TRANSLATIONS_EXTRA_FILENAME} for bilingual ToC"
+        )
+    return warnings
+
+
+def _source_ncx_path(source_epub: Path) -> str | None:
+    try:
+        with zipfile.ZipFile(source_epub) as z:
+            return next((name for name in z.namelist() if name.lower().endswith(".ncx")), None)
+    except zipfile.BadZipFile:
+        return None
+
+
+def _patch_toc_ncx(ncx_xml: str, entries: list[dict]) -> str:
+    entry_by_filename = _nav_entry_by_filename(entries)
+    if not entry_by_filename:
+        return ncx_xml
+    soup = BeautifulSoup(ncx_xml, "xml")
+    for navpoint in soup.find_all("navPoint"):
+        content = navpoint.find("content")
+        if content is None:
+            continue
+        src = str(content.get("src") or "")
+        src_without_fragment = src.split("#", 1)[0]
+        if src_without_fragment != src:
+            continue
+        filename = posixpath.basename(unquote(src_without_fragment.split("?", 1)[0]))
+        entry = entry_by_filename.get(filename)
+        if not entry:
+            continue
+        text_node = navpoint.find("text")
+        if text_node is None:
+            nav_label = navpoint.find("navLabel")
+            if nav_label is None:
+                continue
+            text_node = soup.new_tag("text")
+            nav_label.append(text_node)
+        text_node.string = _nav_display_label(entry)
+    return str(soup)
+
+
+def _nav_entry_by_filename(entries: list[dict]) -> dict[str, dict]:
+    mapping: dict[str, dict] = {}
+    for entry in entries:
+        if entry.get("output_strategy") in {"drop_explicit", "nav_generated"} or entry.get("role") == "nav":
+            continue
+        for key in ("original_path", "href", "src_href"):
+            value = str(entry.get(key) or "")
+            if not value:
+                continue
+            filename = posixpath.basename(unquote(value.split("#", 1)[0].split("?", 1)[0]))
+            if filename:
+                mapping.setdefault(filename, entry)
+    return mapping
 
 
 def _nav_label(entry: dict) -> str:
