@@ -211,7 +211,14 @@ def _entry_represented(entry: dict, output_idrefs: list[str]) -> bool:
     if strategy == "drop_explicit":
         return bool(str(entry.get("reason", "")).strip())
     if strategy == "nav_generated":
-        return "nav" in output_idrefs
+        if "nav" in output_idrefs:
+            return True
+        ids = {
+            str(entry.get("id", "")),
+            str(entry.get("original_idref", "")),
+            str(entry.get("src_idref", "")),
+        }
+        return any(value and value in output_idrefs for value in ids)
     ids = {
         str(entry.get("id", "")),
         str(entry.get("original_idref", "")),
