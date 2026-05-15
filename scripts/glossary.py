@@ -13,6 +13,42 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+_REGISTER_HINTS_PATH = Path(__file__).parent.parent / "assets" / "register_hints.json"
+
+
+def _load_register_hints() -> list[dict]:
+    if not _REGISTER_HINTS_PATH.exists():
+        return []
+    with _REGISTER_HINTS_PATH.open(encoding="utf-8") as fh:
+        data = json.load(fh)
+    registers = data.get("registers", [])
+    if not isinstance(registers, list):
+        return []
+    return [r for r in registers if isinstance(r, dict)]
+
+
+def _format_register_hints(registers: list[dict]) -> str:
+    lines: list[str] = []
+    for register in registers:
+        description = str(register.get("description", "")).strip()
+        register_name = str(register.get("register", "")).strip()
+        prefer = register.get("prefer", [])
+        avoid = register.get("avoid", [])
+        if not description:
+            continue
+        lines.extend(
+            [
+                f"      • {description}:",
+                f"          register={json.dumps(register_name, ensure_ascii=False)}",
+                f"          prefer={json.dumps(prefer, ensure_ascii=False)}",
+                f"          avoid={json.dumps(avoid, ensure_ascii=False)}",
+            ]
+        )
+    return "\n".join(lines) if lines else "      (No common register hints loaded.)"
+
+
+_REGISTER_HINTS_BLOCK = _format_register_hints(_load_register_hints())
+
 GLOSSARY_PROMPT = """\
 You are building a translation glossary for a literary work being translated
 from {source_lang} to {target_lang} (台灣繁體中文 if target is zh-tw — use 台灣用語).
@@ -26,23 +62,12 @@ Read the full text below and extract:
     by name. Anything that must translate consistently across chapters.
   - style_anchor: a JSON object describing the author's register so subagent
     translators can match the tone. Fields:
-      register: one short phrase (e.g. "literary plain prose (Orwell)")
+      register: one short phrase (e.g. "literary plain prose")
       avoid:   2-4 things the translation should NOT do (e.g. "翻譯腔")
       prefer:  2-4 stylistic choices the translation SHOULD make
 
     Common book-type hints:
-      • Literary fiction (e.g. Orwell, McCarthy):
-          register="literary plain prose"
-          prefer=["口語節奏","短句","略諷刺"]
-          avoid=["翻譯腔","四字結構過多","過度書面化"]
-      • 商管科普 narrative (e.g. Mollick, Pink, Duhigg, Kahneman popularizations):
-          register="商管科普 narrative，第一人稱保留"
-          prefer=["口語節奏","具體例子優先","保留作者第一人稱『我』","保留幽默/反諷"]
-          avoid=["學術化","翻譯腔","把 I 改成『筆者』/『作者』","四字成語堆疊"]
-      • Academic / technical:
-          register="學術論述，精確優先"
-          prefer=["精確術語","邏輯連接詞","完整句"]
-          avoid=["口語縮略","俏皮幽默","主觀色彩"]
+__REGISTER_HINTS_BLOCK__
 
     Pick the closest match (or invent a new register description) based on what
     you read.
@@ -63,7 +88,7 @@ Do not add explanation or commentary. JSON only.
 
 === FULL BOOK TEXT ===
 {full_text}
-"""
+""".replace("__REGISTER_HINTS_BLOCK__", _REGISTER_HINTS_BLOCK)
 
 
 def parse_glossary(text: str) -> dict:

@@ -137,7 +137,7 @@ Schema:
   "places": {"Animal Farm": "動物農莊"},
   "terms": {"Beasts of England": "英格蘭的野獸"},
   "style_anchor": {
-    "register": "literary plain prose (Orwell)",
+    "register": "literary plain prose",
     "avoid": ["四字結構過多", "翻譯腔", "過度書面化"],
     "prefer": ["口語節奏", "略諷刺", "短句"]
   }
@@ -310,7 +310,7 @@ blocks recursive `claude` CLI calls, so the subprocess path will hang.
 
 ```bash
 python3 -m scripts.cross_modal_eval \
-  --task "Translate Chapter 1 of Animal Farm to 台灣繁體中文 with Orwell-plain literary register" \
+  --task "Translate Chapter 1 of Animal Farm to 台灣繁體中文 with plain literary register" \
   --output <out_dir>/animal_farm/chapters/ch_03_translation.txt
 ```
 
@@ -379,11 +379,15 @@ Two roles, kept distinct:
 - **Deterministic test fixture** (pytest, `test/test_extract_epub.py` + `test/test_e2e.py`):
   `~/ghkb/interested/bilingual_book_maker/test_books/animal_farm.epub` — public-domain,
   ~50K input tokens, 10 body chapters. Stable, free to test against on every commit.
-- **First-real-run target** (the book actually used to validate Phase 3 cross-modal
-  eval on Opus 4.7 translation quality): **Ethan Mollick — Co-Intelligence**
-  (Co-Intelligence _ Living and Working with AI.epub, ~88K input tokens, 11 body
-  chapters). Personally owned copy, kept out of the skill's git tree.
+- **First-real-run target** is your choice — any book you legally own. Use the
+  Phase 3 cross-modal eval to validate translation quality on the first chapter
+  before fanning out to the rest of the book. The full pipeline (extract → glossary
+  → style sample → subagent fan-out → assemble → 5 audit gates) is book-agnostic.
 
-## OSS roadmap
+## Distribution
 
-Target repo: `fredchu/book-translator-cc`. README bilingual (English + 繁中). Disclaimer: 僅供 public domain / 個人合法持有書籍翻譯。
+Disclaimer: this skill is intended for **public-domain works or books you
+legally own**. Do not use it to translate copyrighted material you do not have
+the right to reproduce. Per-book overrides (custom dedication / acknowledgments
+paragraph translations, custom nav labels) live in
+`<book_dir>/translations_extra.json` — never in this repo.

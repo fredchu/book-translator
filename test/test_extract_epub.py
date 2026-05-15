@@ -111,6 +111,22 @@ def test_extract_preserves_full_spine(tmp_path: Path):
     assert all((out / entry["href"]).is_file() for entry in manifest["spine"])
     assert all(entry["original_path"] for entry in manifest["spine"])
     assert all(entry["original_idref"] for entry in manifest["spine"])
+    assert all("parent_id" in entry for entry in manifest["spine"])
+    parent_ids = [entry["parent_id"] for entry in manifest["spine"]]
+    assert parent_ids == [
+        None,
+        None,
+        None,
+        None,
+        None,
+        manifest["spine"][4]["id"],
+        None,
+        manifest["spine"][6]["id"],
+        manifest["spine"][6]["id"],
+        manifest["spine"][6]["id"],
+        manifest["spine"][6]["id"],
+        None,
+    ]
 
 
 def test_extract_copies_css_dir_verbatim(tmp_path: Path):

@@ -26,7 +26,8 @@ manifest.json schema v2:
              "href": "chapters/item_001.html", "linear": "yes",
              "media_type": "application/xhtml+xml", "role": "body",
              "char_count": 1234, "first_heading": "Chapter 1",
-             "output_strategy": "translate", "translation_id": "ch_01"},
+             "output_strategy": "translate", "translation_id": "ch_01",
+             "parent_id": null},
             ...
         ]
     }
@@ -65,9 +66,12 @@ class SpineEntry:
     first_heading: str
     output_strategy: str
     translation_id: str | None = None
+    parent_id: str | None = None
 
 
 TRANSLATE_ROLES = {"body", "epilogue", "acknowledgments", "about_author"}
+PART_CHILD_ROLES = {"body", "epilogue", "acknowledgments", "about_author", "notes"}
+PART_CHAIN_BREAK_ROLES = {"cover", "title_page", "copyright", "dedication", "contents", "promo"}
 SOURCE_ONLY_ROLES = {
     "cover",
     "title_page",
@@ -105,6 +109,7 @@ def extract(
 
     entries: list[SpineEntry] = []
     translate_counter = 0
+    current_part_id: str | None = None
     for index, (src_idref, linear) in enumerate(_spine_idrefs(book), start=1):
         item = book.get_item_with_id(src_idref)
         opf_item = opf_manifest.get(src_idref, {})
@@ -134,6 +139,7 @@ def extract(
         if strategy == "translate":
             translate_counter += 1
             translation_id = f"ch_{translate_counter:02d}"
+        parent_id = current_part_id if role in PART_CHILD_ROLES else None
         entries.append(
             SpineEntry(
                 id=item_id,
@@ -149,8 +155,13 @@ def extract(
                 first_heading=first_heading,
                 output_strategy=strategy,
                 translation_id=translation_id,
+                parent_id=parent_id,
             )
         )
+        if role == "part_divider":
+            current_part_id = item_id
+        elif role in PART_CHAIN_BREAK_ROLES:
+            current_part_id = None
 
     spine = [asdict(e) for e in entries]
     manifest = {
