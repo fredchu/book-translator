@@ -49,13 +49,14 @@ Real user phrases that should route here:
 
 Given an EPUB and target language (default: 台灣繁體中文), this skill:
 
-1. Reads the entire book, extracts a glossary (characters / places / terms / style anchor).
-2. Translates chapter 1 in the main session as the **style sample**.
-3. Asks the user to confirm tone / edit glossary before fan-out.
-4. Dispatches parallel subagents (Opus 4.7, concurrency 5) to translate remaining `translate` spine items — each receives glossary + style sample + last-paragraph carryover.
-5. Assembles a full-fidelity bilingual EPUB from the full OPF spine: original XHTML paths, OPF idrefs, CSS, fonts, images, class names, and internal href targets are preserved; Traditional Chinese paragraphs are inserted after English text blocks.
-6. Runs structural QA (`structural_audit.py`), bilingual coverage QA (`bilingual_coverage_audit.py`), href resolution QA (`href_resolve_audit.py`), translation placeholder/length QA (`translation_quality_audit.py`), and a separate translation spot-check pass (random 5 paragraphs + character name audit) before shipping.
-7. Crash-safe: every step persists to `{book}_state.json`; re-running resumes from last completed chapter.
+1. Reads the entire book, extracts a glossary (characters / places / terms / chapter titles / style anchor).
+2. Auto-populates per-book nav overrides from glossary chapter titles.
+3. Translates chapter 1 in the main session as the **style sample**.
+4. Asks the user to confirm tone / edit glossary before fan-out.
+5. Dispatches parallel subagents (Opus 4.7, concurrency 5) to translate remaining `translate` spine items — each receives glossary + style sample + last-paragraph carryover.
+6. Assembles a full-fidelity bilingual EPUB from the full OPF spine: original XHTML paths, OPF idrefs, CSS, fonts, images, class names, and internal href targets are preserved; Traditional Chinese paragraphs are inserted after English text blocks.
+7. Runs structural QA (`structural_audit.py`), bilingual coverage QA (`bilingual_coverage_audit.py`), href resolution QA (`href_resolve_audit.py`), translation placeholder/length QA (`translation_quality_audit.py`), and a separate translation spot-check pass (random 5 paragraphs + character name audit) before shipping.
+8. Crash-safe: every step persists to `{book}_state.json`; re-running resumes from last completed chapter.
 
 ## Architecture
 
@@ -64,6 +65,7 @@ Main session (Claude Code, Opus 4.7)
 ├── 1. extract_epub.py book.epub → full OPF spine manifest v2   (deterministic)
 ├── 2. glossary build (LLM call in main session)               (latent)
 │      └── reads full book → glossary.json
+├── 2.5. populate translations_extra nav_overrides             (deterministic)
 ├── 3. translate ch.01 in main session → style_sample          (latent)
 ├── 4. INTERACTIVE PREVIEW GATE                                (user-in-loop)
 │      └── print ch.01 preview → user [confirm | edit glossary | edit style]
@@ -136,6 +138,7 @@ Schema:
   "characters": {"Napoleon": "拿破崙", "Snowball": "雪球"},
   "places": {"Animal Farm": "動物農莊"},
   "terms": {"Beasts of England": "英格蘭的野獸"},
+  "chapter_titles_zh": {"CHAPTER 1": "第一章"},
   "style_anchor": {
     "register": "literary plain prose",
     "avoid": ["四字結構過多", "翻譯腔", "過度書面化"],
@@ -143,6 +146,16 @@ Schema:
   }
 }
 ```
+
+### Step 2.5: Auto-populate nav overrides
+
+After glossary build, the main session calls
+`glossary.write_translations_extra_nav_overrides(glossary, manifest, book_dir)`
+to populate `<book_dir>/translations_extra.json::nav_overrides` from the
+glossary's `chapter_titles_zh` field. This drives both nav rendering AND
+bilingual chapter title display in the assembled EPUB. If
+`translations_extra.json` already exists, existing keys are preserved
+(user overrides are not clobbered).
 
 ### Step 4: Translate ch.01 inline (style sample)
 

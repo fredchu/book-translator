@@ -243,14 +243,15 @@ def _translations_for_entry(book_dir: Path, entry: dict, translation_paths: dict
 
 def _insert_bilingual(src_html: str, entry: dict, translations: list[str]) -> tuple[str, list[str]]:
     soup = BeautifulSoup(src_html, "html.parser")
-    for tag in soup(["script", "style", "nav", "header", "footer"]):
+    _promote_header_headings(soup)
+    for tag in soup(["script", "style", "nav", "footer"]):
         tag.decompose()
     if entry.get("role") == "contents":
         _bilingualize_contents_links(soup)
     nodes = _text_nodes_for_bilingual(soup)
     warnings: list[str] = []
     aligned_translations = _align_translations(nodes, translations, entry)
-    if entry.get("output_strategy") == "translate" and len(nodes) != len(translations):
+    if entry.get("output_strategy") == "translate" and len(nodes) != len(aligned_translations):
         warnings.append(
             f"{entry.get('translation_id') or entry['id']}: paragraph count mismatch "
             f"(src_text={len(nodes)} tgt={len(translations)}); pairing available paragraphs"
@@ -280,6 +281,21 @@ def _insert_bilingual(src_html: str, entry: dict, translations: list[str]) -> tu
     return str(soup), warnings
 
 
+def _promote_header_headings(soup: BeautifulSoup) -> None:
+    """Move h1-h6 out of header into the body root before stripping decor."""
+    body = soup.find("body")
+    if body is None:
+        return
+    insert_at = 0
+    heading_tags = ["h1", "h2", "h3", "h4", "h5", "h6"]
+    for header in list(soup.find_all("header")):
+        for heading in list(header.find_all(heading_tags)):
+            heading.extract()
+            body.insert(insert_at, heading)
+            insert_at += 1
+        header.decompose()
+
+
 def _bilingualize_contents_links(soup: BeautifulSoup) -> None:
     for link in soup.find_all("a"):
         text = _clean_text(link.get_text(" ", strip=True))
@@ -299,6 +315,10 @@ def _align_translations(nodes: list, translations: list[str], entry: dict) -> li
         first = _clean_text(nodes[0].get_text(" ", strip=True))
         if first.lower() in {"introduction", "chapter"}:
             return [_fallback_translation(first, entry), *translations]
+        if nodes[0].name in {"h1", "h2", "h3", "h4", "h5", "h6"}:
+            zh = _nav_zh_label(first, entry)
+            if zh and zh != first:
+                return [zh, *translations]
     return list(translations)
 
 
