@@ -11,6 +11,7 @@ gives the main session:
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 _REGISTER_HINTS_PATH = Path(__file__).parent.parent / "assets" / "register_hints.json"
@@ -113,6 +114,39 @@ def parse_glossary(text: str) -> dict:
         if key not in anchor:
             raise ValueError(f"style_anchor missing key: {key}")
     return data
+
+
+def resolve_register(glossary: dict, register_hints: dict | None = None) -> dict | None:
+    """Resolve glossary style_anchor.register to a configured register hint."""
+    if register_hints is None:
+        if not _REGISTER_HINTS_PATH.exists():
+            return None
+        with _REGISTER_HINTS_PATH.open(encoding="utf-8") as fh:
+            register_hints = json.load(fh)
+
+    registers = register_hints.get("registers", [])
+    if not isinstance(registers, list):
+        return None
+
+    style_anchor = glossary.get("style_anchor", {})
+    if not isinstance(style_anchor, dict):
+        return None
+    requested = str(style_anchor.get("register", "")).strip().casefold()
+    if not requested:
+        return None
+
+    for register in registers:
+        if not isinstance(register, dict):
+            continue
+        hint = str(register.get("register", "")).strip().casefold()
+        if not hint:
+            continue
+        if hint in requested or requested in hint:
+            return register
+        hint_tokens = [token for token in re.split(r"[\s/，,;；、]+", hint) if len(token) >= 2]
+        if any(token in requested for token in hint_tokens):
+            return register
+    return None
 
 
 def canonical_form(glossary: dict) -> dict:

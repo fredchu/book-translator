@@ -12,6 +12,11 @@ from pathlib import Path
 
 from bs4 import BeautifulSoup
 
+try:
+    from scripts.glossary import resolve_register
+except ModuleNotFoundError:  # pragma: no cover - direct script execution path
+    from glossary import resolve_register
+
 BANNED_PATTERNS = [
     "版權頁說明",
     "本段保留",
@@ -36,7 +41,7 @@ BANNED_PATTERNS = [
 ]
 
 
-def audit(output: Path) -> tuple[bool, list[str]]:
+def audit(output: Path, min_length_ratio: float = 0.22) -> tuple[bool, list[str]]:
     failures: list[str] = []
     with zipfile.ZipFile(output) as z:
         exceptions = _source_only_exceptions(z)
@@ -55,8 +60,7 @@ def audit(output: Path) -> tuple[bool, list[str]]:
                 tgt_text = _clean(tgt.get_text(" ", strip=True))
                 if (
                     len(src_text) >= 50
-                    and not _is_body_translation_path(path)
-                    and len(tgt_text) < 0.30 * len(src_text)
+                    and len(tgt_text) < min_length_ratio * len(src_text)
                 ):
                     failures.append(
                         f"{path}: target too short ({len(tgt_text)}/{len(src_text)}): {src_text[:120]}"
@@ -125,11 +129,6 @@ def _has_tgt_class(node) -> bool:
     return bool(classes & {"tgt", "tgt-zh"})
 
 
-def _is_body_translation_path(path: str) -> bool:
-    basename = posixpath.basename(path)
-    return bool(re.match(r"(06|08|09|10|12|13|14|15|16|17|18)_", basename))
-
-
 def _next_tag(node):
     sibling = node.next_sibling
     while sibling is not None:
@@ -143,14 +142,33 @@ def _clean(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def _min_length_ratio_from_book_dir(book_dir: Path | None) -> float:
+    default = 0.22
+    if book_dir is None:
+        return default
+    glossary_path = book_dir / "glossary.json"
+    if not glossary_path.is_file():
+        return default
+    glossary = json.loads(glossary_path.read_text(encoding="utf-8"))
+    register = resolve_register(glossary)
+    if not register:
+        return default
+    ratio = register.get("min_length_ratio")
+    if isinstance(ratio, (int, float)):
+        return float(ratio)
+    return default
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--book-dir", type=Path)
     args = parser.parse_args(argv)
     if not args.output.is_file():
         print(f"not a file: {args.output}", file=sys.stderr)
         return 2
-    passed, failures = audit(args.output)
+    min_length_ratio = _min_length_ratio_from_book_dir(args.book_dir)
+    passed, failures = audit(args.output, min_length_ratio=min_length_ratio)
     print(f"translation_quality_audit: {'PASS' if passed else 'FAIL'}")
     if failures:
         for failure in failures:

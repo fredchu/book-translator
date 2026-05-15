@@ -4,6 +4,7 @@
       "id": "literary_fiction",
       "description": "Literary fiction with plain spoken register and economy of words",
       "register": "literary plain prose",
+      "min_length_ratio": 0.22,
       "prefer": ["口語節奏", "短句", "略諷刺"],
       "avoid": ["翻譯腔", "四字結構過多", "過度書面化"]
     },
@@ -11,6 +12,7 @@
       "id": "non_fiction_narrative",
       "description": "Popular non-fiction narrative; first-person, conversational, anecdote-driven",
       "register": "商管/社科 narrative，第一人稱保留",
+      "min_length_ratio": 0.28,
       "prefer": ["口語節奏", "具體例子優先", "保留作者第一人稱『我』", "保留幽默/反諷"],
       "avoid": ["學術化", "翻譯腔", "把 I 改成『筆者』/『作者』", "四字成語堆疊"]
     },
@@ -18,6 +20,7 @@
       "id": "academic_technical",
       "description": "Academic or technical writing where precision dominates",
       "register": "學術論述，精確優先",
+      "min_length_ratio": 0.30,
       "prefer": ["精確術語", "邏輯連接詞", "完整句"],
       "avoid": ["口語縮略", "俏皮幽默", "主觀色彩"]
     }

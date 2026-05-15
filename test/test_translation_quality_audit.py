@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import zipfile
+import inspect
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
@@ -17,6 +18,29 @@ def test_translation_quality_audit_passes_good_pair(tmp_path: Path):
     passed, failures = translation_quality_audit.audit(epub)
     assert passed
     assert failures == []
+
+
+def test_translation_quality_audit_uses_configurable_min_length_ratio(tmp_path: Path):
+    epub = _write_epub(
+        tmp_path,
+        f'<p class="src">{"A" * 100}</p>'
+        f'<p class="tgt tgt-zh">{"中" * 25}</p>',
+    )
+
+    passed, failures = translation_quality_audit.audit(epub, min_length_ratio=0.22)
+    strict_passed, strict_failures = translation_quality_audit.audit(epub, min_length_ratio=0.30)
+
+    assert passed
+    assert failures == []
+    assert not strict_passed
+    assert any("target too short" in failure for failure in strict_failures)
+
+
+def test_translation_quality_audit_has_no_body_path_regex():
+    source = Path(inspect.getfile(translation_quality_audit)).read_text("utf-8")
+
+    assert "_is_body_translation_path" not in source
+    assert "(06|08|09|10|12|13|14|15|16|17|18)" not in source
 
 
 def test_translation_quality_audit_fails_banned_placeholder(tmp_path: Path):

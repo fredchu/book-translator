@@ -48,6 +48,18 @@ def test_glossary_prompt_contains_no_banned_author_names():
         assert author_name not in glossary.GLOSSARY_PROMPT
 
 
+def test_resolve_register_matches_configured_registers():
+    literary = glossary.resolve_register(
+        {"style_anchor": {"register": "literary plain prose with fable cadence"}}
+    )
+    narrative = glossary.resolve_register({"style_anchor": {"register": "商管科普 narrative"}})
+    unknown = glossary.resolve_register({"style_anchor": {"register": "totally unknown register"}})
+
+    assert literary and literary["id"] == "literary_fiction"
+    assert narrative and narrative["id"] == "non_fiction_narrative"
+    assert unknown is None
+
+
 def test_parse_glossary_plain_json():
     assert glossary.parse_glossary(json.dumps(MINIMAL)) == MINIMAL
 
