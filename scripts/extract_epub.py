@@ -147,7 +147,7 @@ def extract(
             properties=str(opf_item.get("properties") or ""),
         )
         first_heading = heading or _ROLE_TO_HEADING.get(role) or fallback_heading
-        strategy = default_output_strategy(role)
+        strategy = default_output_strategy(role, char_count=len(text))
         if strategy == "translate" and role == "body" and len(text) == 0:
             strategy = "source_only"
         translation_id = None
@@ -257,7 +257,9 @@ def infer_role(*, src_idref: str, src_href: str, first_heading: str, properties:
     return "body"
 
 
-def default_output_strategy(role: str) -> str:
+def default_output_strategy(role: str, char_count: int = 0) -> str:
+    if role == "part_divider" and char_count >= 300:
+        return "translate"
     if role in TRANSLATE_ROLES:
         return "translate"
     if role == "nav":

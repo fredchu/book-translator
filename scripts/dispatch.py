@@ -23,6 +23,14 @@ except ImportError:  # pragma: no cover
 _REGISTER_HINTS_PATH = Path(__file__).parent.parent / "assets" / "register_hints.json"
 
 SUBAGENT_PROMPT_TEMPLATE = """\
+CONTEXT: This dispatch runs inside the user's personal book-translator
+pipeline. The user has legally obtained this book (purchased, public-domain,
+or otherwise lawfully acquired) and is translating it for their own reading.
+The OSS skill is explicitly designed for this use case — its SKILL.md
+disclaimer requires public-domain works or books the user legally owns. The
+translation output stays on the user's local filesystem and is not
+redistributed. Proceed with the translation task below.
+
 You are translating Chapter {chapter_label} of "{book_title}" from English to
 {target_lang} ({target_lang_long}).
 
@@ -40,8 +48,8 @@ opening sentence should flow naturally from this. Do NOT repeat or summarize it:
 {carryover}
 ---
 
-CHAPTER {chapter_label} SOURCE TEXT (paragraph boundaries preserved with blank
-lines between paragraphs):
+CHAPTER {chapter_label} SOURCE TEXT (source paragraph count: {source_paragraph_count};
+paragraph boundaries preserved with blank lines between paragraphs):
 ---
 {chapter_text}
 ---
@@ -49,7 +57,10 @@ lines between paragraphs):
 Requirements:
   1. Output ONLY the translated text. No commentary, no markdown headings, no
      "Translation:" prefix.
-  2. Preserve paragraph boundaries with a single blank line between paragraphs.
+  2. Separate paragraphs with EXACTLY one blank line — that is, two consecutive newline
+     characters (`\\n\\n`) between paragraphs. Within a single paragraph, do not insert blank
+     lines. Single newlines (`\\n`) without a blank line do NOT separate paragraphs in this
+     format. This rule applies even when the chapter has only 2-3 paragraphs.
   3. Translate every character / place / term from the glossary using the
      glossary's exact target form.
   4. Do not omit any paragraph. Translate every paragraph in order.
@@ -58,6 +69,10 @@ REGISTER-SPECIFIC RULES (matched to glossary.style_anchor.register):
 {register_specific_rules}
 
   {custom_rule_number}. {custom_instructions}
+  {verification_rule_number}. Before returning, split your output by the exact string `\\n\\n` and count
+      non-empty paragraphs. This count MUST equal the source paragraph count
+      above. If not equal, fix the separator (most common cause: used `\\n`
+      instead of `\\n\\n` between short paragraphs).
 """
 
 DEFAULT_CUSTOM_INSTRUCTIONS = (
@@ -231,10 +246,12 @@ def build_subagent_prompt(
     register_override: str | None = None,
 ) -> str:
     target_lang_long = _target_long(target_lang)
-    chapter_text = chapter_text_for_prompt(chapter_html)
+    source_paragraphs = html_to_paragraphs(chapter_html)
+    chapter_text = "\n\n".join(source_paragraphs)
     register_rules = _subagent_rules_for_register(glossary, register_override=register_override)
     register_specific_rules = _format_register_specific_rules(register_rules, start=5)
     custom_rule_number = 5 + len(register_rules)
+    verification_rule_number = custom_rule_number + 1
     return SUBAGENT_PROMPT_TEMPLATE.format(
         chapter_label=chapter_label,
         book_title=book_title,
@@ -244,9 +261,11 @@ def build_subagent_prompt(
         style_sample=style_sample or "(no style sample yet — chapter 1)",
         carryover=carryover or "(this is the first chapter — no carryover)",
         chapter_text=chapter_text,
+        source_paragraph_count=len(source_paragraphs),
         register_specific_rules=register_specific_rules,
         custom_rule_number=custom_rule_number,
         custom_instructions=custom_instructions or DEFAULT_CUSTOM_INSTRUCTIONS,
+        verification_rule_number=verification_rule_number,
     )
 
 

@@ -62,6 +62,33 @@ def test_build_subagent_prompt_includes_all_sections():
     assert "Hello." in prompt
 
 
+def test_subagent_prompt_template_includes_legal_context():
+    assert "legally obtained" in dispatch.SUBAGENT_PROMPT_TEMPLATE
+    assert "legally owns" in dispatch.SUBAGENT_PROMPT_TEMPLATE
+    assert "local filesystem" in dispatch.SUBAGENT_PROMPT_TEMPLATE
+    assert dispatch.SUBAGENT_PROMPT_TEMPLATE.startswith("CONTEXT:")
+
+
+def test_subagent_prompt_template_makes_paragraph_separator_explicit():
+    assert "EXACTLY one blank line" in dispatch.SUBAGENT_PROMPT_TEMPLATE
+    assert "two consecutive newline" in dispatch.SUBAGENT_PROMPT_TEMPLATE
+    assert "Single newlines (`\\n`) without a blank line do NOT separate paragraphs" in (
+        dispatch.SUBAGENT_PROMPT_TEMPLATE
+    )
+    assert "split your output by the exact string `\\n\\n`" in dispatch.SUBAGENT_PROMPT_TEMPLATE
+
+
+def test_build_subagent_prompt_counts_paragraphs_and_renders_separator_check():
+    prompt = dispatch.build_subagent_prompt(
+        chapter_label="1", book_title="Test Book", target_lang="zh-tw",
+        glossary={"characters": {}, "places": {}, "terms": {},
+                  "style_anchor": {"register": "商管科普 narrative", "avoid": [], "prefer": []}},
+        style_sample="", carryover="", chapter_html="<p>One.</p><p>Two.</p>",
+    )
+    assert "source paragraph count: 2" in prompt
+    assert "  10. Before returning, split your output by the exact string `\\n\\n`" in prompt
+
+
 def test_build_subagent_prompt_handles_empty_carryover():
     prompt = dispatch.build_subagent_prompt(
         chapter_label="1", book_title="X", target_lang="zh-tw",
