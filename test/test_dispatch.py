@@ -103,7 +103,7 @@ def test_subagent_prompt_includes_bocky_style_rules():
     並列格式 / 第一人稱保留 / 對話與打油詩保幽默 / 不學術化.
     """
     prompt = dispatch.build_subagent_prompt(
-        chapter_label="3", book_title="Co-Intelligence", target_lang="zh-tw",
+        chapter_label="3", book_title="Animal Farm", target_lang="zh-tw",
         glossary={"characters": {}, "places": {}, "terms": {},
                   "style_anchor": {"register": "x", "avoid": [], "prefer": []}},
         style_sample="範本。", carryover="", chapter_html="<p>I asked AI.</p>",
