@@ -37,6 +37,14 @@ def test_register_hints_file_exists_and_parses():
     ]
 
 
+def test_register_hints_load_subagent_rules():
+    data = json.loads(REGISTER_HINTS_PATH.read_text("utf-8"))
+    for register in data["registers"]:
+        assert isinstance(register["subagent_rules"], list)
+        assert len(register["subagent_rules"]) >= 3
+        assert all(isinstance(rule, str) and rule.strip() for rule in register["subagent_rules"])
+
+
 def test_glossary_prompt_contains_all_register_descriptions():
     data = json.loads(REGISTER_HINTS_PATH.read_text("utf-8"))
     for register in data["registers"]:
@@ -46,6 +54,18 @@ def test_glossary_prompt_contains_all_register_descriptions():
 def test_glossary_prompt_contains_no_banned_author_names():
     for author_name in BANNED_AUTHOR_NAMES:
         assert author_name not in glossary.GLOSSARY_PROMPT
+
+
+def test_resolve_register_matches_configured_registers():
+    literary = glossary.resolve_register(
+        {"style_anchor": {"register": "literary plain prose with fable cadence"}}
+    )
+    narrative = glossary.resolve_register({"style_anchor": {"register": "商管科普 narrative"}})
+    unknown = glossary.resolve_register({"style_anchor": {"register": "totally unknown register"}})
+
+    assert literary and literary["id"] == "literary_fiction"
+    assert narrative and narrative["id"] == "non_fiction_narrative"
+    assert unknown is None
 
 
 def test_parse_glossary_plain_json():

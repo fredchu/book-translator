@@ -4,22 +4,44 @@
       "id": "literary_fiction",
       "description": "Literary fiction with plain spoken register and economy of words",
       "register": "literary plain prose",
+      "min_length_ratio": 0.22,
       "prefer": ["口語節奏", "短句", "略諷刺"],
-      "avoid": ["翻譯腔", "四字結構過多", "過度書面化"]
+      "avoid": ["翻譯腔", "四字結構過多", "過度書面化"],
+      "subagent_rules": [
+        "Short sentences over long ones. Plain prose with fable cadence.",
+        "NO 中英並列 for character/place names — use the Chinese names per glossary verbatim. Names are stylistic glue, not jargon.",
+        "Plain everyday Chinese (跑/看/說 not 奔馳/凝視/言道). No 四字成語 piling.",
+        "Preserve the narrator's distance — do NOT insert author commentary or shift to first-person.",
+        "Dialogue colloquial natural; no 「閣下」/「在下」 archaisms unless the source uses period-archaic English."
+      ]
     },
     {
       "id": "non_fiction_narrative",
       "description": "Popular non-fiction narrative; first-person, conversational, anecdote-driven",
       "register": "商管/社科 narrative，第一人稱保留",
+      "min_length_ratio": 0.28,
       "prefer": ["口語節奏", "具體例子優先", "保留作者第一人稱『我』", "保留幽默/反諷"],
-      "avoid": ["學術化", "翻譯腔", "把 I 改成『筆者』/『作者』", "四字成語堆疊"]
+      "avoid": ["學術化", "翻譯腔", "把 I 改成『筆者』/『作者』", "四字成語堆疊"],
+      "subagent_rules": [
+        "專有名詞 / 縮寫 / 技術詞首次在本章出現時，用中英並列「中文（English）」格式（例：「大型語言模型（LLM）」、「人類回饋強化學習（RLHF）」、「通用人工智慧（AGI）」），後續再出現只用中文。同章內保持一致。",
+        "保留作者第一人稱敘事口吻。'I asked AI...', 'I tried...', 'I found...' 翻成「我問 AI⋯」「我試了⋯」「我發現⋯」。**不要**改成「筆者」「作者」「我們」——會失去 narrative 親近感、把口語回憶錄變成論文。",
+        "例句、AI 對話、打油詩、引述：保留原作風格與幽默。AI 生成的 limerick / 詩可重組押韻不必逐字（中文押韻為主），但機智 / 反差 / 自嘲口吻必須留住。對話翻成口語體（不要文謅謅、不要「閣下」「在下」）。",
+        "整體 register：商管/社科 narrative。**不要學術化**。短句優於長句、口語優於書面、具體例子優於抽象詞、白話優於成語堆疊。"
+      ]
     },
     {
       "id": "academic_technical",
       "description": "Academic or technical writing where precision dominates",
       "register": "學術論述，精確優先",
+      "min_length_ratio": 0.30,
       "prefer": ["精確術語", "邏輯連接詞", "完整句"],
-      "avoid": ["口語縮略", "俏皮幽默", "主觀色彩"]
+      "avoid": ["口語縮略", "俏皮幽默", "主觀色彩"],
+      "subagent_rules": [
+        "Use precise technical terminology consistently. First occurrence of a key term: include the English in parentheses 「中文（English）」.",
+        "Maintain logical connective discipline: 因此 / 然而 / 此外 / 此處需注意 — translate logical scaffolding faithfully.",
+        "Complete sentences. Avoid colloquial contractions or rhetorical flourishes.",
+        "Register: 學術論述，精確優先 — precision dominates over readability. Avoid subjectivity, humor, or hyperbole that did not exist in the source."
+      ]
     }
   ]
 }
