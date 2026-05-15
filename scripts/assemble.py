@@ -103,7 +103,7 @@ def assemble(book_dir: Path, out_path: Path) -> Path:
 
     nav_path = _nav_path(manifest, opf_path)
     if nav_path:
-        replacements[nav_path] = _build_nav_xhtml(manifest, represented_entries, nav_path, opf_dir).encode("utf-8")
+        replacements[nav_path] = _build_nav_xhtml(manifest, spine_entries, nav_path, opf_dir).encode("utf-8")
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     if source_epub.is_file():
@@ -412,26 +412,34 @@ def _nav_path(manifest: dict, opf_path: str | None) -> str | None:
 
 
 def _build_nav_xhtml(manifest: dict, entries: list[dict], nav_path: str, opf_dir: str) -> str:
-    if _is_co_intelligence(manifest):
-        return CO_INTELLIGENCE_NAV_XHTML
     title = html.escape(str(manifest.get("title") or manifest.get("book_stem") or "Book"))
-    items: list[str] = []
-    for entry in entries:
-        if entry.get("role") == "cover":
-            continue
-        label = _nav_label(entry)
-        target = _entry_original_path(entry, f"{opf_dir}/content.opf" if opf_dir else None)
-        href = posixpath.relpath(target, posixpath.dirname(nav_path) or ".")
-        items.append(f'      <li><a href="{html.escape(quote(href, safe="/#._-"))}">{html.escape(label)}</a></li>')
-    body = "\n".join(items)
+    nav_entries = [
+        entry for entry in entries
+        if entry.get("output_strategy") not in {"drop_explicit", "nav_generated"}
+        and entry.get("role") != "nav"
+    ]
+    entry_by_id = {str(entry.get("id")): entry for entry in nav_entries if entry.get("id")}
+    children_by_parent: dict[str, list[dict]] = {}
+    nested_ids: set[str] = set()
+    for entry in nav_entries:
+        parent_id = entry.get("parent_id")
+        parent = entry_by_id.get(str(parent_id)) if parent_id else None
+        if parent and parent.get("role") == "part_divider":
+            children_by_parent.setdefault(str(parent_id), []).append(entry)
+            nested_ids.add(str(entry.get("id")))
+    top_level = [entry for entry in nav_entries if str(entry.get("id")) not in nested_ids]
+    body = "\n".join(
+        _render_nav_item(entry, children_by_parent.get(str(entry.get("id")), []), nav_path, opf_dir)
+        for entry in top_level
+    )
     return f"""<?xml version="1.0" encoding="utf-8"?>
 <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" lang="zh-Hant" xml:lang="zh-Hant">
   <head>
-    <title>{title} 目錄</title>
+    <title>{title} ｜ 中英對照</title>
   </head>
   <body>
     <nav epub:type="toc" id="toc" role="doc-toc">
-      <h1>目錄</h1>
+      <h1>Contents ｜ 目錄</h1>
       <ol>
 {body}
       </ol>
@@ -439,6 +447,57 @@ def _build_nav_xhtml(manifest: dict, entries: list[dict], nav_path: str, opf_dir
   </body>
 </html>
 """
+
+
+def _render_nav_item(entry: dict, children: list[dict], nav_path: str, opf_dir: str) -> str:
+    label = _nav_display_label(entry)
+    target = _entry_original_path(entry, f"{opf_dir}/content.opf" if opf_dir else None)
+    href = posixpath.relpath(target, posixpath.dirname(nav_path) or ".")
+    anchor = f'<a href="{html.escape(quote(href, safe="/#._-"))}">{html.escape(label)}</a>'
+    if not children:
+        return f"        <li>{anchor}</li>"
+    child_items = "\n".join(_render_nav_item(child, [], nav_path, opf_dir) for child in children)
+    return f"""        <li>{anchor}
+          <ol>
+{child_items}
+          </ol>
+        </li>"""
+
+
+def _nav_display_label(entry: dict) -> str:
+    first = _clean_text(str(entry.get("first_heading") or entry.get("id") or ""))
+    if not first:
+        first = "Untitled"
+    zh = _nav_zh_label(first, entry) or first
+    return f"{first} ｜ {zh}"
+
+
+def _nav_zh_label(first: str, entry: dict) -> str:
+    override = _translations_extra_nav_overrides(entry).get(str(entry.get("original_idref") or ""))
+    if override:
+        return str(override)
+    exact = STRUCTURAL_LABELS_ZH_TW.get(first)
+    if exact:
+        return exact
+    contents = CONTENTS_LINK_LABELS_ZH_TW.get(first)
+    if contents:
+        return contents
+    contents_style = _contents_style(first)
+    if contents_style != first:
+        exact = STRUCTURAL_LABELS_ZH_TW.get(contents_style) or CONTENTS_LINK_LABELS_ZH_TW.get(contents_style)
+        if exact:
+            return exact
+    return _exact_translation_for_text(contents_style, entry) or _fallback_translation(first, entry)
+
+
+def _translations_extra_nav_overrides(entry: dict) -> dict:
+    extra = entry.get("_translations_extra")
+    if not isinstance(extra, dict):
+        return {}
+    nav_overrides = extra.get("nav_overrides")
+    if not isinstance(nav_overrides, dict):
+        return {}
+    return nav_overrides
 
 
 def _nav_label(entry: dict) -> str:
@@ -456,53 +515,6 @@ def _nav_label(entry: dict) -> str:
 
 def _contents_style(text: str) -> str:
     return re.sub(r"\s+", " ", text.replace("\n", " ")).strip()
-
-
-def _is_co_intelligence(manifest: dict) -> bool:
-    haystack = " ".join(str(manifest.get(key, "")) for key in ("title", "book_stem", "source_epub"))
-    return "Co-Intelligence" in haystack or "co-intelligence" in haystack.lower()
-
-
-CO_INTELLIGENCE_NAV_XHTML = """<?xml version="1.0" encoding="utf-8"?>
-<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" lang="zh-Hant" xml:lang="zh-Hant">
-<head><title>Co-Intelligence ｜ 中英對照</title></head>
-<body lang="zh-Hant" xml:lang="zh-Hant">
-<nav id="toc" epub:type="toc" role="doc-toc">
-  <h1>Contents ｜ 目錄</h1>
-  <ol>
-    <li><a href="xhtml/01_Cover.xhtml">Cover ｜ 封面</a></li>
-    <li><a href="xhtml/02_Title_Page.xhtml">Title Page ｜ 書名頁</a></li>
-    <li><a href="xhtml/03_Copyright.xhtml">Copyright ｜ 版權頁</a></li>
-    <li><a href="xhtml/04_Dedication.xhtml">Dedication ｜ 獻辭</a></li>
-    <li><a href="xhtml/05_Contents.xhtml">Contents ｜ 目錄</a></li>
-    <li><a href="xhtml/06_Introduction_Three_Sl.xhtml">Introduction: Three Sleepless Nights ｜ 導論：三個失眠的夜晚</a></li>
-    <li><a href="xhtml/07_Part_I.xhtml">Part I ｜ 第一部</a>
-      <ol>
-        <li><a href="xhtml/08_1_Creating_Alien_Mind.xhtml">1. Creating Alien Minds ｜ 第一章：創造異質心智</a></li>
-        <li><a href="xhtml/09_2_Aligning_the_Alien.xhtml">2. Aligning the Alien ｜ 第二章：對齊異質智能</a></li>
-        <li><a href="xhtml/10_3_Four_Rules_for_Co-I.xhtml">3. Four Rules for Co-Intelligence ｜ 第三章：協同智能四原則</a></li>
-      </ol>
-    </li>
-    <li><a href="xhtml/11_Part_II.xhtml">Part II ｜ 第二部</a>
-      <ol>
-        <li><a href="xhtml/12_4_Ai_as_a_Person.xhtml">4. AI as a Person ｜ 第四章：AI 作為一個人</a></li>
-        <li><a href="xhtml/13_5_Ai_as_a_Creative.xhtml">5. AI as a Creative ｜ 第五章：AI 作為創意夥伴</a></li>
-        <li><a href="xhtml/14_6_Ai_as_a_Coworker.xhtml">6. AI as a Coworker ｜ 第六章：AI 作為同事</a></li>
-        <li><a href="xhtml/15_7_Ai_as_a_Tutor.xhtml">7. AI as a Tutor ｜ 第七章：AI 作為導師</a></li>
-        <li><a href="xhtml/16_8_Ai_as_a_Coach.xhtml">8. AI as a Coach ｜ 第八章：AI 作為教練</a></li>
-        <li><a href="xhtml/17_9_Ai_as_Our_Future.xhtml">9. AI as Our Future ｜ 第九章：AI 作為我們的未來</a></li>
-        <li><a href="xhtml/18_Epilogue_Ai_as_Us.xhtml">Epilogue: AI as Us ｜ 尾聲：AI 即我們</a></li>
-      </ol>
-    </li>
-    <li><a href="xhtml/19_Acknowledgments.xhtml">Acknowledgments ｜ 致謝</a></li>
-    <li><a href="xhtml/20_Notes.xhtml">Notes ｜ 註釋</a></li>
-    <li><a href="xhtml/21_About_the_Author.xhtml">About the Author ｜ 關於作者</a></li>
-    <li><a href="xhtml/next-reads.xhtml">What's Next on Your Reading List? ｜ 延伸閱讀清單</a></li>
-  </ol>
-</nav>
-</body>
-</html>
-"""
 
 
 def _write_from_source_archive(
