@@ -11,6 +11,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 import glossary  # type: ignore  # noqa: E402
 
 
+ROOT = Path(__file__).resolve().parent.parent
+REGISTER_HINTS_PATH = ROOT / "assets" / "register_hints.json"
+BANNED_AUTHOR_NAMES = ("Mollick", "Orwell", "McCarthy", "Pink", "Duhigg", "Kahneman")
+
 MINIMAL = {
     "characters": {"Napoleon": "拿破崙"},
     "places": {"Manor Farm": "莊園農場"},
@@ -21,6 +25,27 @@ MINIMAL = {
         "prefer": ["短句"],
     },
 }
+
+
+def test_register_hints_file_exists_and_parses():
+    assert REGISTER_HINTS_PATH.exists()
+    data = json.loads(REGISTER_HINTS_PATH.read_text("utf-8"))
+    assert [r["id"] for r in data["registers"]] == [
+        "literary_fiction",
+        "non_fiction_narrative",
+        "academic_technical",
+    ]
+
+
+def test_glossary_prompt_contains_all_register_descriptions():
+    data = json.loads(REGISTER_HINTS_PATH.read_text("utf-8"))
+    for register in data["registers"]:
+        assert register["description"] in glossary.GLOSSARY_PROMPT
+
+
+def test_glossary_prompt_contains_no_banned_author_names():
+    for author_name in BANNED_AUTHOR_NAMES:
+        assert author_name not in glossary.GLOSSARY_PROMPT
 
 
 def test_parse_glossary_plain_json():
