@@ -15,13 +15,13 @@ import json
 import re
 from pathlib import Path
 
-_REGISTER_HINTS_PATH = Path(__file__).parent.parent / "assets" / "register_hints.json"
+REGISTER_HINTS_PATH = Path(__file__).parent.parent / "assets" / "register_hints.json"
 
 
 def _load_register_hints() -> list[dict]:
-    if not _REGISTER_HINTS_PATH.exists():
+    if not REGISTER_HINTS_PATH.exists():
         return []
-    with _REGISTER_HINTS_PATH.open(encoding="utf-8") as fh:
+    with REGISTER_HINTS_PATH.open(encoding="utf-8") as fh:
         data = json.load(fh)
     registers = data.get("registers", [])
     if not isinstance(registers, list):
@@ -132,9 +132,9 @@ def parse_glossary(text: str) -> dict:
 def resolve_register(glossary: dict, register_hints: dict | None = None) -> dict | None:
     """Resolve glossary style_anchor.register to a configured register hint."""
     if register_hints is None:
-        if not _REGISTER_HINTS_PATH.exists():
+        if not REGISTER_HINTS_PATH.exists():
             return None
-        with _REGISTER_HINTS_PATH.open(encoding="utf-8") as fh:
+        with REGISTER_HINTS_PATH.open(encoding="utf-8") as fh:
             register_hints = json.load(fh)
 
     registers = register_hints.get("registers", [])
@@ -160,6 +160,42 @@ def resolve_register(glossary: dict, register_hints: dict | None = None) -> dict
         if any(token in requested for token in hint_tokens):
             return register
     return None
+
+
+def resolve_register_override(register_id: str | None) -> dict | None:
+    """Resolve an explicit register hint id to a configured register."""
+    if not register_id or not REGISTER_HINTS_PATH.exists():
+        return None
+    wanted = register_id.strip().casefold()
+    if not wanted:
+        return None
+    with REGISTER_HINTS_PATH.open(encoding="utf-8") as fh:
+        data = json.load(fh)
+    registers = data.get("registers", [])
+    if not isinstance(registers, list):
+        return None
+    for register in registers:
+        if not isinstance(register, dict):
+            continue
+        if str(register.get("id", "")).strip().casefold() == wanted:
+            return register
+    return None
+
+
+def resolve_register_rules(
+    glossary: dict,
+    *,
+    register_override: str | None = None,
+    fallback_rules: list[str] | None = None,
+) -> list[str]:
+    """Resolve subagent prompt rules for a glossary register."""
+    register = resolve_register_override(register_override) if register_override else resolve_register(glossary)
+    rules = register.get("subagent_rules") if isinstance(register, dict) else None
+    if isinstance(rules, list):
+        cleaned = [str(rule).strip() for rule in rules if str(rule).strip()]
+        if cleaned:
+            return cleaned
+    return fallback_rules or []
 
 
 def canonical_form(glossary: dict) -> dict:

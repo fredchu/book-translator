@@ -73,6 +73,44 @@ def test_resolve_register_matches_configured_registers():
     assert unknown is None
 
 
+def test_resolve_register_override_finds_register_by_id_case_insensitive():
+    register = glossary.resolve_register_override("NON_FICTION_NARRATIVE")
+    assert register and register["id"] == "non_fiction_narrative"
+
+
+def test_resolve_register_override_returns_none_for_missing_or_empty_id():
+    assert glossary.resolve_register_override(None) is None
+    assert glossary.resolve_register_override("") is None
+    assert glossary.resolve_register_override("   ") is None
+    assert glossary.resolve_register_override("missing_register") is None
+
+
+def test_resolve_register_rules_returns_register_rules():
+    rules = glossary.resolve_register_rules(
+        {"style_anchor": {"register": "商管科普 narrative"}},
+        fallback_rules=["fallback"],
+    )
+    assert rules
+    assert rules != ["fallback"]
+    assert "中英並列" in rules[0]
+
+
+def test_resolve_register_rules_returns_fallback_when_register_has_no_rules(monkeypatch):
+    monkeypatch.setattr(glossary, "resolve_register", lambda _glossary: {"id": "empty"})
+    fallback = ["Plain fallback rule."]
+    assert glossary.resolve_register_rules({"style_anchor": {"register": "empty"}}, fallback_rules=fallback) == fallback
+
+
+def test_resolve_register_rules_honors_register_override_over_glossary_register():
+    rules = glossary.resolve_register_rules(
+        {"style_anchor": {"register": "literary plain prose with fable cadence"}},
+        register_override="academic_technical",
+        fallback_rules=["fallback"],
+    )
+    assert "precise technical terminology" in rules[0]
+    assert all("fable cadence" not in rule for rule in rules)
+
+
 def test_parse_glossary_plain_json():
     assert glossary.parse_glossary(json.dumps(MINIMAL)) == MINIMAL
 

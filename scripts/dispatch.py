@@ -11,16 +11,13 @@ from __future__ import annotations
 
 import json
 import re
-from pathlib import Path
 
 try:  # pragma: no cover - import mode depends on caller
     from .content_blocks import extract_blocks, extract_paragraphs
-    from .glossary import resolve_register
+    from .glossary import resolve_register_rules
 except ImportError:  # pragma: no cover
     from content_blocks import extract_blocks, extract_paragraphs
-    from glossary import resolve_register
-
-_REGISTER_HINTS_PATH = Path(__file__).parent.parent / "assets" / "register_hints.json"
+    from glossary import resolve_register_rules
 
 SUBAGENT_PROMPT_TEMPLATE = """\
 CONTEXT: This dispatch runs inside the user's personal book-translator
@@ -118,7 +115,11 @@ def build_subagent_prompt(
     target_lang_long = _target_long(target_lang)
     source_paragraphs = html_to_paragraphs(chapter_html)
     chapter_text = "\n\n".join(source_paragraphs)
-    register_rules = _subagent_rules_for_register(glossary, register_override=register_override)
+    register_rules = resolve_register_rules(
+        glossary,
+        register_override=register_override,
+        fallback_rules=GENERIC_SUBAGENT_RULES,
+    )
     register_specific_rules = _format_register_specific_rules(register_rules, start=5)
     custom_rule_number = 5 + len(register_rules)
     verification_rule_number = custom_rule_number + 1
@@ -137,33 +138,6 @@ def build_subagent_prompt(
         custom_instructions=custom_instructions or DEFAULT_CUSTOM_INSTRUCTIONS,
         verification_rule_number=verification_rule_number,
     )
-
-
-def _subagent_rules_for_register(glossary: dict, *, register_override: str | None = None) -> list[str]:
-    register = _resolve_register_override(register_override) if register_override else resolve_register(glossary)
-    rules = register.get("subagent_rules") if isinstance(register, dict) else None
-    if isinstance(rules, list):
-        cleaned = [str(rule).strip() for rule in rules if str(rule).strip()]
-        if cleaned:
-            return cleaned
-    return GENERIC_SUBAGENT_RULES
-
-
-def _resolve_register_override(register_id: str | None) -> dict | None:
-    if not register_id or not _REGISTER_HINTS_PATH.exists():
-        return None
-    with _REGISTER_HINTS_PATH.open(encoding="utf-8") as fh:
-        data = json.load(fh)
-    registers = data.get("registers", [])
-    if not isinstance(registers, list):
-        return None
-    wanted = register_id.strip().casefold()
-    for register in registers:
-        if not isinstance(register, dict):
-            continue
-        if str(register.get("id", "")).strip().casefold() == wanted:
-            return register
-    return None
 
 
 def _format_register_specific_rules(rules: list[str], *, start: int) -> str:
