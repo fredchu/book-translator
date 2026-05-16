@@ -14,6 +14,7 @@ from ebooklib import epub
 
 sys.path.insert(0, str(Path(__file__).parent))
 import extract_epub  # type: ignore  # noqa: E402
+import manifest as manifest_module  # type: ignore  # noqa: E402
 import state as state_schema  # type: ignore  # noqa: E402
 
 IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png", ".gif", ".svg", ".webp")
@@ -177,22 +178,7 @@ def _load_state(book_dir: Path | None) -> dict | None:
 
 
 def _manifest_entries(manifest: dict | None) -> list[dict]:
-    if not manifest:
-        return []
-    if "spine" in manifest:
-        return list(manifest["spine"])
-    entries: list[dict] = []
-    for entry in manifest.get("chapters", []):
-        copied = dict(entry)
-        copied.setdefault("src_idref", copied.get("id", ""))
-        copied.setdefault("role", extract_epub.infer_role(
-            src_idref=str(copied.get("id", "")),
-            src_href=str(copied.get("src_href", "")),
-            first_heading=str(copied.get("first_heading", "")),
-        ))
-        copied.setdefault("output_strategy", "translate")
-        entries.append(copied)
-    return entries
+    return [entry.as_dict() for entry in manifest_module.normalize_entries(manifest)]
 
 
 def _entry_for_source(source_item: dict, manifest_entries: list[dict]) -> dict | None:

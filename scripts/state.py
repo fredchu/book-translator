@@ -28,6 +28,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
+try:  # pragma: no cover - import mode depends on caller
+    from . import manifest as manifest_module
+except ImportError:  # pragma: no cover
+    import manifest as manifest_module  # type: ignore
+
 PENDING = "pending"
 IN_PROGRESS = "in_progress"
 DONE = "done"
@@ -47,12 +52,12 @@ VALID_OUTPUT_STRATEGIES = {TRANSLATE, SOURCE_ONLY, NAV_GENERATED, DROP_EXPLICIT}
 def init_state(book_path: Path, spine_or_ids: list[str] | list[dict], target_lang: str) -> dict:
     chapters: dict[str, dict] = {}
     if spine_or_ids and isinstance(spine_or_ids[0], dict):
-        for item in spine_or_ids:  # type: ignore[union-attr]
-            item_id = str(item["id"])
-            strategy = str(item.get("output_strategy", TRANSLATE))
+        for item in manifest_module.normalize_entries({"spine": spine_or_ids}):  # type: ignore[arg-type]
+            item_id = item.id
+            strategy = str(item.output_strategy or TRANSLATE)
             entry = {"output_strategy": strategy, "status": PENDING}
             if strategy == DROP_EXPLICIT:
-                entry["reason"] = str(item.get("reason", ""))
+                entry["reason"] = str(item.reason or "")
             chapters[item_id] = entry
     else:
         chapters = {str(cid): {"status": PENDING} for cid in spine_or_ids}  # type: ignore[arg-type]

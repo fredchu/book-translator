@@ -25,6 +25,7 @@ from ebooklib import epub  # re-exported for existing tests
 sys.path.insert(0, str(Path(__file__).parent))
 from content_blocks import walk_text_nodes  # type: ignore  # noqa: E402
 from dispatch import html_to_paragraphs  # type: ignore  # noqa: E402
+import manifest as manifest_module  # type: ignore  # noqa: E402
 
 IMAGE_MEDIA_TYPES = {
     ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
@@ -150,24 +151,7 @@ def _entry_with_translations_extra(entry: dict, translations_extra: dict) -> dic
 
 
 def _manifest_spine(manifest: dict) -> list[dict]:
-    if "spine" in manifest:
-        return [dict(entry) for entry in manifest["spine"]]
-    legacy = []
-    for entry in manifest.get("chapters", []):
-        copied = dict(entry)
-        copied.setdefault("id", copied.get("spine_id", copied.get("id")))
-        copied.setdefault("src_idref", copied["id"])
-        copied.setdefault("original_idref", copied.get("src_idref", copied["id"]))
-        copied.setdefault("src_href", copied.get("src_href", copied.get("href", "")))
-        copied.setdefault("original_path", copied.get("src_href", copied.get("href", "")))
-        copied.setdefault("linear", "yes")
-        copied.setdefault("media_type", XHTML_MEDIA_TYPE)
-        copied.setdefault("role", "body")
-        copied.setdefault("first_heading", copied["id"])
-        copied.setdefault("output_strategy", "translate")
-        copied.setdefault("translation_id", copied["id"])
-        legacy.append(copied)
-    return legacy
+    return [entry.as_dict() for entry in manifest_module.normalize_entries(manifest)]
 
 
 def _preflight(book_dir: Path, spine_entries: list[dict]) -> dict[str, Path]:

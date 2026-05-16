@@ -39,12 +39,10 @@ compatibility; it no longer filters extraction.
 from __future__ import annotations
 
 import argparse
-import json
 import posixpath
 import re
 import sys
 import zipfile
-from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from bs4 import BeautifulSoup
@@ -52,26 +50,10 @@ from ebooklib import epub
 
 try:  # pragma: no cover - import mode depends on caller
     from .epub_reader import EPUBReader, find_opf_path
+    from .manifest import SpineEntry, chapters_from_spine, save
 except ImportError:  # pragma: no cover
     from epub_reader import EPUBReader, find_opf_path
-
-
-@dataclass
-class SpineEntry:
-    id: str
-    src_idref: str
-    src_href: str
-    original_idref: str
-    original_path: str
-    href: str
-    linear: str
-    media_type: str
-    role: str
-    char_count: int
-    first_heading: str
-    output_strategy: str
-    translation_id: str | None = None
-    parent_id: str | None = None
+    from manifest import SpineEntry, chapters_from_spine, save
 
 
 TRANSLATE_ROLES = {"body", "epilogue", "acknowledgments", "about_author", "dedication"}
@@ -182,7 +164,7 @@ def extract(
         elif role in PART_CHAIN_BREAK_ROLES:
             current_part_id = None
 
-    spine = [asdict(e) for e in entries]
+    spine = [e.as_dict() for e in entries]
     manifest = {
         "book_stem": book_stem,
         "title": title,
@@ -201,33 +183,8 @@ def extract(
         # items and uses legacy ch_NN ids for translation files.
         "chapters": chapters_from_spine(spine),
     }
-    (book_out / "manifest.json").write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    save(manifest, book_out / "manifest.json")
     return book_out
-
-
-def chapters_from_spine(spine: list[dict]) -> list[dict]:
-    chapters: list[dict] = []
-    for entry in spine:
-        if entry.get("output_strategy") != "translate":
-            continue
-        translation_id = entry.get("translation_id") or entry["id"]
-        chapters.append(
-            {
-                "id": translation_id,
-                "spine_id": entry["id"],
-                "href": entry["href"],
-                "src_href": entry["src_href"],
-                "original_idref": entry.get("original_idref", entry.get("src_idref")),
-                "original_path": entry.get("original_path", entry.get("src_href")),
-                "char_count": entry["char_count"],
-                "first_heading": entry["first_heading"],
-                "role": entry.get("role", "body"),
-                "output_strategy": "translate",
-            }
-        )
-    return chapters
 
 
 def infer_role(*, src_idref: str, src_href: str, first_heading: str, properties: str = "") -> str:
