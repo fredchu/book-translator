@@ -160,6 +160,26 @@ def test_chapters_from_spine_filters_translate_entries():
     ]
 
 
+def test_entry_original_path_prefers_original_path():
+    entry = {
+        "id": "item_001",
+        "original_path": "EPUB/text/chapter-1.xhtml",
+        "src_href": "EPUB/text/fallback.xhtml",
+        "href": "chapters/item_001.html",
+    }
+
+    assert manifest.entry_original_path(entry, "EPUB/content.opf") == "EPUB/text/chapter-1.xhtml"
+
+
+def test_entry_original_path_falls_back_to_opf_dir_and_strips_chapters_prefix():
+    entry = {
+        "id": "item_002",
+        "href": "chapters/item_002.html",
+    }
+
+    assert manifest.entry_original_path(entry, "OEBPS/content.opf") == "OEBPS/item_002.xhtml"
+
+
 def test_load_save_round_trip(tmp_path: Path):
     path = tmp_path / "manifest.json"
     data = {"title": "Tiny", "spine": [], "chapters": []}

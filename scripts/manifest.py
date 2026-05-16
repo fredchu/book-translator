@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import posixpath
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Iterable
@@ -69,6 +70,18 @@ def chapters_from_spine(entries: Iterable[SpineEntry | dict]) -> list[dict]:
             }
         )
     return chapters
+
+
+def entry_original_path(entry: dict, opf_path: str | None) -> str:
+    """Resolve the original archive path for a manifest spine entry."""
+    original_path = str(entry.get("original_path") or entry.get("src_href") or "")
+    if original_path:
+        return original_path
+    opf_dir = posixpath.dirname(opf_path or "")
+    href = str(entry.get("href") or f"{entry['id']}.xhtml")
+    if href.startswith("chapters/"):
+        href = f"{entry['id']}.xhtml"
+    return posixpath.normpath(posixpath.join(opf_dir, href)) if opf_dir else href
 
 
 def load(manifest_path: Path) -> dict | None:

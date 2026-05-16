@@ -6,11 +6,18 @@ import argparse
 import sys
 from pathlib import Path
 
-from .audit_result import AuditResult
-from . import bilingual_coverage_audit
-from . import href_resolve_audit
-from . import structural_audit
-from . import translation_quality_audit
+try:  # pragma: no cover - import mode depends on caller
+    from .audit_result import AuditResult
+    from . import bilingual_coverage_audit
+    from . import href_resolve_audit
+    from . import structural_audit
+    from . import translation_quality_audit
+except ImportError:  # pragma: no cover
+    from audit_result import AuditResult  # type: ignore
+    import bilingual_coverage_audit  # type: ignore
+    import href_resolve_audit  # type: ignore
+    import structural_audit  # type: ignore
+    import translation_quality_audit  # type: ignore
 
 
 def run_all(source: Path, output: Path, book_dir: Path) -> list[AuditResult]:

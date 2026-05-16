@@ -161,7 +161,8 @@ def _read_entry_html(book_dir: Path, entry: dict, opf_path: str | None) -> str:
 
 def _source_html_path(book_dir: Path, entry: dict, opf_path: str | None) -> Path | None:
     candidates: list[Path] = []
-    original_path = str(entry.get("original_path") or "")
+    original_path_value = entry.get("original_path") or ""
+    original_path = str(original_path_value)
     if original_path:
         candidates.append(book_dir / _local_book_path(original_path, opf_path))
     href = str(entry.get("href") or "")
@@ -179,14 +180,7 @@ def _translations_for_entry(book_dir: Path, entry: dict, translation_paths: dict
     return []
 
 def _entry_original_path(entry: dict, opf_path: str | None) -> str:
-    original_path = str(entry.get("original_path") or entry.get("src_href") or "")
-    if original_path:
-        return original_path
-    opf_dir = posixpath.dirname(opf_path or "")
-    href = str(entry.get("href") or f"{entry['id']}.xhtml")
-    if href.startswith("chapters/"):
-        href = f"{entry['id']}.xhtml"
-    return posixpath.normpath(posixpath.join(opf_dir, href)) if opf_dir else href
+    return manifest_module.entry_original_path(entry, opf_path)
 
 def _local_book_path(original_path: str, opf_path: str | None) -> str:
     opf_dir = posixpath.dirname(opf_path or "")

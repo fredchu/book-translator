@@ -8,9 +8,11 @@ import zipfile
 from pathlib import Path
 
 try:  # pragma: no cover - import style depends on caller
+    from .manifest import entry_original_path
     from .nav_builder import nav_path as detect_nav_path
     from .opf_builder import build_minimal_opf
 except ImportError:  # pragma: no cover
+    from manifest import entry_original_path  # type: ignore
     from nav_builder import nav_path as detect_nav_path  # type: ignore
     from opf_builder import build_minimal_opf  # type: ignore
 
@@ -115,11 +117,4 @@ def _write_assets(out: zipfile.ZipFile, book_dir: Path, manifest: dict, opf_dir:
 
 
 def _entry_original_path(entry: dict, opf_path: str | None) -> str:
-    original_path = str(entry.get("original_path") or entry.get("src_href") or "")
-    if original_path:
-        return original_path
-    opf_dir = posixpath.dirname(opf_path or "")
-    href = str(entry.get("href") or f"{entry['id']}.xhtml")
-    if href.startswith("chapters/"):
-        href = f"{entry['id']}.xhtml"
-    return posixpath.normpath(posixpath.join(opf_dir, href)) if opf_dir else href
+    return entry_original_path(entry, opf_path)

@@ -19,6 +19,7 @@ try:  # pragma: no cover - import style depends on caller
         _fallback_translation,
     )
     from . import translations_extra as translations_extra_module
+    from .manifest import entry_original_path
 except ImportError:  # pragma: no cover
     from bilingual_rewriter import (  # type: ignore
         CONTENTS_LINK_LABELS_ZH_TW,
@@ -27,6 +28,7 @@ except ImportError:  # pragma: no cover
         _fallback_translation,
     )
     import translations_extra as translations_extra_module  # type: ignore
+    from manifest import entry_original_path  # type: ignore
 
 TRANSLATIONS_EXTRA_FILENAME = translations_extra_module.TRANSLATIONS_EXTRA_FILENAME
 
@@ -228,14 +230,7 @@ def _nav_label(entry: dict) -> str:
 
 
 def _entry_original_path(entry: dict, opf_path: str | None) -> str:
-    original_path = str(entry.get("original_path") or entry.get("src_href") or "")
-    if original_path:
-        return original_path
-    opf_dir = posixpath.dirname(opf_path or "")
-    href = str(entry.get("href") or f"{entry['id']}.xhtml")
-    if href.startswith("chapters/"):
-        href = f"{entry['id']}.xhtml"
-    return posixpath.normpath(posixpath.join(opf_dir, href)) if opf_dir else href
+    return entry_original_path(entry, opf_path)
 
 
 def _contents_style(text: str) -> str:

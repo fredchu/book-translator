@@ -24,6 +24,11 @@ FONT_MEDIA_TYPES = {
 
 XHTML_MEDIA_TYPE = "application/xhtml+xml"
 
+try:  # pragma: no cover - import style depends on caller
+    from .manifest import entry_original_path
+except ImportError:  # pragma: no cover
+    from manifest import entry_original_path  # type: ignore
+
 
 def build_minimal_opf(manifest: dict, entries: list[dict], opf_path: str, nav_path: str | None) -> str:
     """Generate a minimal OPF for the standalone archive path."""
@@ -86,14 +91,7 @@ def _append_image_items(manifest_items: list[str], manifest: dict) -> None:
 
 
 def _entry_original_path(entry: dict, opf_path: str | None) -> str:
-    original_path = str(entry.get("original_path") or entry.get("src_href") or "")
-    if original_path:
-        return original_path
-    opf_dir = posixpath.dirname(opf_path or "")
-    href = str(entry.get("href") or f"{entry['id']}.xhtml")
-    if href.startswith("chapters/"):
-        href = f"{entry['id']}.xhtml"
-    return posixpath.normpath(posixpath.join(opf_dir, href)) if opf_dir else href
+    return entry_original_path(entry, opf_path)
 
 
 def _safe_uid(value: str) -> str:
