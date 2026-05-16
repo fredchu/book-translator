@@ -76,28 +76,70 @@ Main session (Claude Code, Opus 4.7)
 └── 8. spot-check (random 5 paragraphs + name audit)           (latent)
 ```
 
-### Shared deterministic helpers
+### Shared deterministic modules
 
-Two modules own cross-cutting deterministic logic; all read/write call sites
-delegate to them so behaviour stays consistent across extract, dispatch,
-assemble, and audits.
+Cross-cutting deterministic logic lives in named modules; all read/write
+call sites delegate so behaviour stays consistent across extract,
+dispatch, assemble, and audits.
 
-- **`scripts/content_blocks.py`** — canonical "what counts as a paragraph"
-  module. Public API: `TEXT_TAGS`, `BLOCK_TAGS`, `walk_text_nodes`,
-  `extract_blocks`, `extract_paragraphs`, `strip_non_content`,
-  `TextBlock`/`ImageBlock` TypedDicts. Used by `dispatch.html_to_paragraphs` /
-  `dispatch.html_to_blocks` (thin wrappers preserved for back-compat),
-  `assemble._text_nodes_for_bilingual`, and `bilingual_coverage_audit`.
-  `translation_quality_audit` intentionally does NOT use this (it audits
-  already-marked `class="src"` pairs, not raw paragraphs).
-- **`scripts/epub_reader.py`** — canonical EPUB-zip reader (context manager).
-  Public API: `EPUBReader`, `OPFPackage`, `ManifestItem`, module-level
-  `find_opf_path`. Handles `META-INF/container.xml` lookup, OPF spine walk,
-  `include_nav` toggle for audit vs full-spine consumers. Tolerant of missing
-  container.xml AND missing `.opf` (returns `None`). Used by
-  `extract_epub.py`, `bilingual_coverage_audit.py`, and
-  `translation_quality_audit.py`. `structural_audit.py` reaches EPUB data
-  through `extract_epub.py`; `href_resolve_audit.py` walks zip namelist only.
+**Content / EPUB I/O:**
+- **`scripts/content_blocks.py`** — canonical "what counts as a paragraph".
+  `TEXT_TAGS`, `BLOCK_TAGS`, `walk_text_nodes`, `extract_blocks`,
+  `extract_paragraphs`, `strip_non_content`, `TextBlock`/`ImageBlock`.
+  Used by `dispatch.html_to_paragraphs` / `dispatch.html_to_blocks` (thin
+  wrappers), `assemble._text_nodes_for_bilingual`,
+  `bilingual_coverage_audit`. `translation_quality_audit` audits already-
+  marked `class="src"` pairs, not raw paragraphs — intentionally outside.
+- **`scripts/epub_reader.py`** — EPUB-zip reader (context manager).
+  `EPUBReader`, `OPFPackage`, `ManifestItem`, `find_opf_path`.
+  Tolerant of missing `container.xml` AND missing `.opf` (returns `None`).
+  Used by `extract_epub.py`, `bilingual_coverage_audit.py`,
+  `translation_quality_audit.py`.
+- **`scripts/manifest.py`** — manifest v2 normalization + persistence.
+  `SpineEntry` dataclass, `normalize_entries(manifest)`, `chapters_from_spine`,
+  `entry_original_path`, `load`, `save`. Consolidates v2 spine reading +
+  legacy `chapters[]` backfill that was previously duplicated in
+  extract / assemble / structural_audit / state.
+
+**Persistence:**
+- **`scripts/translations_extra.py`** — `translations_extra.json` owner.
+  `TRANSLATIONS_EXTRA_FILENAME`, `load`, `save`, `write_nav_overrides`.
+  `glossary.write_translations_extra_nav_overrides` is now a back-compat
+  alias.
+- **`scripts/glossary.py`** gains `load_glossary` + the moved register
+  lookup `REGISTER_HINTS_PATH` / `resolve_register_override` /
+  `resolve_register_rules` (previously in dispatch.py).
+- **`scripts/state.py`** — `ChapterEntry` dataclass owns the
+  `output_strategy` mutation invariant. The four mark_* helpers
+  (`mark_done` / `mark_failed` / `mark_source_ready` / `mark_dropped`)
+  delegate so the invariant is preserved uniformly. State.json on disk
+  shape unchanged.
+
+**Assemble pipeline (split from the former 770-line god module):**
+- **`scripts/assemble.py`** — thin orchestrator. `assemble(book_dir, out_path)`
+  sequences manifest load → spine entries → preflight → per-entry bilingual
+  rewrite → nav build → archive write.
+- **`scripts/bilingual_rewriter.py`** — `insert_bilingual(src_html, entry,
+  translations)` does per-paragraph English/中文 interleaving.
+  `STRUCTURAL_LABELS_ZH_TW` lives here.
+- **`scripts/nav_builder.py`** — `build_nav_xhtml`, `nav_path`,
+  `patch_toc_ncx`, `missing_nav_zh_warnings`, `source_ncx_path`. Generates
+  the bilingual nav and patches NCX for legacy readers.
+- **`scripts/archive_writer.py`** — `write_from_source_archive` (default,
+  overlays rewritten files onto source EPUB) and `write_standalone_archive`
+  (fallback when source archive isn't accessible).
+- **`scripts/opf_builder.py`** — `build_minimal_opf` + `fallback_opf_path`
+  for the standalone path.
+
+**Audit interface:**
+- **`scripts/audit_result.py`** — canonical `AuditResult(name, status,
+  failures, details)` dataclass + `.passed` / `.format_lines()`. Replaces
+  the divergent shapes that the 4 audits previously returned.
+- **`scripts/audit_suite.py`** — `run_all(source, output, book_dir)`,
+  `all_passed`, `format_summary`. CLI: `python3 -m scripts.audit_suite ...`
+  or `python3 scripts/audit_suite.py ...`.
+- Each audit module retains its legacy `audit(...) -> tuple[bool, list[str]]`
+  for back-compat, plus a `run(...) -> AuditResult` that audit_suite calls.
 
 ### 4 Coherence Mechanisms
 
@@ -123,9 +165,11 @@ python3 {baseDir}/scripts/extract_epub.py "<book_path>" --out "<out_dir>"
 ```
 
 `extract_epub.py` delegates `META-INF/container.xml` lookup + OPF parsing to
-`scripts/epub_reader.py` (shared with the audit scripts); the rest of the
-extraction pipeline (asset copy, XHTML mirror, manifest v2 generation) lives
-in `extract_epub.py`.
+`scripts/epub_reader.py` (shared with the audit scripts) and manifest v2
+spine normalization to `scripts/manifest.py` (`SpineEntry` +
+`normalize_entries` + `chapters_from_spine`). The rest of the extraction
+pipeline (asset copy, XHTML mirror, manifest.json write) stays in
+`extract_epub.py`.
 
 Produces `<out_dir>/<book_stem>/source.opf`, verbatim asset directories
 (`css/`, `fonts/`, `images/`), original XHTML copies under `xhtml/`,
@@ -178,12 +222,13 @@ Schema:
 ### Step 2.5: Auto-populate nav overrides
 
 After glossary build, the main session calls
-`glossary.write_translations_extra_nav_overrides(glossary, manifest, book_dir)`
-to populate `<book_dir>/translations_extra.json::nav_overrides` from the
-glossary's `chapter_titles_zh` field. This drives both nav rendering AND
-bilingual chapter title display in the assembled EPUB. If
-`translations_extra.json` already exists, existing keys are preserved
-(user overrides are not clobbered).
+`translations_extra.write_nav_overrides(glossary, manifest, book_dir)` to
+populate `<book_dir>/translations_extra.json::nav_overrides` from the
+glossary's `chapter_titles_zh` field.
+(`glossary.write_translations_extra_nav_overrides` is a back-compat alias.)
+This drives both nav rendering AND bilingual chapter title display in the
+assembled EPUB. If `translations_extra.json` already exists, existing keys
+are preserved (user overrides are not clobbered).
 
 ### Step 4: Translate ch.01 inline (style sample)
 
@@ -240,6 +285,13 @@ python3 {baseDir}/scripts/assemble.py \
   --out "<book_stem>_bilingual.epub"
 ```
 
+`assemble.py` is a thin orchestrator that sequences four sibling modules:
+- `bilingual_rewriter.insert_bilingual` does per-paragraph English/中文 interleaving
+- `nav_builder.build_nav_xhtml` + `patch_toc_ncx` generate the bilingual nav
+- `archive_writer.write_from_source_archive` (default) or
+  `write_standalone_archive` (fallback) writes the output EPUB
+- `opf_builder.build_minimal_opf` is used only by the standalone path
+
 Per-page structure: original English text nodes keep their source classes and
 also receive `src`; inserted Traditional Chinese sibling paragraphs receive
 `tgt tgt-zh` plus the inherited source classes. Original relative paths and
@@ -249,23 +301,30 @@ Assembly fails closed: any `translate` item missing its `item_NNN_translation.tx
 is a hard error. Source-only pages are emitted without translation, and explicit
 drops require a reason.
 
-### Step 8: Structural QA
+### Step 8: Audit gates
+
+All 4 deterministic audits run together via `audit_suite`:
+
+```bash
+python3 {baseDir}/scripts/audit_suite.py \
+  --source "<book_path>" \
+  --output "<book_stem>_bilingual.epub" \
+  --book-dir "<out_dir>/<book_stem>"
+```
+
+`audit_suite.run_all(...)` returns `list[AuditResult]`; the orchestrator can
+aggregate via `all_passed(results)` and report via `format_summary(results)`.
+Each `AuditResult(name, status, failures, details)` is the canonical shape —
+the audits previously returned three different shapes, now unified.
+
+Individual audits remain runnable standalone if you want one gate at a time:
 
 ```bash
 python3 {baseDir}/scripts/structural_audit.py \
   --source "<book_path>" \
   --output "<book_stem>_bilingual.epub" \
   --book-dir "<out_dir>/<book_stem>"
-```
 
-This deterministic gate is separate from translation quality eval. It checks
-source-vs-output spine representation, missing translations for translate
-items, state schema validity, cover page presence in the output spine,
-source-only image preservation, and at least one body chapter.
-
-Also run:
-
-```bash
 python3 {baseDir}/scripts/bilingual_coverage_audit.py \
   --source "<book_path>" \
   --output "<book_stem>_bilingual.epub"
@@ -276,6 +335,10 @@ python3 {baseDir}/scripts/href_resolve_audit.py \
 python3 {baseDir}/scripts/translation_quality_audit.py \
   --output "<book_stem>_bilingual.epub"
 ```
+
+`structural_audit.py` checks source-vs-output spine representation, missing
+translations for translate items, state schema validity, cover page presence,
+source-only image preservation, and at least one body chapter.
 
 `bilingual_coverage_audit.py` and `translation_quality_audit.py` share OPF
 lookup + spine walking through `scripts/epub_reader.py` (context manager);
@@ -324,6 +387,14 @@ Allowed `output_strategy`: `translate`, `source_only`, `nav_generated`,
 
 Resume: re-running on the same book reads `state.json` → skip `done` and
 `source_ready` → retry `failed` once → process `pending`.
+
+**Mutation invariant**: `output_strategy` is the spine item's identity and
+is preserved across status mutations. `scripts/state.py::ChapterEntry`
+owns this invariant — the module-level `mark_done` / `mark_failed` /
+`mark_source_ready` helpers all delegate to a single dataclass that
+guarantees `output_strategy` is never silently dropped. `mark_dropped`
+is the explicit exception (it replaces `output_strategy` with
+`drop_explicit`).
 
 ## Phase 3 — Cross-modal eval gate (deferred to first real translation)
 
