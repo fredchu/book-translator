@@ -22,6 +22,7 @@ Status values: "pending" | "in_progress" | "done" | "failed" | "source_ready" | 
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import hashlib
 import json
 from datetime import datetime, timezone
@@ -47,6 +48,92 @@ DROP_EXPLICIT = "drop_explicit"
 
 VALID_STATUSES = {PENDING, IN_PROGRESS, DONE, FAILED, SOURCE_READY, DROPPED}
 VALID_OUTPUT_STRATEGIES = {TRANSLATE, SOURCE_ONLY, NAV_GENERATED, DROP_EXPLICIT}
+
+
+@dataclass
+class ChapterEntry:
+    """Represents one chapter row in state.json's `chapters` dict.
+
+    Internal representation only: state.json on disk remains a plain dict.
+    Mutations preserve output_strategy, except mark_dropped which explicitly
+    replaces it with drop_explicit.
+    """
+
+    output_strategy: str
+    status: str
+    translation_hash: str | None = None
+    carryover: str | None = None
+    retry_count: int = 0
+    error: str | None = None
+    reason: str | None = None
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "ChapterEntry":
+        return cls(
+            output_strategy=str(data.get("output_strategy") or ""),
+            status=str(data.get("status", PENDING)),
+            translation_hash=data.get("translation_hash"),
+            carryover=data.get("carryover"),
+            retry_count=int(data.get("retry_count", 0) or 0),
+            error=data.get("error"),
+            reason=data.get("reason"),
+        )
+
+    def to_dict(self) -> dict:
+        entry: dict = {}
+        if self.output_strategy:
+            entry["output_strategy"] = self.output_strategy
+        entry["status"] = self.status
+        if self.translation_hash is not None:
+            entry["translation_hash"] = self.translation_hash
+        if self.carryover is not None:
+            entry["carryover"] = self.carryover
+        if self.retry_count:
+            entry["retry_count"] = self.retry_count
+        if self.error is not None:
+            entry["error"] = self.error
+        if self.reason is not None:
+            entry["reason"] = self.reason
+        return entry
+
+    def mark_done(self, translation_text: str) -> None:
+        self.status = DONE
+        self.translation_hash = hashlib.sha256(
+            translation_text.encode("utf-8")
+        ).hexdigest()[:12]
+        self.carryover = (
+            translation_text[-200:] if len(translation_text) >= 200 else translation_text
+        )
+        self.retry_count = 0
+        self.error = None
+        self.reason = None
+
+    def mark_failed(self, error: str) -> None:
+        self.status = FAILED
+        self.retry_count += 1
+        self.error = error
+        self.translation_hash = None
+        self.carryover = None
+        self.reason = None
+
+    def mark_source_ready(self) -> None:
+        self.status = SOURCE_READY
+        self.translation_hash = None
+        self.carryover = None
+        self.retry_count = 0
+        self.error = None
+        self.reason = None
+
+    def mark_dropped(self, reason: str) -> None:
+        if not reason.strip():
+            raise ValueError("drop_explicit requires a non-empty reason")
+        self.output_strategy = DROP_EXPLICIT
+        self.status = DROPPED
+        self.translation_hash = None
+        self.carryover = None
+        self.retry_count = 0
+        self.error = None
+        self.reason = reason
 
 
 def init_state(book_path: Path, spine_or_ids: list[str] | list[dict], target_lang: str) -> dict:
@@ -110,45 +197,31 @@ def validate_state(state: dict, require_strategy: bool = False) -> None:
 
 
 def mark_done(state: dict, chapter_id: str, translation_text: str) -> None:
-    last200 = translation_text[-200:] if len(translation_text) >= 200 else translation_text
-    previous = state["chapters"].get(chapter_id, {})
-    state["chapters"][chapter_id] = {
-        "output_strategy": previous.get("output_strategy", TRANSLATE),
-        "status": DONE,
-        "translation_hash": hashlib.sha256(translation_text.encode("utf-8")).hexdigest()[:12],
-        "carryover": last200,
-    }
+    entry = ChapterEntry.from_dict(state["chapters"].get(chapter_id, {}))
+    if entry.output_strategy == "":
+        entry.output_strategy = TRANSLATE
+    entry.mark_done(translation_text)
+    state["chapters"][chapter_id] = entry.to_dict()
 
 
 def mark_failed(state: dict, chapter_id: str, error: str) -> None:
-    entry = state["chapters"].get(chapter_id, {})
-    retry = int(entry.get("retry_count", 0)) + 1
-    updated = {
-        "status": FAILED,
-        "retry_count": retry,
-        "error": error,
-    }
-    if "output_strategy" in entry:
-        updated["output_strategy"] = entry["output_strategy"]
-    state["chapters"][chapter_id] = updated
+    entry = ChapterEntry.from_dict(state["chapters"].get(chapter_id, {}))
+    entry.mark_failed(error)
+    state["chapters"][chapter_id] = entry.to_dict()
 
 
 def mark_source_ready(state: dict, chapter_id: str) -> None:
-    entry = state["chapters"].get(chapter_id, {})
-    state["chapters"][chapter_id] = {
-        "output_strategy": entry.get("output_strategy", SOURCE_ONLY),
-        "status": SOURCE_READY,
-    }
+    entry = ChapterEntry.from_dict(state["chapters"].get(chapter_id, {}))
+    if entry.output_strategy == "":
+        entry.output_strategy = SOURCE_ONLY
+    entry.mark_source_ready()
+    state["chapters"][chapter_id] = entry.to_dict()
 
 
 def mark_dropped(state: dict, chapter_id: str, reason: str) -> None:
-    if not reason.strip():
-        raise ValueError("drop_explicit requires a non-empty reason")
-    state["chapters"][chapter_id] = {
-        "output_strategy": DROP_EXPLICIT,
-        "status": DROPPED,
-        "reason": reason,
-    }
+    entry = ChapterEntry.from_dict(state["chapters"].get(chapter_id, {}))
+    entry.mark_dropped(reason)
+    state["chapters"][chapter_id] = entry.to_dict()
 
 
 def chapters_by_status(state: dict, status: str) -> list[str]:
