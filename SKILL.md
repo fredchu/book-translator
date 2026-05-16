@@ -76,6 +76,29 @@ Main session (Claude Code, Opus 4.7)
 └── 8. spot-check (random 5 paragraphs + name audit)           (latent)
 ```
 
+### Shared deterministic helpers
+
+Two modules own cross-cutting deterministic logic; all read/write call sites
+delegate to them so behaviour stays consistent across extract, dispatch,
+assemble, and audits.
+
+- **`scripts/content_blocks.py`** — canonical "what counts as a paragraph"
+  module. Public API: `TEXT_TAGS`, `BLOCK_TAGS`, `walk_text_nodes`,
+  `extract_blocks`, `extract_paragraphs`, `strip_non_content`,
+  `TextBlock`/`ImageBlock` TypedDicts. Used by `dispatch.html_to_paragraphs` /
+  `dispatch.html_to_blocks` (thin wrappers preserved for back-compat),
+  `assemble._text_nodes_for_bilingual`, and `bilingual_coverage_audit`.
+  `translation_quality_audit` intentionally does NOT use this (it audits
+  already-marked `class="src"` pairs, not raw paragraphs).
+- **`scripts/epub_reader.py`** — canonical EPUB-zip reader (context manager).
+  Public API: `EPUBReader`, `OPFPackage`, `ManifestItem`, module-level
+  `find_opf_path`. Handles `META-INF/container.xml` lookup, OPF spine walk,
+  `include_nav` toggle for audit vs full-spine consumers. Tolerant of missing
+  container.xml AND missing `.opf` (returns `None`). Used by
+  `extract_epub.py`, `bilingual_coverage_audit.py`, and
+  `translation_quality_audit.py`. `structural_audit.py` reaches EPUB data
+  through `extract_epub.py`; `href_resolve_audit.py` walks zip namelist only.
+
 ### 4 Coherence Mechanisms
 
 1. **Glossary injection** — main session reads full book → JSON of characters / places / terms; every subagent prompt receives it.
@@ -98,6 +121,11 @@ Main session (Claude Code, Opus 4.7)
 ```bash
 python3 {baseDir}/scripts/extract_epub.py "<book_path>" --out "<out_dir>"
 ```
+
+`extract_epub.py` delegates `META-INF/container.xml` lookup + OPF parsing to
+`scripts/epub_reader.py` (shared with the audit scripts); the rest of the
+extraction pipeline (asset copy, XHTML mirror, manifest v2 generation) lives
+in `extract_epub.py`.
 
 Produces `<out_dir>/<book_stem>/source.opf`, verbatim asset directories
 (`css/`, `fonts/`, `images/`), original XHTML copies under `xhtml/`,
@@ -249,6 +277,13 @@ python3 {baseDir}/scripts/translation_quality_audit.py \
   --output "<book_stem>_bilingual.epub"
 ```
 
+`bilingual_coverage_audit.py` and `translation_quality_audit.py` share OPF
+lookup + spine walking through `scripts/epub_reader.py` (context manager);
+`bilingual_coverage_audit.py` additionally shares the paragraph-walking
+algorithm through `scripts/content_blocks.py`. A missing or malformed
+EPUB package is reported as an audit failure rather than raising — this is
+the canonical tolerant behavior.
+
 `bilingual_coverage_audit.py` fails when a long English content paragraph lacks
 an adjacent Han-character sibling. `href_resolve_audit.py` fails when any
 internal XHTML link target is missing from the EPUB zip.
@@ -348,8 +383,12 @@ not need an LLM.
 
 - **每個英文段落後緊接該段中譯**，per-paragraph interleave (not chapter-level).
 - **詩 / 引言 / 列表 / blockquote / preformatted code / definition lists** 全部
-  比照處理 — `html_to_paragraphs` 抓 `<p>, <h1-h6>, <blockquote>, <li>, <pre>,
-  <dt>, <dd>` 都納入翻譯。漏網的內容（極少數）會在 spot-check 抓到。
+  比照處理 — `dispatch.html_to_paragraphs` / `dispatch.html_to_blocks`
+  (thin wrappers over `scripts/content_blocks.py` `extract_paragraphs` /
+  `extract_blocks`) 抓 `<p>, <h1-h6>, <blockquote>, <li>, <pre>, <dt>, <dd>`
+  全納入翻譯，images 透過 `BLOCK_TAGS` 維持位置；同一份 `TEXT_TAGS` 也是
+  `assemble._text_nodes_for_bilingual` 和 `bilingual_coverage_audit` 的單一
+  source of truth。漏網的內容（極少數）會在 spot-check 抓到。
 
 ### Translation rules (baked into subagent prompt rules 5-8)
 
