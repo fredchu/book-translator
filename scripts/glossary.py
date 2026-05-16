@@ -6,7 +6,8 @@ gives the main session:
   - GLOSSARY_PROMPT: the system+user prompt template
   - parse_glossary(): validate and load a JSON glossary returned by the model
   - canonical_form(): merge a user-edited glossary into the on-disk file
-  - write_translations_extra_nav_overrides(): derive nav labels from glossary
+  - load_glossary() / write_glossary(): canonical glossary persistence
+  - write_translations_extra_nav_overrides(): back-compat re-export
 """
 
 from __future__ import annotations
@@ -14,6 +15,11 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
+
+try:  # pragma: no cover - import mode depends on caller
+    from .translations_extra import write_nav_overrides as write_translations_extra_nav_overrides
+except ImportError:  # pragma: no cover
+    from translations_extra import write_nav_overrides as write_translations_extra_nav_overrides  # type: ignore
 
 REGISTER_HINTS_PATH = Path(__file__).parent.parent / "assets" / "register_hints.json"
 
@@ -223,65 +229,12 @@ def write_glossary(out_path: Path, glossary: dict) -> None:
     )
 
 
-def write_translations_extra_nav_overrides(
-    glossary: dict,
-    manifest: dict,
-    book_dir: Path,
-    *,
-    overwrite_existing: bool = False,
-) -> dict:
-    """Populate translations_extra.json nav_overrides from chapter_titles_zh."""
-    titles = glossary.get("chapter_titles_zh", {})
-    if titles is None:
-        titles = {}
-    if not isinstance(titles, dict):
-        raise ValueError("glossary chapter_titles_zh must be an object")
-
-    path = book_dir / "translations_extra.json"
-    if path.is_file():
-        extra = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(extra, dict):
-            raise ValueError(f"{path}: translations_extra must be a JSON object")
-    else:
-        extra = {}
-
-    nav_overrides = extra.get("nav_overrides", {})
-    if nav_overrides is None:
-        nav_overrides = {}
-    if not isinstance(nav_overrides, dict):
-        raise ValueError(f"{path}: nav_overrides must be an object")
-    nav_overrides = dict(nav_overrides)
-
-    for entry in _manifest_spine_entries(manifest):
-        if not isinstance(entry, dict):
-            continue
-        heading = str(entry.get("first_heading") or "")
-        if not heading:
-            continue
-        zh = str(titles.get(heading) or "").strip()
-        if not zh:
-            continue
-        original_idref = str(entry.get("original_idref") or "")
-        if not original_idref:
-            continue
-        if overwrite_existing or original_idref not in nav_overrides:
-            nav_overrides[original_idref] = zh
-
-    extra["nav_overrides"] = nav_overrides
-    book_dir.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(extra, ensure_ascii=False, indent=2), encoding="utf-8")
-    return nav_overrides
+def load_glossary(path: Path) -> dict | None:
+    """Load glossary.json as-is, or return None if it is missing."""
+    if not path.is_file():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def _trim_dict(d: dict) -> dict:
     return {str(k).strip(): str(v).strip() for k, v in d.items() if str(k).strip()}
-
-
-def _manifest_spine_entries(manifest: dict) -> list[dict]:
-    entries = manifest.get("spine")
-    if isinstance(entries, list):
-        return entries
-    legacy = manifest.get("chapters")
-    if isinstance(legacy, list):
-        return legacy
-    return []

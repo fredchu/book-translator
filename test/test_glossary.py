@@ -168,3 +168,22 @@ def test_write_glossary_persists_canonical(tmp_path: Path):
     glossary.write_glossary(p, MINIMAL)
     loaded = json.loads(p.read_text("utf-8"))
     assert loaded == glossary.canonical_form(MINIMAL)
+
+
+def test_load_glossary_returns_none_when_missing(tmp_path: Path):
+    assert glossary.load_glossary(tmp_path / "glossary.json") is None
+
+
+def test_load_glossary_returns_parsed_dict_when_present(tmp_path: Path):
+    path = tmp_path / "glossary.json"
+    path.write_text(json.dumps(MINIMAL, ensure_ascii=False), encoding="utf-8")
+
+    assert glossary.load_glossary(path) == MINIMAL
+
+
+def test_load_glossary_raises_for_malformed_json(tmp_path: Path):
+    path = tmp_path / "glossary.json"
+    path.write_text("{", encoding="utf-8")
+
+    with pytest.raises(json.JSONDecodeError):
+        glossary.load_glossary(path)

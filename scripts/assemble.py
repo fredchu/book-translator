@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import argparse
 import html
-import json
 import posixpath
 import re
 import sys
@@ -26,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from content_blocks import walk_text_nodes  # type: ignore  # noqa: E402
 from dispatch import html_to_paragraphs  # type: ignore  # noqa: E402
 import manifest as manifest_module  # type: ignore  # noqa: E402
+import translations_extra as translations_extra_module  # type: ignore  # noqa: E402
 
 IMAGE_MEDIA_TYPES = {
     ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
@@ -39,7 +39,7 @@ FONT_MEDIA_TYPES = {
 
 VALID_STRATEGIES = {"translate", "source_only", "nav_generated", "drop_explicit"}
 XHTML_MEDIA_TYPE = "application/xhtml+xml"
-TRANSLATIONS_EXTRA_FILENAME = "translations_extra.json"
+TRANSLATIONS_EXTRA_FILENAME = translations_extra_module.TRANSLATIONS_EXTRA_FILENAME
 
 # Generic structural labels only. Per-book paragraph overrides belong in
 # <book_dir>/translations_extra.json.
@@ -75,7 +75,9 @@ CONTENTS_LINK_LABELS_ZH_TW = {
 
 
 def assemble(book_dir: Path, out_path: Path) -> Path:
-    manifest = json.loads((book_dir / "manifest.json").read_text(encoding="utf-8"))
+    manifest = manifest_module.load(book_dir / "manifest.json")
+    if manifest is None:
+        raise FileNotFoundError(book_dir / "manifest.json")
     translations_extra = _load_translations_extra(book_dir)
     spine_entries = [
         _entry_with_translations_extra(entry, translations_extra)
@@ -129,17 +131,7 @@ def assemble(book_dir: Path, out_path: Path) -> Path:
 
 
 def _load_translations_extra(book_dir: Path) -> dict:
-    path = book_dir / TRANSLATIONS_EXTRA_FILENAME
-    if not path.is_file():
-        return {}
-    data = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(data, dict):
-        raise ValueError(f"{path}: translations_extra must be a JSON object")
-    for key in ("by_exact_text", "nav_overrides"):
-        value = data.get(key)
-        if value is not None and not isinstance(value, dict):
-            raise ValueError(f"{path}: {key} must be an object")
-    return data
+    return translations_extra_module.load(book_dir)
 
 
 def _entry_with_translations_extra(entry: dict, translations_extra: dict) -> dict:
