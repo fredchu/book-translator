@@ -3,18 +3,18 @@
 from __future__ import annotations
 
 import argparse
-import posixpath
 import re
 import sys
-import zipfile
 from pathlib import Path
 
 from bs4 import BeautifulSoup
 
 try:  # pragma: no cover - import mode depends on caller
     from .content_blocks import walk_text_nodes
+    from .epub_reader import EPUBReader
 except ImportError:  # pragma: no cover
     from content_blocks import walk_text_nodes
+    from epub_reader import EPUBReader
 
 HAN_RE = re.compile(r"[\u4e00-\u9fff]")
 
@@ -22,48 +22,18 @@ HAN_RE = re.compile(r"[\u4e00-\u9fff]")
 def audit(source: Path, output: Path) -> tuple[bool, list[str]]:
     del source
     failures: list[str] = []
-    with zipfile.ZipFile(output) as z:
-        opf_path = _find_opf_path(z)
-        spine_paths = _spine_xhtml_paths(z, opf_path)
-        for path in spine_paths:
-            soup = BeautifulSoup(z.read(path), "html.parser")
+    with EPUBReader(output) as reader:
+        package = reader.opf_package()
+        if package is None:
+            return False, [f"{output}: missing OPF package"]
+        for path in reader.spine_xhtml_paths():
+            soup = BeautifulSoup(reader.read(path), "html.parser")
             for node in _english_nodes(soup):
                 sibling = _next_tag(node)
                 if sibling is None or not HAN_RE.search(sibling.get_text(" ", strip=True)):
                     text = _clean(node.get_text(" ", strip=True))
                     failures.append(f"{path}: missing adjacent zh after: {text[:120]}")
     return not failures, failures
-
-
-def _find_opf_path(z: zipfile.ZipFile) -> str:
-    soup = BeautifulSoup(z.read("META-INF/container.xml"), "lxml-xml")
-    rootfile = soup.find("rootfile", attrs={"media-type": "application/oebps-package+xml"})
-    if rootfile and rootfile.get("full-path"):
-        return str(rootfile.get("full-path"))
-    return next(name for name in z.namelist() if name.lower().endswith(".opf"))
-
-
-def _spine_xhtml_paths(z: zipfile.ZipFile, opf_path: str) -> list[str]:
-    soup = BeautifulSoup(z.read(opf_path), "lxml-xml")
-    opf_dir = posixpath.dirname(opf_path)
-    manifest: dict[str, tuple[str, str, str]] = {}
-    for item in soup.find_all("item"):
-        item_id = str(item.get("id") or "")
-        href = str(item.get("href") or "")
-        media_type = str(item.get("media-type") or "")
-        properties = str(item.get("properties") or "")
-        if item_id:
-            manifest[item_id] = (href, media_type, properties)
-    paths: list[str] = []
-    for itemref in soup.find_all("itemref"):
-        idref = str(itemref.get("idref") or "")
-        href, media_type, properties = manifest.get(idref, ("", "", ""))
-        if media_type != "application/xhtml+xml" or "nav" in properties.split():
-            continue
-        full = posixpath.normpath(posixpath.join(opf_dir, href)) if opf_dir else href
-        if full in z.namelist():
-            paths.append(full)
-    return paths
 
 
 def _english_nodes(soup: BeautifulSoup) -> list:

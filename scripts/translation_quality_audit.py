@@ -4,17 +4,17 @@ from __future__ import annotations
 
 import argparse
 import json
-import posixpath
 import re
 import sys
-import zipfile
 from pathlib import Path
 
 from bs4 import BeautifulSoup
 
 try:
+    from scripts.epub_reader import EPUBReader
     from scripts.glossary import resolve_register
 except ModuleNotFoundError:  # pragma: no cover - direct script execution path
+    from epub_reader import EPUBReader
     from glossary import resolve_register
 
 BANNED_PATTERNS = [
@@ -45,11 +45,13 @@ HEADING_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
 
 def audit(output: Path, min_length_ratio: float = 0.22) -> tuple[bool, list[str]]:
     failures: list[str] = []
-    with zipfile.ZipFile(output) as z:
-        exceptions = _source_only_exceptions(z)
-        opf_path = _find_opf_path(z)
-        for path in _spine_xhtml_paths(z, opf_path):
-            soup = BeautifulSoup(z.read(path), "html.parser")
+    with EPUBReader(output) as reader:
+        exceptions = _source_only_exceptions(reader)
+        package = reader.opf_package()
+        if package is None:
+            return False, [f"{output}: missing OPF package"]
+        for path in reader.spine_xhtml_paths():
+            soup = BeautifulSoup(reader.read(path), "html.parser")
             for src in soup.find_all(class_=_has_src_class):
                 src_text = _clean(src.get_text(" ", strip=True))
                 if not src_text:
@@ -74,10 +76,10 @@ def audit(output: Path, min_length_ratio: float = 0.22) -> tuple[bool, list[str]
     return not failures, failures
 
 
-def _source_only_exceptions(z: zipfile.ZipFile) -> set[str]:
-    for name in z.namelist():
+def _source_only_exceptions(reader: EPUBReader) -> set[str]:
+    for name in reader.namelist():
         if name.endswith("translations/source_only.json"):
-            data = json.loads(z.read(name).decode("utf-8"))
+            data = json.loads(reader.read(name).decode("utf-8"))
             if isinstance(data, list):
                 result = set()
                 for item in data:
@@ -87,37 +89,6 @@ def _source_only_exceptions(z: zipfile.ZipFile) -> set[str]:
                         result.add(item["src_text"])
                 return result
     return set()
-
-
-def _find_opf_path(z: zipfile.ZipFile) -> str:
-    soup = BeautifulSoup(z.read("META-INF/container.xml"), "lxml-xml")
-    rootfile = soup.find("rootfile", attrs={"media-type": "application/oebps-package+xml"})
-    if rootfile and rootfile.get("full-path"):
-        return str(rootfile.get("full-path"))
-    return next(name for name in z.namelist() if name.lower().endswith(".opf"))
-
-
-def _spine_xhtml_paths(z: zipfile.ZipFile, opf_path: str) -> list[str]:
-    soup = BeautifulSoup(z.read(opf_path), "lxml-xml")
-    opf_dir = posixpath.dirname(opf_path)
-    manifest: dict[str, tuple[str, str, str]] = {}
-    for item in soup.find_all("item"):
-        item_id = str(item.get("id") or "")
-        href = str(item.get("href") or "")
-        media_type = str(item.get("media-type") or "")
-        properties = str(item.get("properties") or "")
-        if item_id:
-            manifest[item_id] = (href, media_type, properties)
-    paths: list[str] = []
-    for itemref in soup.find_all("itemref"):
-        idref = str(itemref.get("idref") or "")
-        href, media_type, properties = manifest.get(idref, ("", "", ""))
-        if media_type != "application/xhtml+xml" or "nav" in properties.split():
-            continue
-        full = posixpath.normpath(posixpath.join(opf_dir, href)) if opf_dir else href
-        if full in z.namelist():
-            paths.append(full)
-    return paths
 
 
 def _has_src_class(value) -> bool:

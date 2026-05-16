@@ -50,6 +50,11 @@ from pathlib import Path
 from bs4 import BeautifulSoup
 from ebooklib import epub
 
+try:  # pragma: no cover - import mode depends on caller
+    from .epub_reader import EPUBReader, find_opf_path
+except ImportError:  # pragma: no cover
+    from epub_reader import EPUBReader, find_opf_path
+
 
 @dataclass
 class SpineEntry:
@@ -305,37 +310,23 @@ def _spine_idrefs(book: epub.EpubBook) -> list[tuple[str, str]]:
 
 
 def _read_opf_manifest(epub_path: Path) -> tuple[str | None, dict[str, dict[str, str]]]:
-    with zipfile.ZipFile(epub_path) as z:
-        opf_path = _find_opf_path(z)
-        if not opf_path:
-            return None, {}
-        soup = BeautifulSoup(z.read(opf_path), "lxml-xml")
-        opf_dir = posixpath.dirname(opf_path)
-        manifest: dict[str, dict[str, str]] = {}
-        for item in soup.find_all("item"):
-            item_id = str(item.get("id") or "")
-            if not item_id:
-                continue
-            href = str(item.get("href") or "")
-            src_href = posixpath.normpath(posixpath.join(opf_dir, href)) if opf_dir else href
-            manifest[item_id] = {
-                "href": src_href,
-                "media_type": str(item.get("media-type") or ""),
-                "properties": str(item.get("properties") or ""),
-            }
-        return opf_path, manifest
+    with EPUBReader(epub_path) as reader:
+        package = reader.opf_package()
+    if package is None:
+        return None, {}
+    manifest = {
+        item_id: {
+            "href": item.href,
+            "media_type": item.media_type,
+            "properties": item.properties,
+        }
+        for item_id, item in package.manifest.items()
+    }
+    return package.opf_path, manifest
 
 
 def _find_opf_path(z: zipfile.ZipFile) -> str | None:
-    try:
-        soup = BeautifulSoup(z.read("META-INF/container.xml"), "lxml-xml")
-    except KeyError:
-        soup = None
-    if soup is not None:
-        rootfile = soup.find("rootfile", attrs={"media-type": "application/oebps-package+xml"})
-        if rootfile and rootfile.get("full-path"):
-            return str(rootfile.get("full-path"))
-    return next((n for n in z.namelist() if n.lower().endswith(".opf")), None)
+    return find_opf_path(z)
 
 
 def _copy_source_opf(epub_path: Path, book_out: Path, opf_path: str | None) -> None:
