@@ -74,7 +74,7 @@ def test_e2e_animal_farm_full_pipeline(tmp_path: Path):
 
     # 3. Assemble
     out_epub = tmp_path / "animal_farm_bilingual.epub"
-    assemble.assemble(book_dir, out_epub)
+    assemble.assemble(book_dir, out_epub, strict_nav=False)
 
     # 4. Validate the produced EPUB
     assert out_epub.is_file()

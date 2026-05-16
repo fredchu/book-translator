@@ -62,7 +62,7 @@ def test_structural_audit_fails_on_missing_spine_item(tmp_path: Path):
 def test_structural_audit_passes_on_full_structure(tmp_path: Path):
     book_dir = _prepared_full_structure(tmp_path)
     out = tmp_path / "full_bilingual.epub"
-    assemble.assemble(book_dir, out)
+    assemble.assemble(book_dir, out, strict_nav=False)
     report = structural_audit.audit(FULL_STRUCTURE, out, book_dir)
     assert report["passed"] is True
     assert all(check["status"] == "PASS" for check in report["checks"])

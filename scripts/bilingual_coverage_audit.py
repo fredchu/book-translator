@@ -28,14 +28,38 @@ def audit(source: Path, output: Path) -> tuple[bool, list[str]]:
         package = reader.opf_package()
         if package is None:
             return False, [f"{output}: missing OPF package"]
+        exceptions = _source_only_exceptions(reader)
         for path in reader.spine_xhtml_paths():
             soup = BeautifulSoup(reader.read(path), "html.parser")
             for node in _english_nodes(soup):
                 sibling = _next_tag(node)
                 if sibling is None or not HAN_RE.search(sibling.get_text(" ", strip=True)):
                     text = _clean(node.get_text(" ", strip=True))
+                    if text in exceptions:
+                        continue
                     failures.append(f"{path}: missing adjacent zh after: {text[:120]}")
     return not failures, failures
+
+
+def _source_only_exceptions(reader: EPUBReader) -> set[str]:
+    """Read the EPUB-internal source_only.json (same contract as translation_quality_audit)."""
+    import json as _json
+
+    for name in reader.namelist():
+        if name.endswith("translations/source_only.json"):
+            try:
+                data = _json.loads(reader.read(name).decode("utf-8"))
+            except (ValueError, UnicodeDecodeError):
+                return set()
+            if isinstance(data, list):
+                result: set[str] = set()
+                for item in data:
+                    if isinstance(item, str):
+                        result.add(item)
+                    elif isinstance(item, dict) and isinstance(item.get("src_text"), str):
+                        result.add(item["src_text"])
+                return result
+    return set()
 
 
 def run(source: Path, output: Path) -> AuditResult:

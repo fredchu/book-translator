@@ -46,7 +46,7 @@ def _prepared_animal_farm(tmp_path: Path) -> tuple[Path, Path]:
             state.mark_source_ready(state_data, entry["id"])
     state.save(book_dir / "state.json", state_data)
     output = tmp_path / "animal_farm_bilingual.epub"
-    assemble.assemble(book_dir, output)
+    assemble.assemble(book_dir, output, strict_nav=False)
     return book_dir, output
 
 

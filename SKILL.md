@@ -219,7 +219,7 @@ Schema:
 }
 ```
 
-### Step 2.5: Auto-populate nav overrides
+### Step 2.5: Auto-populate nav overrides (MANDATORY — every spine item)
 
 After glossary build, the main session calls
 `translations_extra.write_nav_overrides(glossary, manifest, book_dir)` to
@@ -229,6 +229,31 @@ glossary's `chapter_titles_zh` field.
 This drives both nav rendering AND bilingual chapter title display in the
 assembled EPUB. If `translations_extra.json` already exists, existing keys
 are preserved (user overrides are not clobbered).
+
+**Contract — every spine item must have a Chinese nav label.**
+
+`assemble.py` runs in `strict_nav=True` mode by default and **aborts with
+`ValueError`** if any spine item's nav label would render English-only after
+applying nav_overrides + glossary chapter_titles_zh + the built-in
+`STRUCTURAL_LABELS_ZH_TW` (covers `Cover`/`Title Page`/`Copyright`/
+`Dedication`/`Acknowledgments`/`Notes`/`Index`/`About the Author` etc.).
+This covers three categories explicitly:
+
+1. **Body chapters** — pulled from `chapter_titles_zh` automatically; if the
+   glossary missed one, the main session must add it before assembly.
+2. **Image/plate pages** (book.opf often lists 10-30 plate inserts whose source
+   labels are long photo captions) — they have no canonical glossary entry, so
+   the main session must write a short Chinese label per plate
+   (e.g. `"圖版：亞瑟·洛克"`) into `nav_overrides` keyed by the source idref.
+3. **Front-/back-matter structural pages** (Foreword, Preface, Epigraph,
+   Appendix, Timeline) — fall back to `STRUCTURAL_LABELS_ZH_TW` when the title
+   matches; otherwise add to `nav_overrides`.
+
+If the assembler aborts, the error message lists every missing idref + the
+fallback English label it saw — fix `translations_extra.json` and re-run. The
+`strict_nav=False` escape hatch exists only for low-level fixtures inside
+the skill's own test suite; never call assembly with it from production
+workflows.
 
 ### Step 4: Translate ch.01 inline (style sample)
 
@@ -297,6 +322,20 @@ also receive `src`; inserted Traditional Chinese sibling paragraphs receive
 `tgt tgt-zh` plus the inherited source classes. Original relative paths and
 internal hrefs are not rewritten.
 
+**Auto-bundled translations payload.** `assemble.py` writes two things into
+`<opf_dir>/translations/` inside the output EPUB so audits can read them:
+
+1. **Every `*.json` under `<book_dir>/translations/`** — user-authored payloads
+   (custom `source_only.json` lists, `register_hints.json`, etc.) are copied
+   verbatim into `OEBPS/translations/`.
+2. **Auto-generated `source_only.json`** — if the user has not authored one,
+   assembly scans every rewritten `source_only` spine item, collects the
+   `class="src"` paragraphs that have no zh sibling, and writes their text
+   into `source_only.json`. This satisfies both
+   `translation_quality_audit.py` and `bilingual_coverage_audit.py` (both
+   load the same file from the EPUB to whitelist intentionally-English
+   paragraphs like endnote citations).
+
 Assembly fails closed: any `translate` item missing its `item_NNN_translation.txt`
 is a hard error. Source-only pages are emitted without translation, and explicit
 drops require a reason.
@@ -348,8 +387,10 @@ EPUB package is reported as an audit failure rather than raising — this is
 the canonical tolerant behavior.
 
 `bilingual_coverage_audit.py` fails when a long English content paragraph lacks
-an adjacent Han-character sibling. `href_resolve_audit.py` fails when any
-internal XHTML link target is missing from the EPUB zip.
+an adjacent Han-character sibling, **except** when the paragraph's text is
+listed in `OEBPS/translations/source_only.json` inside the EPUB (same exception
+contract as `translation_quality_audit.py`). `href_resolve_audit.py` fails when
+any internal XHTML link target is missing from the EPUB zip.
 `translation_quality_audit.py` fails on Round-2-style placeholders,
 span-concatenated headings, too-short target paragraphs, or unlisted
 source-only paragraphs.

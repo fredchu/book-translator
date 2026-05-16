@@ -73,13 +73,27 @@ def _make_book_dir(tmp_path: Path) -> Path:
     (book_dir / "manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False), encoding="utf-8"
     )
+    # Strict contract: every spine item must have a zh nav label.
+    (book_dir / "translations_extra.json").write_text(
+        json.dumps(
+            {
+                "nav_overrides": {
+                    "title": "書名頁",
+                    "x": "第一章",
+                    "y": "第二章",
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
     return book_dir
 
 
 def test_assemble_produces_valid_zip(tmp_path: Path):
     book_dir = _make_book_dir(tmp_path)
     out = tmp_path / "tiny_bilingual.epub"
-    assemble.assemble(book_dir, out)
+    assemble.assemble(book_dir, out, strict_nav=False)
     assert out.is_file()
     assert out.stat().st_size > 0
     # EPUB is a zip file
@@ -94,7 +108,7 @@ def test_assemble_produces_valid_zip(tmp_path: Path):
 def test_assemble_interleaves_source_and_translation(tmp_path: Path):
     book_dir = _make_book_dir(tmp_path)
     out = tmp_path / "tiny_bilingual.epub"
-    assemble.assemble(book_dir, out)
+    assemble.assemble(book_dir, out, strict_nav=False)
     with zipfile.ZipFile(out) as z:
         ch1 = z.read("OEBPS/xhtml/x.xhtml").decode("utf-8")
     # Hello / World source must appear; 你好 / 世界 translation must appear
@@ -109,7 +123,7 @@ def test_assemble_warns_on_paragraph_count_mismatch(tmp_path: Path, capsys):
     # Replace ch_02 translation with only 1 paragraph (source has 3)
     (book_dir / "chapters" / "ch_02_translation.txt").write_text("一段。", encoding="utf-8")
     out = tmp_path / "out.epub"
-    assemble.assemble(book_dir, out)
+    assemble.assemble(book_dir, out, strict_nav=False)
     err = capsys.readouterr().err
     assert "paragraph count mismatch" in err
     assert "ch_02" in err
@@ -151,7 +165,7 @@ def test_assemble_embeds_inline_images(tmp_path: Path):
     (book_dir / "images" / "diagram.png").write_bytes(png_bytes)
 
     out = tmp_path / "out.epub"
-    assemble.assemble(book_dir, out)
+    assemble.assemble(book_dir, out, strict_nav=False)
 
     with zipfile.ZipFile(out) as z:
         names = z.namelist()
@@ -177,7 +191,7 @@ def test_assemble_warns_on_missing_image_file(tmp_path: Path, capsys):
         "你好。\n\n世界。", encoding="utf-8",
     )
     out = tmp_path / "out.epub"
-    assemble.assemble(book_dir, out)
+    assemble.assemble(book_dir, out, strict_nav=False)
     err = capsys.readouterr().err
     assert "missing.jpg" in err
     # EPUB still produced
@@ -189,7 +203,7 @@ def test_assemble_fails_on_missing_translation_for_translate_item(tmp_path: Path
     (book_dir / "chapters" / "ch_02_translation.txt").unlink()
     out = tmp_path / "out.epub"
     try:
-        assemble.assemble(book_dir, out)
+        assemble.assemble(book_dir, out, strict_nav=False)
     except ValueError as exc:
         assert "missing translation for translate item" in str(exc)
         assert "item_003" in str(exc)
@@ -201,7 +215,7 @@ def test_assemble_fails_on_missing_translation_for_translate_item(tmp_path: Path
 def test_assemble_source_only_items_in_output_spine(tmp_path: Path):
     book_dir = _make_book_dir(tmp_path)
     out = tmp_path / "tiny_bilingual.epub"
-    assemble.assemble(book_dir, out)
+    assemble.assemble(book_dir, out, strict_nav=False)
     b = assemble.epub.read_epub(str(out), options={"ignore_ncx": True})
     spine_ids = [item[0] if isinstance(item, tuple) else item for item in b.spine]
     assert "title" in spine_ids
@@ -215,7 +229,7 @@ def test_assemble_embeds_all_images_not_just_referenced(tmp_path: Path):
     images.mkdir(exist_ok=True)
     (images / "unused.jpg").write_bytes(b"\xff\xd8\xff\xd9")
     out = tmp_path / "out.epub"
-    assemble.assemble(book_dir, out)
+    assemble.assemble(book_dir, out, strict_nav=False)
     with zipfile.ZipFile(out) as z:
         assert "OEBPS/images/unused.jpg" in z.namelist()
 
@@ -223,7 +237,7 @@ def test_assemble_embeds_all_images_not_just_referenced(tmp_path: Path):
 def test_assemble_emits_source_only_at_original_relative_path(tmp_path: Path):
     book_dir = _make_book_dir(tmp_path)
     out = tmp_path / "out.epub"
-    assemble.assemble(book_dir, out)
+    assemble.assemble(book_dir, out, strict_nav=False)
     with zipfile.ZipFile(out) as z:
         assert "OEBPS/xhtml/title.xhtml" in z.namelist()
 
@@ -231,11 +245,70 @@ def test_assemble_emits_source_only_at_original_relative_path(tmp_path: Path):
 def test_assemble_inserts_translation_after_each_english_paragraph(tmp_path: Path):
     book_dir = _make_book_dir(tmp_path)
     out = tmp_path / "out.epub"
-    assemble.assemble(book_dir, out)
+    assemble.assemble(book_dir, out, strict_nav=False)
     with zipfile.ZipFile(out) as z:
         ch1 = z.read("OEBPS/xhtml/x.xhtml").decode("utf-8")
     assert ch1.index("Hello.") < ch1.index("你好。") < ch1.index("World.") < ch1.index("世界。")
     assert "tgt-zh" in ch1
+
+
+def test_strict_nav_raises_on_missing_zh_label(tmp_path: Path):
+    """When nav_overrides has no zh label for a spine item, strict_nav=True must hard-fail."""
+    book_dir = _make_book_dir(tmp_path)
+    # Strip nav_overrides — every spine entry now lacks a zh label.
+    (book_dir / "translations_extra.json").write_text(
+        json.dumps({"nav_overrides": {}}, ensure_ascii=False), encoding="utf-8"
+    )
+    out = tmp_path / "out.epub"
+    import pytest
+
+    with pytest.raises(ValueError, match="nav labels missing zh translation"):
+        assemble.assemble(book_dir, out, strict_nav=True)
+
+
+def test_strict_nav_passes_when_overrides_complete(tmp_path: Path):
+    """All nav_overrides present → strict_nav=True succeeds (default behavior)."""
+    book_dir = _make_book_dir(tmp_path)
+    out = tmp_path / "out.epub"
+    # _make_book_dir already writes complete nav_overrides for title/x/y.
+    assemble.assemble(book_dir, out, strict_nav=True)
+    assert out.is_file()
+
+
+def test_source_only_json_auto_bundled_into_epub(tmp_path: Path):
+    """When source_only pages produce orphan src paragraphs, assemble must auto-write
+    OEBPS/translations/source_only.json into the EPUB so audits can read the exceptions."""
+    book_dir = _make_book_dir(tmp_path)
+    # item_001 is source_only and has an h1 "Title Page" + p "Tiny Book";
+    # bilingual_rewriter will fallback-translate "Title Page" but leave "Tiny Book"
+    # without a tgt sibling → must end up in source_only.json.
+    out = tmp_path / "out.epub"
+    assemble.assemble(book_dir, out, strict_nav=False)
+    with zipfile.ZipFile(out) as z:
+        names = z.namelist()
+        # source_only.json must be auto-bundled
+        source_only_paths = [n for n in names if n.endswith("translations/source_only.json")]
+        assert source_only_paths, f"source_only.json missing from EPUB; have: {names[:20]}"
+        data = json.loads(z.read(source_only_paths[0]).decode("utf-8"))
+    assert isinstance(data, list)
+    # Should contain at least the "Tiny Book" orphan paragraph
+    assert any("Tiny Book" in entry for entry in data)
+
+
+def test_translations_dir_payload_bundled(tmp_path: Path):
+    """User-authored <book_dir>/translations/*.json files must be packaged
+    into OEBPS/translations/ inside the EPUB."""
+    book_dir = _make_book_dir(tmp_path)
+    translations = book_dir / "translations"
+    translations.mkdir()
+    (translations / "register.json").write_text(
+        json.dumps({"note": "user authored"}, ensure_ascii=False), encoding="utf-8"
+    )
+    out = tmp_path / "out.epub"
+    assemble.assemble(book_dir, out, strict_nav=False)
+    with zipfile.ZipFile(out) as z:
+        names = z.namelist()
+        assert any(n.endswith("translations/register.json") for n in names)
 
 
 def test_insert_bilingual_promotes_header_heading_and_uses_nav_override():

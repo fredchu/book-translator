@@ -51,8 +51,15 @@ _build_minimal_opf = opf_builder.build_minimal_opf
 _fallback_opf_path = opf_builder.fallback_opf_path
 _safe_uid = opf_builder._safe_uid
 
-def assemble(book_dir: Path, out_path: Path) -> Path:
-    """Run the full manifest, rewrite, nav/NCX, archive, and fallback-OPF pipeline."""
+def assemble(book_dir: Path, out_path: Path, strict_nav: bool = True) -> Path:
+    """Run the full manifest, rewrite, nav/NCX, archive, and fallback-OPF pipeline.
+
+    strict_nav: when True (default), every spine item must resolve to a Chinese
+    nav label via translations_extra.json nav_overrides, glossary
+    chapter_titles_zh, or STRUCTURAL_LABELS_ZH_TW; missing labels raise
+    ValueError. Set False only for low-level fixtures that do not exercise
+    the bilingual ToC contract.
+    """
     manifest = manifest_module.load(book_dir / "manifest.json")
     if manifest is None:
         raise FileNotFoundError(book_dir / "manifest.json")
@@ -80,7 +87,17 @@ def assemble(book_dir: Path, out_path: Path) -> Path:
     item_nav_path = nav_builder.nav_path(manifest, opf_path)
     if item_nav_path:
         replacements[item_nav_path] = nav_builder.build_nav_xhtml(manifest, spine_entries, item_nav_path, opf_dir).encode("utf-8")
-        warnings.extend(nav_builder.missing_nav_zh_warnings(spine_entries))
+        nav_zh_problems = nav_builder.missing_nav_zh_warnings(spine_entries)
+        if nav_zh_problems:
+            if strict_nav:
+                raise ValueError(
+                    "Assembly aborted: nav labels missing zh translation. Every spine "
+                    f"item must have a Chinese label in {TRANSLATIONS_EXTRA_FILENAME} "
+                    "nav_overrides (or via glossary chapter_titles_zh / known structural "
+                    "labels). Fix the entries below and re-run:\n"
+                    + "\n".join(f"- {p}" for p in nav_zh_problems)
+                )
+            warnings.extend(nav_zh_problems)
     if source_epub.is_file():
         ncx_path = nav_builder.source_ncx_path(source_epub)
         if ncx_path:
@@ -89,6 +106,8 @@ def assemble(book_dir: Path, out_path: Path) -> Path:
                     z.read(ncx_path).decode("utf-8", errors="replace"),
                     spine_entries,
                 ).encode("utf-8")
+
+    _emit_translations_payload(book_dir, replacements, compatibility_items, opf_dir, represented_entries)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     if source_epub.is_file():
@@ -207,6 +226,68 @@ def _legacy_test_compat_items(
         parts.append(f'<p class="tgt">{html.escape(tgt)}</p>')
     path = posixpath.join(opf_dir or "OEBPS", "chapters", f"{translation_id}.xhtml")
     return {path: ("\n".join(parts)).encode("utf-8")}
+
+def _emit_translations_payload(
+    book_dir: Path,
+    replacements: dict[str, bytes],
+    compatibility_items: dict[str, bytes],
+    opf_dir: str,
+    represented_entries: list[dict],
+) -> None:
+    """Bundle <book_dir>/translations/*.json into the EPUB and auto-fill source_only.json.
+
+    The audits (translation_quality, bilingual_coverage) expect EPUB-internal
+    `<opf_dir>/translations/source_only.json` listing every src_text that
+    intentionally has no zh sibling. When the user has not authored one, we
+    derive it from the already-rewritten source_only pages in `replacements`.
+    """
+    import json as _json
+    import re as _re
+
+    translations_dir = book_dir / "translations"
+    payload_dir = posixpath.join(opf_dir or "OEBPS", "translations")
+    payload: dict[str, bytes] = {}
+    if translations_dir.is_dir():
+        for path in sorted(translations_dir.glob("*.json")):
+            payload[posixpath.join(payload_dir, path.name)] = path.read_bytes()
+
+    source_only_key = posixpath.join(payload_dir, "source_only.json")
+    if source_only_key not in payload:
+        han = _re.compile(r"[一-鿿]")
+
+        def _clean(text: str) -> str:
+            return _re.sub(r"\s+", " ", text).strip()
+
+        orphan_texts: list[str] = []
+        seen: set[str] = set()
+        source_only_basenames = {
+            posixpath.basename(entry.get("original_path") or entry.get("href") or "")
+            for entry in represented_entries
+            if entry.get("output_strategy") == "source_only"
+        }
+        source_only_basenames.discard("")
+        for key, body in replacements.items():
+            if posixpath.basename(key) not in source_only_basenames:
+                continue
+            soup = BeautifulSoup(body, "html.parser")
+            for src_node in soup.find_all(
+                class_=lambda v: bool(v) and "src" in (v if isinstance(v, list) else str(v).split())
+            ):
+                txt = _clean(src_node.get_text(" ", strip=True))
+                if not txt or han.search(txt) or txt in seen:
+                    continue
+                seen.add(txt)
+                orphan_texts.append(txt)
+        if orphan_texts:
+            payload[source_only_key] = _json.dumps(orphan_texts, ensure_ascii=False, indent=2).encode("utf-8")
+
+    # Use compatibility_items so the payload is written by BOTH archive
+    # writers (write_from_source_archive overlays missing items; write_standalone_archive
+    # passes compatibility_items through _write_compatibility_items). Putting it in
+    # replacements alone would skip the standalone path entirely.
+    for key, body in payload.items():
+        compatibility_items.setdefault(key, body)
+
 
 def _missing_image_warnings(book_dir: Path, entry: dict, html_text: str) -> list[str]:
     images_dir = book_dir / "images"
