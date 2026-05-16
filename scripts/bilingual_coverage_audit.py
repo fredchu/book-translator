@@ -11,7 +11,11 @@ from pathlib import Path
 
 from bs4 import BeautifulSoup
 
-TEXT_TAGS = ["p", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "li", "pre", "dt", "dd"]
+try:  # pragma: no cover - import mode depends on caller
+    from .content_blocks import walk_text_nodes
+except ImportError:  # pragma: no cover
+    from content_blocks import walk_text_nodes
+
 HAN_RE = re.compile(r"[\u4e00-\u9fff]")
 
 
@@ -64,13 +68,8 @@ def _spine_xhtml_paths(z: zipfile.ZipFile, opf_path: str) -> list[str]:
 
 def _english_nodes(soup: BeautifulSoup) -> list:
     nodes = []
-    emitted_node_ids: set[int] = set()
-    for node in soup.find_all(TEXT_TAGS):
-        if any(id(ancestor) in emitted_node_ids for ancestor in node.parents):
-            continue
+    for node in walk_text_nodes(soup):
         text = _clean(node.get_text(" ", strip=True))
-        if text:
-            emitted_node_ids.add(id(node))
         if _is_english_content(text) and not _is_target(node) and not _covered_by_ancestor(node):
             nodes.append(node)
     return nodes

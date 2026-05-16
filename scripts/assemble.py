@@ -23,6 +23,7 @@ from ebooklib import epub  # re-exported for existing tests
 
 # Make sibling-module import work whether invoked as a script or as `python -m scripts.assemble`.
 sys.path.insert(0, str(Path(__file__).parent))
+from content_blocks import walk_text_nodes  # type: ignore  # noqa: E402
 from dispatch import html_to_paragraphs  # type: ignore  # noqa: E402
 
 IMAGE_MEDIA_TYPES = {
@@ -36,7 +37,6 @@ FONT_MEDIA_TYPES = {
 }
 
 VALID_STRATEGIES = {"translate", "source_only", "nav_generated", "drop_explicit"}
-TEXT_TAGS = ["p", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "li", "pre", "dt", "dd"]
 XHTML_MEDIA_TYPE = "application/xhtml+xml"
 TRANSLATIONS_EXTRA_FILENAME = "translations_extra.json"
 
@@ -323,16 +323,7 @@ def _align_translations(nodes: list, translations: list[str], entry: dict) -> li
 
 
 def _text_nodes_for_bilingual(soup: BeautifulSoup) -> list:
-    nodes: list = []
-    emitted_node_ids: set[int] = set()
-    for node in soup.find_all(TEXT_TAGS):
-        if any(id(ancestor) in emitted_node_ids for ancestor in node.parents):
-            continue
-        text = _clean_text(node.get_text(" ", strip=True))
-        if text:
-            nodes.append(node)
-            emitted_node_ids.add(id(node))
-    return nodes
+    return list(walk_text_nodes(soup))
 
 
 def _target_classes(node, *, unpaired: bool = False) -> list[str]:

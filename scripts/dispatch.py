@@ -13,11 +13,11 @@ import json
 import re
 from pathlib import Path
 
-from bs4 import BeautifulSoup
-
 try:  # pragma: no cover - import mode depends on caller
+    from .content_blocks import extract_blocks, extract_paragraphs
     from .glossary import resolve_register
 except ImportError:  # pragma: no cover
+    from content_blocks import extract_blocks, extract_paragraphs
     from glossary import resolve_register
 
 _REGISTER_HINTS_PATH = Path(__file__).parent.parent / "assets" / "register_hints.json"
@@ -90,143 +90,13 @@ GENERIC_SUBAGENT_RULES = [
 
 
 def html_to_paragraphs(html: str) -> list[str]:
-    """Convert chapter HTML to a list of plain-text paragraphs.
-
-    Strips nav/header/footer/script. Treats each of these as a paragraph and
-    preserves them all for translation:
-      - <p>, <h1>..<h6>          headings + body paragraphs
-      - <blockquote>             pull quotes, indented citations
-      - <li>                     list items (bulleted / numbered)
-      - <pre>                    preformatted blocks — often poems / limericks
-      - <dt>, <dd>               definition lists (glossaries inside text)
-
-    Collapses internal whitespace. Each returned string is one paragraph.
-    """
-    soup = BeautifulSoup(html, "html.parser")
-    for tag in soup(["script", "style", "nav", "header", "footer"]):
-        tag.decompose()
-    # find_all walks document order: a parent (e.g. <blockquote>) appears before
-    # its child (e.g. <p> inside it). If we process the parent first and then
-    # also process the child, the child's text is included twice (once in the
-    # parent's get_text, once on its own). Dedup by skipping any node whose
-    # ancestor has already been emitted.
-    paragraphs: list[str] = []
-    emitted_node_ids: set[int] = set()
-    for node in soup.find_all([
-        "p", "h1", "h2", "h3", "h4", "h5", "h6",
-        "blockquote", "li", "pre", "dt", "dd",
-    ]):
-        if any(id(anc) in emitted_node_ids for anc in node.parents):
-            continue
-        text = re.sub(r"\s+", " ", node.get_text(" ", strip=True))
-        if text:
-            paragraphs.append(text)
-            emitted_node_ids.add(id(node))
-    return paragraphs
+    """Convert chapter HTML to canonical plain-text paragraphs."""
+    return extract_paragraphs(html)
 
 
 def html_to_blocks(html: str) -> list[dict]:
-    """Walk chapter HTML and return an ordered list of content blocks.
-
-    Each block is one of:
-      {"type": "text",  "text": "..."}
-      {"type": "image", "src":  "filename.jpg", "alt": "..."}
-
-    Text blocks correspond 1:1 to the paragraphs returned by
-    ``html_to_paragraphs`` — same nodes, same dedup rules (skip a node if any
-    ancestor was already emitted).
-
-    Image blocks are emitted for:
-      - ``<img>`` whose parent <p>/<div>/<figure> has no other significant text
-        (typically standalone illustrations or full-width diagrams)
-      - any other standalone ``<img>`` not inside a text-emitting node
-
-    Inline ``<img>`` markers next to text (e.g. emoji-as-speaker-indicator in a
-    paragraph like ``<p><img class="height_1em"/> Sure, I'd be happy...</p>``)
-    are dropped — the surrounding text is what carries the meaning.
-
-    Paths in ``src`` are normalized to the bare filename (``page_16.jpg``), not
-    the EPUB-internal relative path (``../images/page_16.jpg``).
-    """
-    soup = BeautifulSoup(html, "html.parser")
-    for tag in soup(["script", "style", "nav", "header", "footer"]):
-        tag.decompose()
-
-    blocks: list[dict] = []
-    emitted_node_ids: set[int] = set()
-    # NOTE on TARGETS: <div>/<figure> are pure containers — many EPUBs wrap an
-    # entire chapter in <div role="doc-introduction">, so emitting them as text
-    # blocks would swallow every descendant paragraph. They are included here
-    # ONLY so we can detect empty-text image-wrapper divs and emit image
-    # blocks; text-bearing divs are skipped and their descendants picked up.
-    TARGETS = [
-        "p", "h1", "h2", "h3", "h4", "h5", "h6",
-        "blockquote", "li", "pre", "dt", "dd",
-        "div", "figure", "img",
-    ]
-    for node in soup.find_all(TARGETS):
-        if any(id(anc) in emitted_node_ids for anc in node.parents):
-            continue
-
-        if node.name == "img":
-            src = _bare_filename(str(node.get("src") or ""))
-            if src:
-                blocks.append({
-                    "type": "image",
-                    "src": src,
-                    "alt": str(node.get("alt") or ""),
-                })
-                emitted_node_ids.add(id(node))
-            continue
-
-        text = re.sub(r"\s+", " ", node.get_text(" ", strip=True))
-
-        if node.name in ("div", "figure"):
-            # Text-bearing div/figure: skip — let descendant <p>/<h*>/etc. be
-            # picked up by their own iteration. Only emit if the container is
-            # pure-image (e.g. full-width standalone illustration).
-            if text:
-                continue
-            inner_imgs = node.find_all("img", recursive=True)
-            for img in inner_imgs:
-                src = _bare_filename(str(img.get("src") or ""))
-                if src:
-                    blocks.append({
-                        "type": "image",
-                        "src": src,
-                        "alt": str(img.get("alt") or ""),
-                    })
-            if inner_imgs:
-                emitted_node_ids.add(id(node))
-            continue
-
-        # Text-container tag (p, h1-h6, blockquote, li, pre, dt, dd).
-        if text:
-            blocks.append({"type": "text", "text": text})
-            emitted_node_ids.add(id(node))
-            continue
-
-        # Empty text-container — emit any wrapped image (e.g. <p><img/></p>).
-        inner_imgs = node.find_all("img", recursive=True)
-        for img in inner_imgs:
-            src = _bare_filename(str(img.get("src") or ""))
-            if src:
-                blocks.append({
-                    "type": "image",
-                    "src": src,
-                    "alt": str(img.get("alt") or ""),
-                })
-        if inner_imgs:
-            emitted_node_ids.add(id(node))
-
-    return blocks
-
-
-def _bare_filename(src: str) -> str:
-    """Strip directory prefix from an img src: '../images/page_16.jpg' -> 'page_16.jpg'."""
-    if not src:
-        return ""
-    return src.rsplit("/", 1)[-1]
+    """Walk chapter HTML and return canonical ordered text/image blocks."""
+    return extract_blocks(html)
 
 
 def chapter_text_for_prompt(html: str) -> str:
