@@ -11,9 +11,11 @@ from pathlib import Path
 from bs4 import BeautifulSoup
 
 try:
+    from scripts.audit_result import AuditResult
     from scripts.epub_reader import EPUBReader
     from scripts.glossary import resolve_register
 except ModuleNotFoundError:  # pragma: no cover - direct script execution path
+    from audit_result import AuditResult
     from epub_reader import EPUBReader
     from glossary import resolve_register
 
@@ -74,6 +76,25 @@ def audit(output: Path, min_length_ratio: float = 0.22) -> tuple[bool, list[str]
                     if pattern in tgt_text:
                         failures.append(f"{path}: banned pattern {pattern!r}: {src_text[:120]}")
     return not failures, failures
+
+
+def run(
+    output: Path,
+    book_dir: Path | None = None,
+    min_length_ratio: float | None = None,
+) -> AuditResult:
+    resolved_ratio = (
+        _min_length_ratio_from_book_dir(book_dir)
+        if min_length_ratio is None
+        else min_length_ratio
+    )
+    passed, failures = audit(output, min_length_ratio=resolved_ratio)
+    return AuditResult(
+        name="translation_quality",
+        status="pass" if passed else "fail",
+        failures=failures,
+        details={"output": str(output), "min_length_ratio": resolved_ratio},
+    )
 
 
 def _source_only_exceptions(reader: EPUBReader) -> set[str]:

@@ -11,6 +11,11 @@ from urllib.parse import unquote, urlsplit
 
 from bs4 import BeautifulSoup
 
+try:  # pragma: no cover - import mode depends on caller
+    from .audit_result import AuditResult
+except ImportError:  # pragma: no cover
+    from audit_result import AuditResult
+
 
 def audit(output: Path) -> tuple[bool, list[str]]:
     broken: list[str] = []
@@ -24,6 +29,16 @@ def audit(output: Path) -> tuple[bool, list[str]]:
                 if target and target not in names:
                     broken.append(f"{name}: {href} -> {target}")
     return not broken, broken
+
+
+def run(output: Path) -> AuditResult:
+    passed, broken = audit(output)
+    return AuditResult(
+        name="href_resolve",
+        status="pass" if passed else "fail",
+        failures=broken,
+        details={"output": str(output)},
+    )
 
 
 def _resolve_href(source_name: str, href: str) -> str | None:

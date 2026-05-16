@@ -10,9 +10,11 @@ from pathlib import Path
 from bs4 import BeautifulSoup
 
 try:  # pragma: no cover - import mode depends on caller
+    from .audit_result import AuditResult
     from .content_blocks import walk_text_nodes
     from .epub_reader import EPUBReader
 except ImportError:  # pragma: no cover
+    from audit_result import AuditResult
     from content_blocks import walk_text_nodes
     from epub_reader import EPUBReader
 
@@ -34,6 +36,16 @@ def audit(source: Path, output: Path) -> tuple[bool, list[str]]:
                     text = _clean(node.get_text(" ", strip=True))
                     failures.append(f"{path}: missing adjacent zh after: {text[:120]}")
     return not failures, failures
+
+
+def run(source: Path, output: Path) -> AuditResult:
+    passed, failures = audit(source, output)
+    return AuditResult(
+        name="bilingual_coverage",
+        status="pass" if passed else "fail",
+        failures=failures,
+        details={"source": str(source), "output": str(output)},
+    )
 
 
 def _english_nodes(soup: BeautifulSoup) -> list:

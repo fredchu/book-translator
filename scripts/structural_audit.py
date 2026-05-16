@@ -16,6 +16,10 @@ sys.path.insert(0, str(Path(__file__).parent))
 import extract_epub  # type: ignore  # noqa: E402
 import manifest as manifest_module  # type: ignore  # noqa: E402
 import state as state_schema  # type: ignore  # noqa: E402
+try:  # pragma: no cover - import mode depends on caller
+    from .audit_result import AuditResult
+except ImportError:  # pragma: no cover
+    from audit_result import AuditResult
 
 IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png", ".gif", ".svg", ".webp")
 
@@ -109,6 +113,22 @@ def audit(source: Path, output: Path, book_dir: Path | None = None) -> dict:
         "checks": [asdict(c) for c in checks],
         "warnings": warnings,
     }
+
+
+def run(source: Path, output: Path, book_dir: Path | None = None) -> AuditResult:
+    report = audit(source, output, book_dir)
+    failures = [
+        f"{check['name']}: {detail}"
+        for check in report["checks"]
+        if check["status"] == "FAIL"
+        for detail in check["details"]
+    ]
+    return AuditResult(
+        name="structural",
+        status="pass" if report["passed"] else "fail",
+        failures=failures,
+        details=report,
+    )
 
 
 def _check(name: str, passed: bool, details: list[str]) -> Check:
