@@ -177,6 +177,31 @@ def build_ollama_chunk_prompt(
     return system, user
 
 
+MINIMAL_PARAGRAPH_SYSTEM_PROMPT = (
+    "Translate the user's English paragraph to {target_lang_long}. "
+    "Output ONLY the translation. No preface, no commentary, no markdown, "
+    "no English echo, no quotes. Use 台灣繁體中文 (Taiwan vocabulary). "
+    "Keep English abbreviations (AI / LLM / GPT) verbatim."
+)
+
+
+def build_minimal_paragraph_prompt(
+    *,
+    paragraph: str,
+    target_lang: str = "zh-tw",
+) -> tuple[str, str]:
+    """Smallest possible prompt for a single paragraph — fallback floor.
+
+    Used by translate_book_ollama.py when a chunk recursion reaches a single
+    paragraph that still fails marker-aligned translation. No markers; the
+    response IS the translation. Accept empty response as terminal (caller
+    preserves source with note).
+    """
+    target_lang_long = _target_long(target_lang)
+    system = MINIMAL_PARAGRAPH_SYSTEM_PROMPT.format(target_lang_long=target_lang_long)
+    return system, paragraph.strip()
+
+
 def build_subagent_prompt(
     *,
     chapter_label: str,

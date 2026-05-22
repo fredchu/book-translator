@@ -2,16 +2,17 @@
 """End-to-end book translation driver using a local Ollama model.
 
 Sequential per-chapter loop (single GPU). Phase 1 marker alignment is enforced
-on every chapter; misalignment triggers one retry with a higher temperature
-before falling back to mark_failed. State.json drives resume; re-running on
-the same --out picks up where the previous run stopped.
+on every chunk; misalignment triggers one retry with a higher temperature,
+then recursive split-on-fail down to a single-paragraph minimal fallback.
+State.json drives resume; re-running on the same --out picks up where the
+previous run stopped.
 
 Pipeline:
     extract_epub.extract → init_state → for each translate spine item:
         build prompt with marker + carryover + minimal glossary
         OllamaProvider.translate (attempt 0)
         strip_known_leak_prefixes + extract_aligned_translation
-        on misalign: retry with temperature=0.5 (attempt 1)
+        on misalign: retry with temperature=0.5 (attempt 1), split, fallback
         write chapters/<id>_translation.txt + translation_log/<id>.json
         update carryover (last 200 chars), save state.json
     assemble.assemble (strict_nav=False — ollama path may have nav gaps)
@@ -113,7 +114,8 @@ def _translate_chunk(
             warnings.append(f"attempt {attempt}: ProviderError: {exc}")
             continue
         raw = result.raw_text
-        warnings = dispatch.validate_translation(raw, chunk_html_for_validate)
+        attempt_warnings = dispatch.validate_translation(raw, chunk_html_for_validate)
+        warnings.extend(f"attempt {attempt}: {w}" for w in attempt_warnings)
         cleaned = dispatch.strip_known_leak_prefixes(raw)
         try:
             aligned = dispatch.extract_aligned_translation(cleaned, expected_count=expected_count)
@@ -123,6 +125,152 @@ def _translate_chunk(
             continue
 
     return None, raw, warnings
+
+
+def _translate_single_paragraph_fallback(
+    provider: OllamaProvider,
+    paragraph: str,
+    target_lang: str,
+    book_dir: Path,
+    depth_label: str,
+) -> tuple[str | None, list[str]]:
+    """Translate one paragraph with the minimal no-marker fallback prompt."""
+    system_msg, user_msg = dispatch.build_minimal_paragraph_prompt(
+        paragraph=paragraph,
+        target_lang=target_lang,
+    )
+    log_dir = book_dir / "_ollama_logs"
+    warnings: list[str] = []
+    try:
+        result = provider.translate(
+            user_msg,
+            request_id=f"{depth_label}_fallback",
+            log_dir=log_dir,
+            system=system_msg,
+        )
+    except ProviderError as exc:
+        return None, [f"{depth_label}: fallback ProviderError: {exc}"]
+
+    raw = result.raw_text or ""
+    cleaned = dispatch.strip_known_leak_prefixes(raw).strip()
+    if not cleaned:
+        warnings.append(f"{depth_label}: fallback empty response")
+        return None, warnings
+    refusal = dispatch.detect_aup_refusal(cleaned)
+    if refusal:
+        warnings.append(f"{depth_label}: fallback {refusal}")
+        return None, warnings
+    return cleaned, warnings
+
+
+def _translate_chunk_with_recursion(
+    provider: OllamaProvider,
+    *,
+    chunk_paragraphs: tuple[str, ...],
+    chapter_label: str,
+    chunk_label: str,
+    book_title: str,
+    target_lang: str,
+    carryover: str,
+    book_dir: Path,
+    default_temperature: float,
+    depth: int = 0,
+    max_depth: int = 4,
+) -> tuple[str | None, list[str]]:
+    """Translate a chunk, splitting failed chunks until fallback floor."""
+    aligned, _raw, warns = _translate_chunk(
+        provider,
+        chunk_paragraphs=chunk_paragraphs,
+        chapter_label=chapter_label,
+        chunk_label=chunk_label,
+        book_title=book_title,
+        target_lang=target_lang,
+        carryover=carryover,
+        book_dir=book_dir,
+        default_temperature=default_temperature,
+    )
+    all_warnings = [f"{chunk_label}: {w}" for w in warns]
+    if aligned is not None:
+        return aligned, all_warnings
+
+    if len(chunk_paragraphs) == 1:
+        print(f"[split] {chapter_label}_{chunk_label} fallback single paragraph", file=sys.stderr)
+        fallback, fallback_warnings = _translate_single_paragraph_fallback(
+            provider,
+            chunk_paragraphs[0],
+            target_lang,
+            book_dir,
+            chunk_label,
+        )
+        all_warnings.extend(fallback_warnings)
+        return fallback, all_warnings
+
+    if depth >= max_depth:
+        print(
+            f"[split] {chapter_label}_{chunk_label} max_depth={max_depth}; "
+            f"fallback {len(chunk_paragraphs)} paragraph(s)",
+            file=sys.stderr,
+        )
+        fallback_parts: list[str] = []
+        for idx, paragraph in enumerate(chunk_paragraphs, start=1):
+            paragraph_label = f"{chunk_label}-P{idx:02d}"
+            fallback, fallback_warnings = _translate_single_paragraph_fallback(
+                provider,
+                paragraph,
+                target_lang,
+                book_dir,
+                paragraph_label,
+            )
+            all_warnings.extend(fallback_warnings)
+            if fallback is None:
+                all_warnings.append(f"{paragraph_label}: fallback failed at max_depth")
+                return None, all_warnings
+            fallback_parts.append(fallback)
+        return chunker.stitch(fallback_parts), all_warnings
+
+    mid = len(chunk_paragraphs) // 2
+    left = chunk_paragraphs[:mid]
+    right = chunk_paragraphs[mid:]
+    left_label = f"{chunk_label}-L"
+    right_label = f"{chunk_label}-R"
+    print(
+        f"[split] {chapter_label}_{chunk_label} failed; split "
+        f"{len(chunk_paragraphs)} -> {len(left)} + {len(right)}",
+        file=sys.stderr,
+    )
+    left_aligned, left_warnings = _translate_chunk_with_recursion(
+        provider,
+        chunk_paragraphs=left,
+        chapter_label=chapter_label,
+        chunk_label=left_label,
+        book_title=book_title,
+        target_lang=target_lang,
+        carryover=carryover,
+        book_dir=book_dir,
+        default_temperature=default_temperature,
+        depth=depth + 1,
+        max_depth=max_depth,
+    )
+    all_warnings.extend(left_warnings)
+    right_carryover = left_aligned[-200:] if left_aligned else carryover
+    right_aligned, right_warnings = _translate_chunk_with_recursion(
+        provider,
+        chunk_paragraphs=right,
+        chapter_label=chapter_label,
+        chunk_label=right_label,
+        book_title=book_title,
+        target_lang=target_lang,
+        carryover=right_carryover,
+        book_dir=book_dir,
+        default_temperature=default_temperature,
+        depth=depth + 1,
+        max_depth=max_depth,
+    )
+    all_warnings.extend(right_warnings)
+    if left_aligned is None or right_aligned is None:
+        all_warnings.append(f"{chunk_label}: recursive split failed")
+        return None, all_warnings
+    return chunker.stitch([left_aligned, right_aligned]), all_warnings
 
 
 def _translate_chapter_chunked(
@@ -137,20 +285,24 @@ def _translate_chapter_chunked(
     book_dir: Path,
     default_temperature: float,
     chunk_max_chars: int,
-) -> tuple[str | None, list[str]]:
-    """Translate a chapter via paragraph chunking. Returns (stitched_or_None, warnings)."""
+) -> tuple[str | None, list[str], int]:
+    """Translate a chapter via paragraph chunking.
+
+    Returns (stitched_or_None, warnings, partial_paragraph_count).
+    """
     paragraphs = dispatch.html_to_paragraphs(html)
     if not paragraphs:
-        return "", []
+        return "", [], 0
     plan = chunker.chunk_paragraphs(paragraphs, max_chars=chunk_max_chars)
 
     accumulated: list[str] = []
     chunk_carry = carryover
     all_warnings: list[str] = []
+    partial_paragraph_count = 0
 
     for i, chunk in enumerate(plan.chunks, start=1):
         chunk_label = f"ck{i:02d}of{len(plan.chunks):02d}"
-        aligned, raw, warns = _translate_chunk(
+        aligned, warns = _translate_chunk_with_recursion(
             provider,
             chunk_paragraphs=chunk.paragraphs,
             chapter_label=chapter_label,
@@ -165,14 +317,26 @@ def _translate_chapter_chunked(
             [f"{chunk_label} (paras {chunk.start_idx + 1}-{chunk.end_idx}): {w}" for w in warns]
         )
         if aligned is None:
+            partial_paragraph_count += len(chunk.paragraphs)
             all_warnings.append(
-                f"{chunk_label}: chunk failed after 2 attempts ({len(chunk.paragraphs)} paragraphs)"
+                f"{chunk_label}: source-preserved {len(chunk.paragraphs)} paragraph(s) after recursive failure"
             )
-            return None, all_warnings
+            aligned = "\n\n".join(f"[未譯：模型拒答] {p}" for p in chunk.paragraphs)
         accumulated.append(aligned)
         chunk_carry = aligned[-200:]
 
-    return chunker.stitch(accumulated), all_warnings
+    all_warnings.append(f"partial_paragraph_count={partial_paragraph_count}")
+    return chunker.stitch(accumulated), all_warnings, partial_paragraph_count
+
+
+def _record_partial_paragraphs(
+    *,
+    log_path: Path,
+    partial_paragraph_count: int,
+) -> None:
+    entry = json.loads(log_path.read_text(encoding="utf-8"))
+    entry["partial_paragraph_count"] = partial_paragraph_count
+    log_path.write_text(json.dumps(entry, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def main() -> int:
@@ -272,7 +436,9 @@ def main() -> int:
         ch_label = cid.replace("item_", "").lstrip("0") or "0"
 
         t0 = time.monotonic()
-        aligned, warns = _translate_chapter_chunked(
+        source_paragraphs = dispatch.html_to_paragraphs(html)
+        total_paragraphs = len(source_paragraphs)
+        aligned, warns, partial_paragraph_count = _translate_chapter_chunked(
             provider,
             html=html,
             chapter_id=cid,
@@ -287,7 +453,7 @@ def main() -> int:
         elapsed = time.monotonic() - t0
         provider.temperature = args.temperature  # reset after retry bump
 
-        translation_log.write_log_entry(
+        log_path = translation_log.write_log_entry(
             book_dir=book_dir,
             chapter_id=cid,
             prompt=f"(see _ollama_logs/{ch_label}_ck*.json)",
@@ -295,20 +461,25 @@ def main() -> int:
             parsed_translation=aligned or "",
             validation_warnings=warns,
             model=args.ollama_model,
-            source_paragraph_count=len(dispatch.html_to_paragraphs(html)),
+            source_paragraph_count=total_paragraphs,
         )
+        _record_partial_paragraphs(log_path=log_path, partial_paragraph_count=partial_paragraph_count)
 
-        if aligned is not None:
+        if aligned is not None and (total_paragraphs == 0 or partial_paragraph_count < total_paragraphs):
             translation_path.write_text(aligned, encoding="utf-8")
             state_mod.mark_done(state, cid, aligned)
+            if partial_paragraph_count > 0:
+                state["chapters"][cid]["partial_paragraphs"] = partial_paragraph_count
             done_count += 1
             carryover = aligned[-200:]
+            status_label = "done_partial" if partial_paragraph_count > 0 else "done"
             print(
-                f"[{i}/{len(translate_ids)}] {cid} done {elapsed:.1f}s chars={len(aligned)}",
+                f"[{i}/{len(translate_ids)}] {cid} {status_label} {elapsed:.1f}s "
+                f"chars={len(aligned)} partial_paragraphs={partial_paragraph_count}",
                 file=sys.stderr,
             )
         else:
-            state_mod.mark_failed(state, cid, "marker misaligned after 2 attempts")
+            state_mod.mark_failed(state, cid, "all paragraphs failed after recursive fallback")
             failed_count += 1
             print(
                 f"[{i}/{len(translate_ids)}] {cid} FAILED {elapsed:.1f}s warns={warns[:2]}",

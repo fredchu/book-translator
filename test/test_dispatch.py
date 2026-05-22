@@ -131,6 +131,18 @@ def test_build_subagent_prompt_marker_count_matches_source():
     assert set(numeric) >= {1, 2, 3, 4, 5}
 
 
+def test_build_minimal_paragraph_prompt_strips_to_user_only():
+    sys_msg, user_msg = dispatch.build_minimal_paragraph_prompt(
+        paragraph="  Hello world.  ",
+        target_lang="zh-tw",
+    )
+    assert "Translate the user's English paragraph" in sys_msg
+    assert "台灣繁體中文" in sys_msg
+    assert "AI / LLM" in sys_msg
+    assert user_msg == "Hello world."
+    assert "[[PARA" not in user_msg  # no marker contract
+
+
 def test_build_subagent_prompt_handles_empty_carryover():
     prompt = dispatch.build_subagent_prompt(
         chapter_label="1", book_title="X", target_lang="zh-tw",
