@@ -4,6 +4,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 import dispatch  # type: ignore  # noqa: E402
 
@@ -186,6 +188,27 @@ def test_validate_translation_detects_invented_marker():
     translation = "[[PARA_1]]\n甲\n\n[[PARA_2]]\n乙\n\n[[PARA_3]]\n丙?"
     warnings = dispatch.validate_translation(translation, src_html)
     assert any("extra" in w.lower() or "PARA_3" in w for w in warnings)
+
+
+def test_extract_aligned_translation_joins_paragraphs_with_blank_line():
+    output = "[[PARA_1]]\n第一段。\n\n[[PARA_2]]\n第二段。"
+    text = dispatch.extract_aligned_translation(output, expected_count=2)
+    assert text == "第一段。\n\n第二段。"
+
+
+def test_extract_aligned_translation_raises_when_misaligned():
+    output = "[[PARA_1]]\n第一段。"  # missing PARA_2
+    with pytest.raises(ValueError) as exc:
+        dispatch.extract_aligned_translation(output, expected_count=2)
+    assert "missing" in str(exc.value).lower() or "PARA_2" in str(exc.value)
+
+
+def test_extract_aligned_translation_strips_marker_lines_from_body():
+    output = "[[PARA_1]]\n甲\n\n[[PARA_2]]\n乙"
+    text = dispatch.extract_aligned_translation(output, expected_count=2)
+    # the marker tokens themselves must not appear in the joined output
+    assert "[[PARA_1]]" not in text
+    assert "[[PARA_2]]" not in text
 
 
 def test_subagent_prompt_includes_bocky_style_rules():

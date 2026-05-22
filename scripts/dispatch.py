@@ -199,6 +199,21 @@ def validate_translation(translation: str, chapter_html: str, *, min_ratio: floa
     return warnings
 
 
+def extract_aligned_translation(raw_output: str, expected_count: int) -> str:
+    """Parse a marker-aligned subagent response back to plain translation text.
+
+    Joins translations of [[PARA_1]]..[[PARA_N]] with one blank line, stripped
+    of marker tokens themselves. Raises ValueError on misalignment so callers
+    can catch and route to the retry / AUP / manual-fix path.
+    """
+    result = ma.parse_marker_output(raw_output, expected_count=expected_count)
+    if result.missing_markers:
+        raise ValueError(f"missing markers in subagent output: {result.missing_markers}")
+    if result.extra_markers:
+        raise ValueError(f"extra markers in subagent output: {result.extra_markers}")
+    return "\n\n".join(result.translations)
+
+
 def _target_long(target_lang: str) -> str:
     table = {
         "zh-tw": "台灣繁體中文",
