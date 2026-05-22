@@ -23,10 +23,15 @@ class ParseResult:
     translations_by_idx: dict[int, str]  # 1-indexed marker number -> translation
     missing_markers: list[int]  # marker numbers expected but absent
     extra_markers: list[int]  # marker numbers present but unexpected
+    duplicate_markers: list[int]  # marker numbers that appeared more than once
     is_aligned: bool = field(init=False)
 
     def __post_init__(self) -> None:
-        self.is_aligned = not self.missing_markers and not self.extra_markers
+        self.is_aligned = (
+            not self.missing_markers
+            and not self.extra_markers
+            and not self.duplicate_markers
+        )
 
 
 def wrap_paragraphs(paragraphs: list[str]) -> str:
@@ -53,6 +58,7 @@ def parse_marker_output(output: str, expected_count: int) -> ParseResult:
             translations_by_idx={},
             missing_markers=list(range(1, expected_count + 1)),
             extra_markers=[],
+            duplicate_markers=[],
         )
 
     matches = list(_MARKER_RE.finditer(output))
@@ -62,20 +68,25 @@ def parse_marker_output(output: str, expected_count: int) -> ParseResult:
             translations_by_idx={},
             missing_markers=list(range(1, expected_count + 1)),
             extra_markers=[],
+            duplicate_markers=[],
         )
 
     found_by_idx: dict[int, str] = {}
+    marker_counts: dict[int, int] = {}
     for i, m in enumerate(matches):
         idx = int(m.group(1))
+        marker_counts[idx] = marker_counts.get(idx, 0) + 1
         start = m.end()
         end = matches[i + 1].start() if i + 1 < len(matches) else len(output)
         body = output[start:end].strip()
-        found_by_idx[idx] = body
+        if idx not in found_by_idx:
+            found_by_idx[idx] = body
 
     expected = set(range(1, expected_count + 1))
     found = set(found_by_idx.keys())
     missing = sorted(expected - found)
     extra = sorted(found - expected)
+    duplicate = sorted(idx for idx, count in marker_counts.items() if count > 1)
 
     # ordered translations for indices we did find, in 1..N order
     ordered = [found_by_idx[i] for i in sorted(found_by_idx) if i in expected]
@@ -85,4 +96,5 @@ def parse_marker_output(output: str, expected_count: int) -> ParseResult:
         translations_by_idx=found_by_idx,
         missing_markers=missing,
         extra_markers=extra,
+        duplicate_markers=duplicate,
     )

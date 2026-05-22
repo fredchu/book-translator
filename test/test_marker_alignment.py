@@ -59,6 +59,36 @@ def test_parse_marker_output_detects_extra_marker():
     assert result.extra_markers == [4]
 
 
+def test_parse_marker_output_detects_duplicate_markers():
+    output = "[[PARA_1]] x\n\n[[PARA_2]] y\n\n[[PARA_2]] y2\n\n[[PARA_3]] z"
+    result = ma.parse_marker_output(output, expected_count=3)
+    assert result.duplicate_markers == [2]
+    assert result.is_aligned is False
+    assert result.translations_by_idx[2] == "y"
+
+
+def test_parse_marker_output_triple_duplicate_reports_once():
+    output = "[[PARA_5]] first\n\n[[PARA_5]] second\n\n[[PARA_5]] third"
+    result = ma.parse_marker_output(output, expected_count=5)
+    assert result.duplicate_markers == [5]
+
+
+def test_parse_marker_output_no_duplicates_when_clean():
+    output = "[[PARA_1]]\n第一段。\n\n[[PARA_2]]\n第二段。"
+    result = ma.parse_marker_output(output, expected_count=2)
+    assert result.duplicate_markers == []
+    assert result.is_aligned is True
+
+
+def test_is_aligned_false_when_only_duplicates_present():
+    output = "[[PARA_1]] x\n\n[[PARA_2]] y\n\n[[PARA_2]] y2\n\n[[PARA_3]] z"
+    result = ma.parse_marker_output(output, expected_count=3)
+    assert result.missing_markers == []
+    assert result.extra_markers == []
+    assert result.duplicate_markers == [2]
+    assert result.is_aligned is False
+
+
 def test_parse_marker_output_tolerates_whitespace_variants():
     output = "[[ PARA_1 ]]\n第一段\n\n[[para_2]]\n第二段"  # space + lowercase
     result = ma.parse_marker_output(output, expected_count=2)

@@ -239,6 +239,10 @@ def validate_translation(translation: str, chapter_html: str, *, min_ratio: floa
             preview = ", ".join(f"PARA_{n}" for n in result.missing_markers[:5])
             more = "" if len(result.missing_markers) <= 5 else f" (+{len(result.missing_markers)-5} more)"
             warnings.append(f"missing markers: {preview}{more}")
+        if result.duplicate_markers:
+            preview = ", ".join(f"PARA_{n}" for n in result.duplicate_markers[:5])
+            more = "" if len(result.duplicate_markers) <= 5 else f" (+{len(result.duplicate_markers)-5} more)"
+            warnings.append(f"duplicate markers: {preview}{more}")
         if result.extra_markers:
             preview = ", ".join(f"PARA_{n}" for n in result.extra_markers[:5])
             more = "" if len(result.extra_markers) <= 5 else f" (+{len(result.extra_markers)-5} more)"
@@ -274,6 +278,8 @@ def extract_aligned_translation(raw_output: str, expected_count: int) -> str:
     result = ma.parse_marker_output(cleaned, expected_count=expected_count)
     if result.missing_markers:
         raise ValueError(f"missing markers in subagent output: {result.missing_markers}")
+    if result.duplicate_markers:
+        raise ValueError(f"duplicate markers in subagent output: {result.duplicate_markers}")
     if result.extra_markers:
         raise ValueError(f"extra markers in subagent output: {result.extra_markers}")
     return "\n\n".join(result.translations)
