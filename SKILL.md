@@ -299,27 +299,26 @@ On `[c]`: set `state.style_confirmed = true`, proceed. On `[g]`/`[s]`: accept us
 
 ### Step 6: Parallel subagent dispatch (translate items only)
 
-Use the `Agent` tool with `model: "opus"`, batch size = concurrency. Each subagent task:
+Use the `Agent` tool with `model: "sonnet"` for ch.02+ (see "Model selection
+discipline" below), batch size = `concurrency` (default 5). Each task's
+prompt is produced by `dispatch.build_subagent_prompt(...)` and includes:
 
-```
-You are translating Chapter <N> of <book_title> from English to 台灣繁體中文.
+- Glossary (mandatory translations)
+- Style anchor (first 500 chars of ch.01 translation)
+- Carryover (last 200 chars of ch.<N-1> translation)
+- **Source paragraphs wrapped with `[[PARA_1]]`..`[[PARA_N]]` markers**
+- Verification rules requiring the subagent to echo every marker followed by
+  its translation, starting the response with `[[PARA_1]]` (no preface)
 
-GLOSSARY (mandatory — use these exact translations):
-<glossary.json>
+After each subagent returns, the main session:
 
-STYLE ANCHOR (match this register):
-<first 500 chars of ch.01 translation>
-
-CARRYOVER (last 200 chars of ch.<N-1> translation; your opening should flow from this):
-<carryover>
-
-CHAPTER <N> SOURCE:
-<chapter html, stripped of nav/footer>
-
-Return ONLY the translated text (no commentary). Preserve paragraph boundaries.
-```
-
-After each batch, update `state.json`: `chapters[N].status = "done"` + `translation_hash`. Failed chapters → 1 retry; second failure → mark `failed`, do not block subsequent batches.
+1. Calls `dispatch.validate_translation(raw, chapter_html)` to surface warnings
+   (missing/extra markers, refusal language, preface leak).
+2. On a clean run: calls `dispatch.extract_aligned_translation(raw, N)` to get
+   the plain translation text, then `state.mark_done(state, chapter_id, text)`.
+3. On misalignment: retry the chapter once with the same prompt; if it still
+   misaligns, escalate to Opus (see Phase 4) or mark `aup_refused` if the
+   response contains refusal language; mark `failed` otherwise.
 
 ### Step 7: Assemble bilingual EPUB
 
