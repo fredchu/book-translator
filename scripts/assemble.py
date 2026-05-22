@@ -262,8 +262,8 @@ def _emit_translations_payload(
 
     The audits (translation_quality, bilingual_coverage) expect EPUB-internal
     `<opf_dir>/translations/source_only.json` listing every src_text that
-    intentionally has no zh sibling. When the user has not authored one, we
-    derive it from the already-rewritten source_only pages in `replacements`.
+    intentionally has no zh sibling. We derive missing entries from the
+    already-rewritten source_only pages and translate pages in `replacements`.
     """
     import json as _json
     import re as _re
@@ -276,34 +276,46 @@ def _emit_translations_payload(
             payload[posixpath.join(payload_dir, path.name)] = path.read_bytes()
 
     source_only_key = posixpath.join(payload_dir, "source_only.json")
-    if source_only_key not in payload:
-        han = _re.compile(r"[一-鿿]")
+    han = _re.compile(r"[一-鿿]")
 
-        def _clean(text: str) -> str:
-            return _re.sub(r"\s+", " ", text).strip()
+    def _clean(text: str) -> str:
+        return _re.sub(r"\s+", " ", text).strip()
 
-        orphan_texts: list[str] = []
-        seen: set[str] = set()
-        source_only_basenames = {
-            posixpath.basename(entry.get("original_path") or entry.get("href") or "")
-            for entry in represented_entries
-            if entry.get("output_strategy") == "source_only"
-        }
-        source_only_basenames.discard("")
-        for key, body in replacements.items():
-            if posixpath.basename(key) not in source_only_basenames:
+    orphan_texts: list = []
+    seen: set[str] = set()
+    if source_only_key in payload:
+        data = _json.loads(payload[source_only_key].decode("utf-8"))
+        if isinstance(data, list):
+            orphan_texts.extend(data)
+            for item in data:
+                if isinstance(item, str):
+                    seen.add(_clean(item))
+                elif isinstance(item, dict) and isinstance(item.get("src_text"), str):
+                    seen.add(_clean(item["src_text"]))
+    strategy_by_basename = {
+        posixpath.basename(entry.get("original_path") or entry.get("href") or ""): entry.get("output_strategy")
+        for entry in represented_entries
+        if entry.get("output_strategy") in {"source_only", "translate"}
+    }
+    strategy_by_basename.pop("", None)
+    for key, body in replacements.items():
+        strategy = strategy_by_basename.get(posixpath.basename(key))
+        if strategy is None:
+            continue
+        soup = BeautifulSoup(body, "html.parser")
+        for src_node in soup.find_all(
+            class_=lambda v: bool(v) and "src" in (v if isinstance(v, list) else str(v).split())
+        ):
+            next_tag = src_node.find_next_sibling()
+            if strategy == "translate" and next_tag is not None and "tgt" in set(next_tag.get("class", [])):
                 continue
-            soup = BeautifulSoup(body, "html.parser")
-            for src_node in soup.find_all(
-                class_=lambda v: bool(v) and "src" in (v if isinstance(v, list) else str(v).split())
-            ):
-                txt = _clean(src_node.get_text(" ", strip=True))
-                if not txt or han.search(txt) or txt in seen:
-                    continue
-                seen.add(txt)
-                orphan_texts.append(txt)
-        if orphan_texts:
-            payload[source_only_key] = _json.dumps(orphan_texts, ensure_ascii=False, indent=2).encode("utf-8")
+            txt = _clean(src_node.get_text(" ", strip=True))
+            if not txt or han.search(txt) or txt in seen:
+                continue
+            seen.add(txt)
+            orphan_texts.append(txt)
+    if orphan_texts:
+        payload[source_only_key] = _json.dumps(orphan_texts, ensure_ascii=False, indent=2).encode("utf-8")
 
     # Use compatibility_items so the payload is written by BOTH archive
     # writers (write_from_source_archive overlays missing items; write_standalone_archive

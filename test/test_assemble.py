@@ -295,6 +295,44 @@ def test_source_only_json_auto_bundled_into_epub(tmp_path: Path):
     assert any("Tiny Book" in entry for entry in data)
 
 
+def test_assemble_includes_orphan_src_from_translate_strategy_in_source_only_json(tmp_path: Path):
+    """When a translate-strategy chapter ends with one English paragraph that
+    has no Chinese sibling (e.g. translator produced N-1 paragraphs for an N-
+    paragraph source), assemble should still add that orphan to
+    OEBPS/translations/source_only.json so the audit accepts it."""
+    book_dir = _make_book_dir(tmp_path)
+    (book_dir / "chapters" / "item_002.html").write_text(
+        "<html><body><p>Paired source paragraph.</p>"
+        "<p>Orphan translate paragraph.</p></body></html>",
+        encoding="utf-8",
+    )
+    (book_dir / "chapters" / "ch_01_translation.txt").write_text(
+        "已翻譯段落。", encoding="utf-8"
+    )
+    (book_dir / "state.json").write_text(
+        json.dumps({"chapters": {"item_002": {"status": "done"}}}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    translations = book_dir / "translations"
+    translations.mkdir()
+    (translations / "source_only.json").write_text(
+        json.dumps(["User-authored exception"], ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    out = tmp_path / "out.epub"
+    assemble.assemble(book_dir, out, strict_nav=False)
+
+    with zipfile.ZipFile(out) as z:
+        source_only_paths = [n for n in z.namelist() if n.endswith("translations/source_only.json")]
+        assert source_only_paths, "source_only.json missing from EPUB"
+        data = json.loads(z.read(source_only_paths[0]).decode("utf-8"))
+
+    assert "User-authored exception" in data
+    assert "Orphan translate paragraph." in data
+    assert "Paired source paragraph." not in data
+
+
 def test_translations_dir_payload_bundled(tmp_path: Path):
     """User-authored <book_dir>/translations/*.json files must be packaged
     into OEBPS/translations/ inside the EPUB."""
