@@ -255,6 +255,146 @@ def test_strip_known_leak_prefixes_leaves_clean_output_unchanged():
     assert dispatch.strip_known_leak_prefixes(raw) == raw
 
 
+def test_sanitize_model_tokens_strips_hy_assistant_suffix():
+    raw = "[[PARA_1]]\n這次聚會正是為了給這個領域命名。<｜hy-Assistant｜>"
+    cleaned = dispatch.sanitize_model_tokens(raw)
+    assert "hy-Assistant" not in cleaned
+    assert cleaned.endswith("。")
+
+
+def test_sanitize_model_tokens_strips_closing_form():
+    """Hy-MT2 also emits </｜hy-Assistant｜> with slash — dominant variant."""
+    raw = "翻譯內容。</｜hy-Assistant｜>後續"
+    cleaned = dispatch.sanitize_model_tokens(raw)
+    assert "hy-Assistant" not in cleaned
+    assert cleaned == "翻譯內容。後續"
+
+
+def test_sanitize_model_tokens_strips_garbled_variants():
+    """Model occasionally emits typo variants of its own special tokens."""
+    raw = "甲</｜hy-Assient｜>乙</｜hy-Assainer｜>丙</｜hy-Assister｜>丁"
+    cleaned = dispatch.sanitize_model_tokens(raw)
+    for tok in ("hy-Assient", "hy-Assainer", "hy-Assister"):
+        assert tok not in cleaned
+    assert cleaned == "甲乙丙丁"
+
+
+def test_sanitize_model_tokens_strips_empty_pipe():
+    raw = "甲</｜｜>乙"
+    cleaned = dispatch.sanitize_model_tokens(raw)
+    assert cleaned == "甲乙"
+
+
+def test_sanitize_model_tokens_preserves_closing_html_tags():
+    """`</think>`, `</p>`, `</div>` etc. must NOT be eaten — no pipe present."""
+    raw = "<p>hello</p> and <div>x</div> and </think>"
+    cleaned = dispatch.sanitize_model_tokens(raw)
+    assert cleaned == raw
+
+
+def test_sanitize_model_tokens_strips_bracket_variant():
+    """Hy-MT2 sometimes uses `[` instead of `<` for the opening bracket."""
+    raw = "甲。[｜hy-Assistant｜>乙"
+    cleaned = dispatch.sanitize_model_tokens(raw)
+    assert "hy-Assistant" not in cleaned
+    assert cleaned == "甲。乙"
+
+
+def test_sanitize_model_tokens_strips_katakana_typo():
+    """Closing pipe sometimes garbled as katakana ｯ (U+FF6F)."""
+    raw = "甲。<｜hy-Assistantｯ>乙"
+    cleaned = dispatch.sanitize_model_tokens(raw)
+    assert "hy-Assistant" not in cleaned
+    assert cleaned == "甲。乙"
+
+
+def test_sanitize_model_tokens_strips_katakana_as_opening_pipe():
+    """Opening pipe also sometimes garbled as ｯ — observed `[ｯhy-Assistant｜>`."""
+    raw = "結束。[ｯhy-Assistant｜>後續"
+    cleaned = dispatch.sanitize_model_tokens(raw)
+    assert "hy-Assistant" not in cleaned
+    assert cleaned == "結束。後續"
+
+
+def test_sanitize_model_tokens_strips_interrupted_token_prefix():
+    """Model starts the token then jumps back to translation content."""
+    raw = "結束。</｜hy-Ass麼？這是下一段"
+    cleaned = dispatch.sanitize_model_tokens(raw)
+    assert "hy-Ass" not in cleaned
+    # Trailing real content must be preserved
+    assert "麼？這是下一段" in cleaned
+
+
+def test_sanitize_model_tokens_strips_interrupted_assistant_token():
+    """Longer interruption — token wrote 'Assistant' then jumped to Chinese."""
+    raw = "完成。</｜hy-Assistant時回饋的設計"
+    cleaned = dispatch.sanitize_model_tokens(raw)
+    assert "hy-Assistant" not in cleaned
+    assert "時回饋的設計" in cleaned
+
+
+def test_sanitize_model_tokens_preserves_list_markers():
+    """`[12, 13, 14]` index-page entries must NOT be stripped."""
+    raw = "OpenAI, [10, 13, 14], 20"
+    cleaned = dispatch.sanitize_model_tokens(raw)
+    assert cleaned == raw
+
+
+def test_sanitize_model_tokens_preserves_chinese_with_a_prefix():
+    """Chinese paragraphs containing words like Asia / Assad / Assistant
+    must not be partially eaten — only `hy[-_]A` triggers the partial-strip."""
+    raw = "亞洲 Asia 阿薩德 Assad Assistant 智慧"
+    cleaned = dispatch.sanitize_model_tokens(raw)
+    assert cleaned == raw
+
+
+def test_sanitize_model_tokens_strips_underscore_variant():
+    raw = "甲乙丙<｜hy_Assistant｜>\n更多文字<｜hy_User｜>尾"
+    cleaned = dispatch.sanitize_model_tokens(raw)
+    assert "hy_Assistant" not in cleaned
+    assert "hy_User" not in cleaned
+    assert cleaned == "甲乙丙\n更多文字尾"
+
+
+def test_sanitize_model_tokens_strips_ascii_pipe_variants():
+    raw = "translated<|im_end|> and<|endoftext|>"
+    cleaned = dispatch.sanitize_model_tokens(raw)
+    assert "<|im_end|>" not in cleaned
+    assert "<|endoftext|>" not in cleaned
+
+
+def test_sanitize_model_tokens_preserves_real_markup():
+    raw = '<p class="src">Hello</p> 5 < 10 and 10 > 5'
+    cleaned = dispatch.sanitize_model_tokens(raw)
+    assert cleaned == raw
+
+
+def test_sanitize_model_tokens_idempotent():
+    raw = "甲<｜hy-Assistant｜>乙"
+    once = dispatch.sanitize_model_tokens(raw)
+    twice = dispatch.sanitize_model_tokens(once)
+    assert once == twice == "甲乙"
+
+
+def test_strip_known_leak_prefixes_strips_suffix_token():
+    raw = "[[PARA_1]]\n甲乙丙<｜hy-Assistant｜>"
+    cleaned = dispatch.strip_known_leak_prefixes(raw)
+    assert "hy-Assistant" not in cleaned
+    assert cleaned.startswith("[[PARA_1]]")
+    assert cleaned.endswith("甲乙丙")
+
+
+def test_extract_aligned_translation_strips_hy_assistant_tokens():
+    raw = (
+        "[[PARA_1]]\n第一段中譯。<｜hy-Assistant｜>\n\n"
+        "[[PARA_2]]\n第二段中譯。<｜hy-Assistant｜>"
+    )
+    out = dispatch.extract_aligned_translation(raw, expected_count=2)
+    assert "hy-Assistant" not in out
+    assert "第一段中譯。" in out
+    assert "第二段中譯。" in out
+
+
 def test_detect_aup_refusal_returns_reason_on_known_phrases():
     cases = [
         "I cannot help with translating copyrighted material.",

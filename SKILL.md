@@ -82,7 +82,12 @@ Phase 1 `[[PARA_N]]` marker enforcement + 1 retry on misalignment) → assemble
 killed/interrupted run resumes on the next invocation.
 
 Expected runtime for a 25-chapter / 200-page book on M1 Max 32GB unified
-memory: 5-25 minutes with hy-mt2:7b; 1-2 hours with translategemma:27b. Quality
+memory (measured 2026-05-23 on *The Next Renaissance*, 23 chapters,
+~150K source chars): **~1h27m with translategemma:12b** (zero recursive
+splits, clean marker compliance); **~2h27m with hy-mt2:7b** (heavy
+recursive splits on 2-3 large chapters dominate wall time); **3-4h with
+translategemma:27b** (proportionally slower; superseded by 12b for most
+use cases). Quality
 gap vs Anthropic Opus 4.7 is roughly 0.7-1.0 points on the 5-dimension manual
 eval (8.5 vs 9.4) — usable for drafts and offline reading; not interchangeable
 for literary fiction.

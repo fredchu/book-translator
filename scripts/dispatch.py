@@ -100,6 +100,30 @@ _LEAK_PREFIX_PATTERNS = [
 
 _FENCE_RE = re.compile(r"^```[a-zA-Z]*\s*\n(.*?)\n```\s*$", re.DOTALL)
 
+# Model-emitted special tokens that leak past stop sequences. Hy-MT2 emits
+# many shapes — the tokenizer recognises only the canonical
+# `<｜hy_place▁holder▁no▁2｜>` and `<｜hy_end▁of▁sentence｜>`, so other
+# end-of-turn intents come out as ordinary generated text and pick up
+# random typos. Observed in the wild:
+#   <｜hy-Assistant｜>, </｜hy-Assistant｜>     opening + closing forms
+#   [｜hy-Assistant｜>                          bracket variant (`[` for `<`)
+#   <｜hy-Assistantｯ>                          katakana ｯ (U+FF6F) typo
+#   <｜hy_Assistant｜>, <｜hy_User｜>          underscore variants
+#   </｜hy-Assient｜>, </｜hy-Assainer｜>      stem typos
+#   <｜｜>                                     empty payload
+# Plus mid-stream interruptions where the model started the token then
+# jumped back to translation content without closing:
+#   </｜hy-Ass麼？, <｜hy-Assistant時回饋
+# Distinguisher from real HTML / list markup: a pipe-like char immediately
+# after `<` or `[`, AND the body excludes whitespace / angle / brackets /
+# pipes so `<br>`, `<p class>`, `</think>`, `[1,2,3]` are never eaten.
+_MODEL_TOKEN_RE = re.compile(r"[<\[]\/?[｜|ｯ][^\s<>\[\]|｜ｯ]*[｜|ｯ]>")
+# Truncated `hy-Assistant`-family prefixes (no proper closing token).
+# Strips only the partial token; trailing real-content text is preserved.
+# Body uses [A-Za-z0-9_] not \w — \w matches Chinese under Python's
+# default UNICODE flag and would eat real translation content.
+_PARTIAL_HY_TOKEN_RE = re.compile(r"[<\[]\/?[｜|ｯ]?hy[-_]?A[A-Za-z0-9_]*")
+
 _AUP_PHRASES = [
     "I cannot help with",
     "I'm unable to",
@@ -246,12 +270,29 @@ def _format_register_specific_rules(rules: list[str], *, start: int) -> str:
     return "\n".join(f"  {index}. {rule}" for index, rule in enumerate(rules, start=start))
 
 
+def sanitize_model_tokens(text: str) -> str:
+    """Strip model-emitted special tokens that leaked past stop sequences.
+
+    Two-pass: well-formed tokens first (any payload), then truncated
+    `hy-Assistant`-family prefixes that broke mid-stream. Idempotent —
+    safe to call on clean text.
+    """
+    text = _MODEL_TOKEN_RE.sub("", text or "")
+    text = _PARTIAL_HY_TOKEN_RE.sub("", text)
+    return text
+
+
 def strip_known_leak_prefixes(raw: str) -> str:
-    """Remove known leak prefixes and markdown fences from a subagent response.
+    """Remove known leak prefixes, markdown fences, and model special-tokens
+    from a subagent response.
 
     Idempotent — if the response is already clean, returns it unchanged.
     """
-    text = (raw or "").lstrip()
+    # Special-token sweep first: catches prefix, suffix, AND inline leaks
+    # in one pass (`<｜hy-Assistant｜>` typically lands mid-output, not as
+    # a prefix). Doing this before the prefix matching keeps prefix regex
+    # logic untouched.
+    text = sanitize_model_tokens(raw or "").lstrip()
     # Markdown fence — pull body out
     fence_match = _FENCE_RE.match(text)
     if fence_match:

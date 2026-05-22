@@ -346,7 +346,8 @@ def main() -> int:
     )
     parser.add_argument("--book", required=True, type=Path, help="path to .epub")
     parser.add_argument("--ollama-model", required=True, help="e.g. hy-mt2:7b / translategemma:27b")
-    parser.add_argument("--out", required=True, type=Path, help="output parent dir; per-book dir created inside")
+    parser.add_argument("--out", required=False, type=Path, default=None,
+                        help="output parent dir; per-book dir created inside (default: book's parent dir)")
     parser.add_argument("--ollama-host", default="http://localhost:11434")
     parser.add_argument("--book-title", default=None, help="title injected into prompt (default: book stem)")
     parser.add_argument("--target-lang", default="zh-tw")
@@ -363,6 +364,8 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=None, help="cap on chapters translated this run (debug)")
     args = parser.parse_args()
 
+    if args.out is None:
+        args.out = args.book.parent
     args.out.mkdir(parents=True, exist_ok=True)
     book_stem = args.book.stem
     book_dir = args.out / book_stem
