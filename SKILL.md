@@ -38,7 +38,7 @@ Real user phrases that should route here:
 | Dimension | translate-book | book-translator |
 |-----------|---------------|-----------------|
 | Input | PDF/DOCX/EPUB | EPUB only |
-| Subagent model | Sonnet | **Opus 4.7** (default) / local Ollama (opt-in) |
+| Subagent model | Sonnet | **Sonnet 4.6** (default fan-out) / Opus 4.7 (ch.01 anchor + escalation) / local Ollama (opt-in) |
 | Output | 翻譯版 (single language) | **Bilingual** (source + translation interleaved) |
 | Coherence | None | Glossary + style anchor + carryover + spot-check |
 | Quality gate | None | **Cross-modal eval** (Gemini 2.x Pro + GPT-4o, avg ≥ 8.0) |
@@ -72,7 +72,7 @@ Given an EPUB and target language (default: 台灣繁體中文), this skill:
 2. Auto-populates per-book nav overrides from glossary chapter titles.
 3. Translates chapter 1 in the main session as the **style sample**.
 4. Asks the user to confirm tone / edit glossary before fan-out.
-5. Dispatches parallel subagents (Opus 4.7, concurrency 5) to translate remaining `translate` spine items — each receives glossary + style sample + last-paragraph carryover.
+5. Dispatches parallel subagents (Sonnet 4.6 default, concurrency 5; Opus 4.7 on validation escalation) to translate remaining `translate` spine items — each receives glossary + style sample + last-paragraph carryover.
 6. Assembles a full-fidelity bilingual EPUB from the full OPF spine: original XHTML paths, OPF idrefs, CSS, fonts, images, class names, and internal href targets are preserved; Traditional Chinese paragraphs are inserted after English text blocks.
 7. Runs structural QA (`structural_audit.py`), bilingual coverage QA (`bilingual_coverage_audit.py`), href resolution QA (`href_resolve_audit.py`), translation placeholder/length QA (`translation_quality_audit.py`), and a separate translation spot-check pass (random 5 paragraphs + character name audit) before shipping.
 8. Crash-safe: every step persists to `{book}_state.json`; re-running resumes from last completed chapter.
@@ -80,7 +80,7 @@ Given an EPUB and target language (default: 台灣繁體中文), this skill:
 ## Architecture
 
 ```
-Main session (Claude Code, Opus 4.7)
+Main session (Claude Code, Opus 4.7 for ch.01 anchor)
 ├── 1. extract_epub.py book.epub → full OPF spine manifest v2   (deterministic)
 ├── 2. glossary build (LLM call in main session)               (latent)
 │      └── reads full book → glossary.json
@@ -88,7 +88,7 @@ Main session (Claude Code, Opus 4.7)
 ├── 3. translate ch.01 in main session → style_sample          (latent)
 ├── 4. INTERACTIVE PREVIEW GATE                                (user-in-loop)
 │      └── print ch.01 preview → user [confirm | edit glossary | edit style]
-├── 5. Agent dispatch ch.02 .. ch.N (concurrency 5)            (parallel subagents)
+├── 5. Agent dispatch ch.02 .. ch.N (concurrency 5)            (parallel subagents, Sonnet 4.6 default)
 │      └── each gets: chapter + glossary + style_sample + carryover
 ├── 6. assemble.py → bilingual.epub                            (deterministic)
 ├── 7. structural_audit.py → spine/image/state completeness     (deterministic)
