@@ -229,6 +229,24 @@ def test_strip_known_leak_prefixes_leaves_clean_output_unchanged():
     assert dispatch.strip_known_leak_prefixes(raw) == raw
 
 
+def test_detect_aup_refusal_returns_reason_on_known_phrases():
+    cases = [
+        "I cannot help with translating copyrighted material.",
+        "I'm unable to provide a translation of this text because it appears to be from a copyrighted work.",
+        "I won't be able to assist with this task.",
+        "As an AI, I cannot reproduce this content.",
+    ]
+    for raw in cases:
+        reason = dispatch.detect_aup_refusal(raw)
+        assert reason is not None, f"failed to detect: {raw}"
+        assert len(reason) > 0
+
+
+def test_detect_aup_refusal_returns_none_for_clean_translation():
+    raw = "[[PARA_1]]\n甲\n\n[[PARA_2]]\n乙"
+    assert dispatch.detect_aup_refusal(raw) is None
+
+
 def test_subagent_prompt_includes_bocky_style_rules():
     """Bocky's verified style rules (5-8) must reach every subagent prompt:
     並列格式 / 第一人稱保留 / 對話與打油詩保幽默 / 不學術化.

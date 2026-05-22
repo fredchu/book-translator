@@ -100,6 +100,18 @@ _LEAK_PREFIX_PATTERNS = [
 
 _FENCE_RE = re.compile(r"^```[a-zA-Z]*\s*\n(.*?)\n```\s*$", re.DOTALL)
 
+_AUP_PHRASES = [
+    "I cannot help with",
+    "I'm unable to",
+    "I won't be able",
+    "I cannot reproduce",
+    "I can't translate",
+    "I'm not able to translate",
+    "violate our usage policy",
+    "copyrighted material",
+    "copyright restrictions",
+]
+
 
 def html_to_paragraphs(html: str) -> list[str]:
     """Convert chapter HTML to canonical plain-text paragraphs."""
@@ -182,6 +194,19 @@ def strip_known_leak_prefixes(raw: str) -> str:
     return text
 
 
+def detect_aup_refusal(raw: str) -> str | None:
+    """If the response looks like an AUP refusal, return a short reason string;
+    otherwise return None. Checks the first 800 chars to avoid false-positives
+    from in-body discussions of copyright."""
+    if not raw:
+        return None
+    head = raw[:800].lower()
+    for phrase in _AUP_PHRASES:
+        if phrase.lower() in head:
+            return f"AUP refusal phrase detected: {phrase!r}"
+    return None
+
+
 def validate_translation(translation: str, chapter_html: str, *, min_ratio: float = 0.5) -> list[str]:
     """Sanity checks on a subagent return. Returns warning list (empty = OK).
 
@@ -198,6 +223,12 @@ def validate_translation(translation: str, chapter_html: str, *, min_ratio: floa
     if not translation:
         warnings.append("translation is empty")
         return warnings
+
+    # AUP refusal short-circuits: signal it loudly so caller marks aup_refused
+    aup_reason = detect_aup_refusal(translation)
+    if aup_reason:
+        warnings.append(f"AUP_REFUSED: {aup_reason}")
+        return warnings  # do not also report marker/ratio issues
 
     src_paras = html_to_paragraphs(chapter_html)
 
