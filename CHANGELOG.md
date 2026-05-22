@@ -20,6 +20,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   body/epilogue/acknowledgments/about_author/notes entry that follows a
   `part_divider` under that divider's id, so PART → chapter nesting is
   data-driven, not heuristic.
+- `scripts/marker_alignment.py` — `[[PARA_N]]` source-side wrap +
+  output-side parser for structural verification of subagent translations.
+- `scripts/translation_log.py` — per-chapter `<book_dir>/translation_log/<chapter_id>.json`
+  capture of full prompt + raw response + parsed translation + validation warnings.
+- `scripts/replay_chapter.py` — offline CLI to re-validate + re-extract a logged
+  chapter's translation without re-dispatching the subagent.
+- `state.py` adds `aup_refused` status + `mark_aup_refused` helper. Terminal
+  state for chapters refused by Anthropic AUP; output preserves source with
+  an HTML annotation block instead of erroring out the whole book.
+- `dispatch.strip_known_leak_prefixes` — removes preface phrases ("Here is
+  the translation:", markdown fences, etc.) before marker parsing.
+- `dispatch.detect_aup_refusal` — recognizes common AUP refusal phrases in
+  the response so callers can route to `mark_aup_refused` instead of `mark_failed`.
+- `dispatch.extract_aligned_translation` — strip-and-parse helper that
+  returns plain chapter text from a marker-aligned response.
+- `scripts/providers/` package — `TranslationProvider` ABC with
+  `OllamaProvider` (HTTP client to localhost:11434) and `AnthropicProvider`
+  (marker class). Lets the pipeline target a local Ollama server (e.g.
+  translategemma:4b/12b/27b) as a CC-quota fallback or offline draft.
+- `scripts/translate_chapter_cli.py` — single-chapter CLI used for
+  benchmarking and ad-hoc spot-checks; gains `--validate-markers` flag that
+  runs Phase 1 marker alignment against the provider output and writes
+  `<request_id>.aligned.txt` on success.
+- `scripts/run_benchmark.py` — cross-model benchmark CLI that runs N
+  models across M chapters, extracts Bocky/Fred bilingual baselines for
+  side-by-side review, and emits a `comparison.md` template.
 
 ### Changed
 - Renamed `assemble.ZH_BY_EXACT_TEXT` → `STRUCTURAL_LABELS_ZH_TW` and
@@ -33,6 +59,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bilingual "English ｜ 繁中" labels derived from
   `translations_extra.nav_overrides` → `STRUCTURAL_LABELS_ZH_TW` →
   `CONTENTS_LINK_LABELS_ZH_TW` → existing fallback.
+- `dispatch.SUBAGENT_PROMPT_TEMPLATE` — source paragraphs now arrive wrapped
+  with `[[PARA_1]]..[[PARA_N]]` markers. The subagent must echo every marker
+  followed by its translation and start its output with `[[PARA_1]]` (no
+  preface). Verification rule asks the subagent to count markers before
+  returning.
+- `dispatch.validate_translation` — primary path is marker alignment
+  (missing/extra markers reported); legacy paragraph-ratio path retained for
+  responses without markers. Also surfaces `AUP_REFUSED:` warning and preface
+  leak.
+- `assemble.insert_bilingual` accepts `chapter_status` + `aup_reason` kwargs.
+  `aup_refused` chapters get a visible `<div class="aup-refused-note">`
+  injected at top of `<body>`; source preserved verbatim, no translation
+  siblings.
+- `translation_quality_audit` + `bilingual_coverage_audit` short-circuit on
+  chapters containing the aup-refused note.
+- `structural_audit` accepts `aup_refused` alongside `done` / `source_ready` /
+  `dropped` as a valid terminal state for ship-ready chapters.
+- SKILL.md: model discipline now documents Sonnet 4.6 default for ch.02+
+  fan-out subagents, Opus 4.7 for ch.01 style sample + escalation on
+  validation reject. Cross-modal eval slot still uses Opus.
 
 ### Removed
 - `scripts/regenerate_bilingual.py`. The "re-assemble a bilingual EPUB from
