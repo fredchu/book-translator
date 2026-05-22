@@ -17,7 +17,7 @@ state.json schema:
     }
 
 Output strategy values: "translate" | "source_only" | "nav_generated" | "drop_explicit".
-Status values: "pending" | "in_progress" | "done" | "failed" | "source_ready" | "dropped".
+Status values: "pending" | "in_progress" | "done" | "failed" | "source_ready" | "dropped" | "aup_refused".
 """
 
 from __future__ import annotations
@@ -40,13 +40,14 @@ DONE = "done"
 FAILED = "failed"
 SOURCE_READY = "source_ready"
 DROPPED = "dropped"
+AUP_REFUSED = "aup_refused"
 
 TRANSLATE = "translate"
 SOURCE_ONLY = "source_only"
 NAV_GENERATED = "nav_generated"
 DROP_EXPLICIT = "drop_explicit"
 
-VALID_STATUSES = {PENDING, IN_PROGRESS, DONE, FAILED, SOURCE_READY, DROPPED}
+VALID_STATUSES = {PENDING, IN_PROGRESS, DONE, FAILED, SOURCE_READY, DROPPED, AUP_REFUSED}
 VALID_OUTPUT_STRATEGIES = {TRANSLATE, SOURCE_ONLY, NAV_GENERATED, DROP_EXPLICIT}
 
 
@@ -135,6 +136,16 @@ class ChapterEntry:
         self.error = None
         self.reason = reason
 
+    def mark_aup_refused(self, reason: str) -> None:
+        if not reason.strip():
+            raise ValueError("aup_refused requires a non-empty reason")
+        self.status = AUP_REFUSED
+        self.retry_count = 0
+        self.error = None
+        self.translation_hash = None
+        self.carryover = None
+        self.reason = reason
+
 
 def init_state(book_path: Path, spine_or_ids: list[str] | list[dict], target_lang: str) -> dict:
     chapters: dict[str, dict] = {}
@@ -221,6 +232,14 @@ def mark_source_ready(state: dict, chapter_id: str) -> None:
 def mark_dropped(state: dict, chapter_id: str, reason: str) -> None:
     entry = ChapterEntry.from_dict(state["chapters"].get(chapter_id, {}))
     entry.mark_dropped(reason)
+    state["chapters"][chapter_id] = entry.to_dict()
+
+
+def mark_aup_refused(state: dict, chapter_id: str, reason: str) -> None:
+    entry = ChapterEntry.from_dict(state["chapters"].get(chapter_id, {}))
+    if entry.output_strategy == "":
+        entry.output_strategy = TRANSLATE
+    entry.mark_aup_refused(reason)
     state["chapters"][chapter_id] = entry.to_dict()
 
 

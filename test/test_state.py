@@ -9,6 +9,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 import state  # type: ignore  # noqa: E402
 
+state_module = state
+
 
 def test_init_state_marks_all_pending(tmp_path: Path):
     s = state.init_state(tmp_path / "x.epub", ["ch_01", "ch_02", "ch_03"], "zh-tw")
@@ -187,3 +189,44 @@ def test_carryover_for_skips_unfinished_previous():
         "ch_02": {"status": "pending"},
     }}
     assert state.carryover_for(s, "ch_02") == ""
+
+
+def test_mark_aup_refused_sets_status_and_preserves_strategy():
+    state = {
+        "book": "x.epub", "started": "2026-05-19T00:00:00Z", "target_lang": "zh-tw",
+        "glossary_built": True, "style_confirmed": True,
+        "chapters": {
+            "item_005": {"output_strategy": "translate", "status": "in_progress"},
+        },
+    }
+    state_module.mark_aup_refused(state, "item_005", "Anthropic AUP refused this section")
+    entry = state["chapters"]["item_005"]
+    assert entry["status"] == "aup_refused"
+    assert entry["output_strategy"] == "translate"  # preserved, not flipped to drop
+    assert "AUP" in entry["reason"]
+
+
+def test_validate_state_accepts_aup_refused():
+    state = {
+        "book": "x.epub", "started": "2026-05-19T00:00:00Z", "target_lang": "zh-tw",
+        "glossary_built": True, "style_confirmed": True,
+        "chapters": {
+            "item_001": {"output_strategy": "translate", "status": "aup_refused",
+                         "reason": "refused"},
+        },
+    }
+    # should NOT raise
+    state_module.validate_state(state, require_strategy=False)
+
+
+def test_chapters_by_status_returns_aup_refused():
+    state = {
+        "book": "x.epub", "started": "2026-05-19T00:00:00Z", "target_lang": "zh-tw",
+        "glossary_built": True, "style_confirmed": True,
+        "chapters": {
+            "item_001": {"output_strategy": "translate", "status": "aup_refused",
+                         "reason": "x"},
+            "item_002": {"output_strategy": "translate", "status": "done"},
+        },
+    }
+    assert state_module.chapters_by_status(state, "aup_refused") == ["item_001"]
