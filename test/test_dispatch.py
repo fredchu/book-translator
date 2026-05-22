@@ -69,13 +69,12 @@ def test_subagent_prompt_template_includes_legal_context():
     assert dispatch.SUBAGENT_PROMPT_TEMPLATE.startswith("CONTEXT:")
 
 
-def test_subagent_prompt_template_makes_paragraph_separator_explicit():
-    assert "EXACTLY one blank line" in dispatch.SUBAGENT_PROMPT_TEMPLATE
-    assert "two consecutive newline" in dispatch.SUBAGENT_PROMPT_TEMPLATE
-    assert "Single newlines (`\\n`) without a blank line do NOT separate paragraphs" in (
-        dispatch.SUBAGENT_PROMPT_TEMPLATE
-    )
-    assert "split your output by the exact string `\\n\\n`" in dispatch.SUBAGENT_PROMPT_TEMPLATE
+def test_subagent_prompt_template_makes_marker_contract_explicit():
+    assert "[[PARA_N]]" in dispatch.SUBAGENT_PROMPT_TEMPLATE
+    assert "marker" in dispatch.SUBAGENT_PROMPT_TEMPLATE.lower()
+    assert "Preserve every marker verbatim" in dispatch.SUBAGENT_PROMPT_TEMPLATE
+    # the first characters of output must be [[PARA_1]]
+    assert "[[PARA_1]]" in dispatch.SUBAGENT_PROMPT_TEMPLATE
 
 
 def test_build_subagent_prompt_counts_paragraphs_and_renders_separator_check():
@@ -85,8 +84,49 @@ def test_build_subagent_prompt_counts_paragraphs_and_renders_separator_check():
                   "style_anchor": {"register": "商管科普 narrative", "avoid": [], "prefer": []}},
         style_sample="", carryover="", chapter_html="<p>One.</p><p>Two.</p>",
     )
-    assert "source paragraph count: 2" in prompt
-    assert "  10. Before returning, split your output by the exact string `\\n\\n`" in prompt
+    assert "Source paragraph count: 2" in prompt
+    assert "  10. Before returning, count `[[PARA_` occurrences in" in prompt
+
+
+def test_build_subagent_prompt_uses_para_markers():
+    """Subagent prompt should wrap source paragraphs with [[PARA_N]] markers."""
+    glossary = {
+        "characters": {}, "places": {}, "terms": {},
+        "style_anchor": {"register": "x", "avoid": [], "prefer": []},
+    }
+    prompt = dispatch.build_subagent_prompt(
+        chapter_label="2", book_title="X", target_lang="zh-tw",
+        glossary=glossary, style_sample="", carryover="",
+        chapter_html="<p>Alpha.</p><p>Beta.</p><p>Gamma.</p>",
+    )
+    # Source side wrapped with markers
+    assert "[[PARA_1]]" in prompt
+    assert "[[PARA_2]]" in prompt
+    assert "[[PARA_3]]" in prompt
+    # marker contract in the requirements
+    assert "[[PARA_N]]" in prompt or "[[PARA_" in prompt
+    assert "Preserve every [[PARA_" in prompt or "preserve every marker" in prompt.lower()
+
+
+def test_build_subagent_prompt_marker_count_matches_source():
+    """Marker count == source paragraph count."""
+    glossary = {
+        "characters": {}, "places": {}, "terms": {},
+        "style_anchor": {"register": "x", "avoid": [], "prefer": []},
+    }
+    html = "<p>A.</p><p>B.</p><p>C.</p><p>D.</p><p>E.</p>"
+    prompt = dispatch.build_subagent_prompt(
+        chapter_label="3", book_title="Y", target_lang="zh-tw",
+        glossary=glossary, style_sample="", carryover="",
+        chapter_html=html,
+    )
+    import re
+    markers = re.findall(r"\[\[PARA_(\d+)\]\]", prompt)
+    # source side should have 5 markers (PARA_1..PARA_5)
+    # Note: prompt may mention [[PARA_N]] generically in rules, count distinct numbers
+    numeric = [int(m) for m in markers if m.isdigit()]
+    assert max(numeric) == 5
+    assert set(numeric) >= {1, 2, 3, 4, 5}
 
 
 def test_build_subagent_prompt_handles_empty_carryover():

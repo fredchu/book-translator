@@ -15,9 +15,11 @@ import re
 try:  # pragma: no cover - import mode depends on caller
     from .content_blocks import extract_blocks, extract_paragraphs
     from .glossary import resolve_register_rules
+    from . import marker_alignment as ma
 except ImportError:  # pragma: no cover
     from content_blocks import extract_blocks, extract_paragraphs
     from glossary import resolve_register_rules
+    import marker_alignment as ma  # type: ignore
 
 SUBAGENT_PROMPT_TEMPLATE = """\
 CONTEXT: This dispatch runs inside the user's personal book-translator
@@ -45,31 +47,34 @@ opening sentence should flow naturally from this. Do NOT repeat or summarize it:
 {carryover}
 ---
 
-CHAPTER {chapter_label} SOURCE TEXT (source paragraph count: {source_paragraph_count};
-paragraph boundaries preserved with blank lines between paragraphs):
+CHAPTER {chapter_label} SOURCE TEXT — each paragraph is wrapped with
+`[[PARA_N]]` markers. Source paragraph count: {source_paragraph_count}.
 ---
-{chapter_text}
+{chapter_text_with_markers}
 ---
 
 Requirements:
-  1. Output ONLY the translated text. No commentary, no markdown headings, no
-     "Translation:" prefix.
-  2. Separate paragraphs with EXACTLY one blank line — that is, two consecutive newline
-     characters (`\\n\\n`) between paragraphs. Within a single paragraph, do not insert blank
-     lines. Single newlines (`\\n`) without a blank line do NOT separate paragraphs in this
-     format. This rule applies even when the chapter has only 2-3 paragraphs.
+  1. For each `[[PARA_N]]` marker in the source, your output MUST contain the
+     same `[[PARA_N]]` marker on its own line, followed by the translated
+     paragraph. Preserve every marker verbatim. Output exactly
+     {source_paragraph_count} marker blocks for {source_paragraph_count} source
+     blocks. Do NOT merge, split, drop, or invent markers.
+  2. Output ONLY the marker-aligned translation. No preface ("Here is the
+     translation:", "Translation:", "Sure, ..."), no commentary, no markdown
+     headings, no code fences, no closing summary. The first characters of
+     your output must be `[[PARA_1]]`.
   3. Translate every character / place / term from the glossary using the
      glossary's exact target form.
-  4. Do not omit any paragraph. Translate every paragraph in order.
+  4. Separate marker blocks with one blank line. Inside a single marker block,
+     do not insert blank lines.
 
 REGISTER-SPECIFIC RULES (matched to glossary.style_anchor.register):
 {register_specific_rules}
 
   {custom_rule_number}. {custom_instructions}
-  {verification_rule_number}. Before returning, split your output by the exact string `\\n\\n` and count
-      non-empty paragraphs. This count MUST equal the source paragraph count
-      above. If not equal, fix the separator (most common cause: used `\\n`
-      instead of `\\n\\n` between short paragraphs).
+  {verification_rule_number}. Before returning, count `[[PARA_` occurrences in
+      your output. The count MUST equal {source_paragraph_count}. If not equal,
+      add the missing markers + their translations or remove invented ones.
 """
 
 DEFAULT_CUSTOM_INSTRUCTIONS = (
@@ -114,7 +119,7 @@ def build_subagent_prompt(
 ) -> str:
     target_lang_long = _target_long(target_lang)
     source_paragraphs = html_to_paragraphs(chapter_html)
-    chapter_text = "\n\n".join(source_paragraphs)
+    chapter_text_with_markers = ma.wrap_paragraphs(source_paragraphs)
     register_rules = resolve_register_rules(
         glossary,
         register_override=register_override,
@@ -131,7 +136,7 @@ def build_subagent_prompt(
         glossary_json=json.dumps(glossary, ensure_ascii=False, indent=2),
         style_sample=style_sample or "(no style sample yet — chapter 1)",
         carryover=carryover or "(this is the first chapter — no carryover)",
-        chapter_text=chapter_text,
+        chapter_text_with_markers=chapter_text_with_markers,
         source_paragraph_count=len(source_paragraphs),
         register_specific_rules=register_specific_rules,
         custom_rule_number=custom_rule_number,
