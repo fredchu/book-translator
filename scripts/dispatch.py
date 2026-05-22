@@ -150,28 +150,52 @@ def _format_register_specific_rules(rules: list[str], *, start: int) -> str:
 
 
 def validate_translation(translation: str, chapter_html: str, *, min_ratio: float = 0.5) -> list[str]:
-    """Cheap sanity checks. Returns a list of human-readable warnings; empty list = OK.
+    """Sanity checks on a subagent return. Returns warning list (empty = OK).
 
     Checks:
       - non-empty
-      - paragraph count >= min_ratio * source paragraph count
+      - if response contains any `[[PARA_` markers, verify marker alignment
+        against source paragraph count (missing / extra markers reported)
+      - otherwise fall back to paragraph-count ratio (legacy behavior)
       - no obvious refusal patterns ("I cannot", "I'm sorry", "As an AI")
+      - no obvious preface leak ("Here is the translation", "Translation:")
     """
     warnings: list[str] = []
     translation = (translation or "").strip()
     if not translation:
         warnings.append("translation is empty")
         return warnings
+
     src_paras = html_to_paragraphs(chapter_html)
-    tgt_paras = [p for p in translation.split("\n\n") if p.strip()]
-    if src_paras and len(tgt_paras) < max(1, int(len(src_paras) * min_ratio)):
-        warnings.append(
-            f"translation has {len(tgt_paras)} paragraphs vs source {len(src_paras)} "
-            f"(below {min_ratio:.0%} ratio)"
-        )
+
+    # Marker path (preferred)
+    if "[[PARA_" in translation.upper():
+        result = ma.parse_marker_output(translation, expected_count=len(src_paras))
+        if result.missing_markers:
+            preview = ", ".join(f"PARA_{n}" for n in result.missing_markers[:5])
+            more = "" if len(result.missing_markers) <= 5 else f" (+{len(result.missing_markers)-5} more)"
+            warnings.append(f"missing markers: {preview}{more}")
+        if result.extra_markers:
+            preview = ", ".join(f"PARA_{n}" for n in result.extra_markers[:5])
+            more = "" if len(result.extra_markers) <= 5 else f" (+{len(result.extra_markers)-5} more)"
+            warnings.append(f"extra markers (not in source): {preview}{more}")
+    else:
+        # Legacy fallback: paragraph-count ratio
+        tgt_paras = [p for p in translation.split("\n\n") if p.strip()]
+        if src_paras and len(tgt_paras) < max(1, int(len(src_paras) * min_ratio)):
+            warnings.append(
+                f"translation has {len(tgt_paras)} paragraphs vs source {len(src_paras)} "
+                f"(below {min_ratio:.0%} ratio; expected marker-aligned output)"
+            )
+
     refusal_re = re.compile(r"\b(I (cannot|can't|won't|am unable)|I'm sorry|As an AI)\b", re.IGNORECASE)
     if refusal_re.search(translation[:500]):
         warnings.append("translation contains apparent refusal language")
+
+    preface_re = re.compile(r"^(Here\s+(is|are)|Translation\s*:|Sure[,!]|Okay[,!])", re.IGNORECASE)
+    if preface_re.search(translation[:80]):
+        warnings.append("translation starts with a preface phrase (should start with [[PARA_1]])")
+
     return warnings
 
 

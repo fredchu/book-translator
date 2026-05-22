@@ -165,6 +165,29 @@ def test_validate_translation_passes_clean_output():
     assert dispatch.validate_translation(tgt, src) == []
 
 
+def test_validate_translation_detects_missing_markers():
+    src_html = "<p>A.</p><p>B.</p><p>C.</p>"
+    # subagent dropped PARA_2
+    translation = "[[PARA_1]]\n甲\n\n[[PARA_3]]\n丙"
+    warnings = dispatch.validate_translation(translation, src_html)
+    assert any("missing markers" in w.lower() or "PARA_2" in w for w in warnings)
+
+
+def test_validate_translation_passes_aligned_marker_output():
+    src_html = "<p>A.</p><p>B.</p>"
+    translation = "[[PARA_1]]\n甲\n\n[[PARA_2]]\n乙"
+    warnings = dispatch.validate_translation(translation, src_html)
+    assert warnings == []
+
+
+def test_validate_translation_detects_invented_marker():
+    src_html = "<p>A.</p><p>B.</p>"
+    # subagent added PARA_3
+    translation = "[[PARA_1]]\n甲\n\n[[PARA_2]]\n乙\n\n[[PARA_3]]\n丙?"
+    warnings = dispatch.validate_translation(translation, src_html)
+    assert any("extra" in w.lower() or "PARA_3" in w for w in warnings)
+
+
 def test_subagent_prompt_includes_bocky_style_rules():
     """Bocky's verified style rules (5-8) must reach every subagent prompt:
     並列格式 / 第一人稱保留 / 對話與打油詩保幽默 / 不學術化.
