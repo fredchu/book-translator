@@ -50,6 +50,30 @@ def test_bilingual_coverage_audit_honours_source_only_exception(tmp_path: Path):
     assert failures == []
 
 
+def test_aup_refused_chapter_does_not_fail_bilingual_coverage(tmp_path):
+    epub_path = _build_minimal_aup_epub(tmp_path)
+    from bilingual_coverage_audit import audit
+    ok, failures = audit(epub_path=str(epub_path))
+    assert ok, f"audit unexpectedly failed: {failures}"
+
+
+def _build_minimal_aup_epub(tmp_path: Path) -> Path:
+    epub_path = tmp_path / "aup_refused.epub"
+    body = (
+        '<html><body><div class="aup-refused-note" '
+        'style="border-left: 4px solid #c44; padding: 0.5em 1em; margin: 1em 0; '
+        'background: #fff4f0; font-size: 0.9em;">'
+        '<strong>本章因 LLM 政策拒答，保留原文未譯</strong><br/>'
+        "This chapter was refused by the translation LLM's usage policy; "
+        "the original English is preserved verbatim. "
+        "<em>Reason: Anthropic AUP refused this section</em>"
+        "</div>"
+        '<p class="src">This is a deliberately long English source paragraph intentionally preserved after an AUP refusal.</p>'
+        "</body></html>"
+    )
+    _write_epub(epub_path, body)
+    return epub_path
+
 
 def _write_epub(path: Path, body: str) -> None:
     with zipfile.ZipFile(path, "w") as z:

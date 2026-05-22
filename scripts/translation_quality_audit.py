@@ -45,7 +45,16 @@ BANNED_PATTERNS = [
 HEADING_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
 
 
-def audit(output: Path, min_length_ratio: float = 0.22) -> tuple[bool, list[str]]:
+def audit(
+    output: Path | str | None = None,
+    min_length_ratio: float = 0.22,
+    *,
+    epub_path: str | None = None,
+) -> tuple[bool, list[str]]:
+    if epub_path is not None:
+        output = epub_path
+    if output is None:
+        raise TypeError("audit() missing required output path")
     failures: list[str] = []
     with EPUBReader(output) as reader:
         exceptions = _source_only_exceptions(reader)
@@ -54,6 +63,9 @@ def audit(output: Path, min_length_ratio: float = 0.22) -> tuple[bool, list[str]
             return False, [f"{output}: missing OPF package"]
         for path in reader.spine_xhtml_paths():
             soup = BeautifulSoup(reader.read(path), "html.parser")
+            if soup.find("div", class_="aup-refused-note"):
+                # AUP-refused chapter — source is intentionally preserved; skip
+                continue
             for src in soup.find_all(class_=_has_src_class):
                 src_text = _clean(src.get_text(" ", strip=True))
                 if not src_text:

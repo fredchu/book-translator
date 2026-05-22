@@ -103,6 +103,33 @@ def test_translation_quality_audit_fails_missing_unlisted_target(tmp_path: Path)
     assert any("source-only paragraph not in exceptions" in failure for failure in failures)
 
 
+def test_aup_refused_chapter_does_not_fail_translation_quality_audit(tmp_path):
+    """A chapter containing the AUP refused note + source-only paragraphs
+    should not trip the translation-quality audit's 'unlisted source-only
+    paragraph' or 'too-short translation' checks."""
+    # Build a minimal EPUB fixture with one chapter that has the AUP note block
+    # ... (test scaffolding — write an EPUB zip with one chapter)
+    epub_path = _build_minimal_aup_epub(tmp_path)
+    from translation_quality_audit import audit
+    ok, failures = audit(epub_path=str(epub_path))
+    assert ok, f"audit unexpectedly failed: {failures}"
+
+
+def _build_minimal_aup_epub(tmp_path: Path) -> Path:
+    body = (
+        '<div class="aup-refused-note" '
+        'style="border-left: 4px solid #c44; padding: 0.5em 1em; margin: 1em 0; '
+        'background: #fff4f0; font-size: 0.9em;">'
+        '<strong>本章因 LLM 政策拒答，保留原文未譯</strong><br/>'
+        "This chapter was refused by the translation LLM's usage policy; "
+        "the original English is preserved verbatim. "
+        "<em>Reason: Anthropic AUP refused this section</em>"
+        "</div>"
+        '<p class="src">This is a deliberately long English source paragraph intentionally preserved after an AUP refusal.</p>'
+    )
+    return _write_epub(tmp_path, body)
+
+
 def _write_epub(tmp_path: Path, body: str) -> Path:
     epub = tmp_path / "book.epub"
     with zipfile.ZipFile(epub, "w") as z:

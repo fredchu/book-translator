@@ -66,3 +66,24 @@ def test_structural_audit_passes_on_full_structure(tmp_path: Path):
     report = structural_audit.audit(FULL_STRUCTURE, out, book_dir)
     assert report["passed"] is True
     assert all(check["status"] == "PASS" for check in report["checks"])
+
+
+def test_aup_refused_chapter_is_a_valid_state(tmp_path):
+    """state.json with aup_refused entries is structurally valid."""
+    book_dir = _prepared_full_structure(tmp_path)
+    manifest = json.loads((book_dir / "manifest.json").read_text("utf-8"))
+    entry = next(item for item in manifest["spine"] if item["output_strategy"] == "translate")
+    (book_dir / "chapters" / f"{entry['id']}_translation.txt").unlink()
+    state_data = json.loads((book_dir / "state.json").read_text("utf-8"))
+    state.mark_aup_refused(state_data, entry["id"], "refused")
+    state.save(book_dir / "state.json", state_data)
+
+    out = tmp_path / "aup_refused.epub"
+    assemble.assemble(book_dir, out, strict_nav=False)
+
+    # Whatever check structural_audit does on state shape, aup_refused must pass.
+    # If structural_audit reads state.json directly, set up a minimal book_dir;
+    # if it only validates the state schema via state.py, that's already covered
+    # by Task 6 tests.
+    report = structural_audit.audit(FULL_STRUCTURE, out, book_dir)
+    assert report["passed"] is True

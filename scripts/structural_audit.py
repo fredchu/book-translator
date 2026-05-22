@@ -22,6 +22,12 @@ except ImportError:  # pragma: no cover
     from audit_result import AuditResult
 
 IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png", ".gif", ".svg", ".webp")
+FINE_TO_SHIP_STATUSES = {
+    state_schema.DONE,
+    state_schema.SOURCE_READY,
+    state_schema.DROPPED,
+    state_schema.AUP_REFUSED,
+}
 
 
 @dataclass
@@ -63,7 +69,7 @@ def audit(source: Path, output: Path, book_dir: Path | None = None) -> dict:
         missing or ["all source spine items represented or explicitly dropped"],
     ))
 
-    missing_translations = _missing_translations(book_dir, manifest_entries)
+    missing_translations = _missing_translations(book_dir, manifest_entries, state_data)
     checks.append(_check(
         "translate_items_have_translation_files",
         not missing_translations,
@@ -259,17 +265,33 @@ def _missing_source_items(source_spine: list[dict], manifest_entries: list[dict]
     return missing
 
 
-def _missing_translations(book_dir: Path | None, manifest_entries: list[dict]) -> list[str]:
+def _missing_translations(
+    book_dir: Path | None,
+    manifest_entries: list[dict],
+    state_data: dict | None,
+) -> list[str]:
     if not book_dir:
         return []
     missing: list[str] = []
     for entry in manifest_entries:
         if entry.get("output_strategy") != "translate":
             continue
+        if _state_status_for_entry(state_data, entry) == state_schema.AUP_REFUSED:
+            continue
         path = book_dir / "chapters" / f"{entry['id']}_translation.txt"
         if not path.is_file():
             missing.append(f"{entry['id']}: missing {path.name}")
     return missing
+
+
+def _state_status_for_entry(state_data: dict | None, entry: dict) -> str | None:
+    if state_data is None:
+        return None
+    chapter = state_data.get("chapters", {}).get(entry.get("id"), {})
+    status = chapter.get("status")
+    if status in FINE_TO_SHIP_STATUSES:
+        return str(status)
+    return str(status) if status is not None else None
 
 
 def _invalid_state_statuses(state_data: dict | None) -> list[str]:

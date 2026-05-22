@@ -21,7 +21,17 @@ except ImportError:  # pragma: no cover
 HAN_RE = re.compile(r"[\u4e00-\u9fff]")
 
 
-def audit(source: Path, output: Path) -> tuple[bool, list[str]]:
+def audit(
+    source: Path | str | None = None,
+    output: Path | str | None = None,
+    *,
+    epub_path: str | None = None,
+) -> tuple[bool, list[str]]:
+    if epub_path is not None:
+        source = epub_path
+        output = epub_path
+    if output is None:
+        raise TypeError("audit() missing required output path")
     del source
     failures: list[str] = []
     with EPUBReader(output) as reader:
@@ -31,6 +41,9 @@ def audit(source: Path, output: Path) -> tuple[bool, list[str]]:
         exceptions = _source_only_exceptions(reader)
         for path in reader.spine_xhtml_paths():
             soup = BeautifulSoup(reader.read(path), "html.parser")
+            if soup.find("div", class_="aup-refused-note"):
+                # AUP-refused chapter — source is intentionally preserved; skip
+                continue
             for node in _english_nodes(soup):
                 sibling = _next_tag(node)
                 if sibling is None or not HAN_RE.search(sibling.get_text(" ", strip=True)):
