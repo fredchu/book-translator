@@ -92,6 +92,12 @@ def main() -> int:
     parser.add_argument("--num-ctx", type=int, default=32768)
     parser.add_argument("--num-predict", type=int, default=8192)
     parser.add_argument("--temperature", type=float, default=0.3)
+    parser.add_argument(
+        "--validate-markers",
+        action="store_true",
+        help="After provider returns, strip leak prefixes and check [[PARA_N]] alignment; "
+             "write <out>/<request_id>.aligned.txt if alignment passes.",
+    )
     args = parser.parse_args()
 
     if args.engine == "ollama" and not args.ollama_model:
@@ -134,27 +140,45 @@ def main() -> int:
     out_text_path = args.out / f"{request_id}.txt"
     out_meta_path = args.out / f"{request_id}.meta.json"
     out_text_path.write_text(result.raw_text, encoding="utf-8")
-    out_meta_path.write_text(
-        json.dumps(
-            {
-                "request_id": request_id,
-                "engine": args.engine,
-                "model": result.model,
-                "book": str(args.book),
-                "book_title": book_title,
-                "chapter": args.chapter,
-                "spine_item": item_name,
-                "source_paragraphs": len(source_paragraphs),
-                "latency_ms": result.latency_ms,
-                "elapsed_s_observed": round(elapsed_s, 2),
-                "retries": result.retries,
-                "metadata": result.metadata,
-            },
-            ensure_ascii=False,
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
+
+    meta: dict = {
+        "request_id": request_id,
+        "engine": args.engine,
+        "model": result.model,
+        "book": str(args.book),
+        "book_title": book_title,
+        "chapter": args.chapter,
+        "spine_item": item_name,
+        "source_paragraphs": len(source_paragraphs),
+        "latency_ms": result.latency_ms,
+        "elapsed_s_observed": round(elapsed_s, 2),
+        "retries": result.retries,
+        "metadata": result.metadata,
+    }
+
+    if args.validate_markers:
+        warnings = dispatch.validate_translation(result.raw_text, chapter_html)
+        cleaned = dispatch.strip_known_leak_prefixes(result.raw_text)
+        try:
+            aligned = dispatch.extract_aligned_translation(cleaned, expected_count=len(source_paragraphs))
+            aligned_path = args.out / f"{request_id}.aligned.txt"
+            aligned_path.write_text(aligned, encoding="utf-8")
+            meta["marker_validation"] = {
+                "aligned": True,
+                "warnings": warnings,
+                "aligned_output_path": str(aligned_path),
+                "aligned_paragraph_count": len(aligned.split("\n\n")),
+            }
+            print(f"[marker] aligned 100% ({len(source_paragraphs)}/{len(source_paragraphs)})", file=sys.stderr)
+        except ValueError as exc:
+            meta["marker_validation"] = {
+                "aligned": False,
+                "warnings": warnings,
+                "error": str(exc),
+            }
+            print(f"[marker] MISALIGNED: {exc}", file=sys.stderr)
+
+    out_meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"[done] wrote {out_text_path} ({len(result.raw_text)} chars, {elapsed_s:.1f}s)", file=sys.stderr)
     return 0
 
