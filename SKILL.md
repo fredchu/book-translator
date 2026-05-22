@@ -47,19 +47,78 @@ Real user phrases that should route here:
 
 ## Translation provider (engine)
 
-The skill supports two providers selected via `--engine`:
+The skill supports two providers:
 
-- **`--engine anthropic`** (default) — Claude Code subagents (Opus 4.7), parallel
-  fan-out at `concurrency=5`. Best quality; spends CC subscription quota.
-- **`--engine ollama` `--ollama-model translategemma:27b`** — local Ollama server
-  at `localhost:11434`, **sequential** (single GPU). Free; runs offline; quality
-  varies by model. Useful as a CC-quota fallback or for quick-iteration drafts.
+- **Anthropic** (default) — Claude Code subagents (Opus 4.7 anchor + Sonnet 4.6
+  fan-out), parallel `concurrency=5`. Best quality; spends CC subscription quota.
+  Triggered by the main workflow (see "Workflow" section below).
+- **Ollama** — local Ollama server at `localhost:11434`, **sequential** (single
+  GPU). Free; runs offline; quality varies by model. Useful as a CC-quota
+  fallback or for quick-iteration drafts. **Recommended model: `hy-mt2:7b`**
+  (Hy-MT2 7B at Q4_K_M, ~13s per short chapter, 5x faster than translategemma:27b
+  at comparable quality, follows Traditional Chinese / Taiwan conventions).
 
-Single-chapter test: `python3 scripts/translate_chapter_cli.py --book X.epub
---chapter N --engine ollama --ollama-model translategemma:27b --out runs/test/`.
+### Ollama mode — triggers + workflow
 
-Cross-model benchmark (multiple models on the same chapter):
-`python3 scripts/run_benchmark.py --book X.epub --models translategemma:4b,translategemma:12b,translategemma:27b --chapters 5 --out runs/benchmark/`.
+Triggers (main session routes here when the user says):
+
+- 「用 hy-mt2:7b 翻書 X.epub」「用 translategemma:27b 翻書 X.epub」
+- 「離線翻 X.epub」「ollama 翻書 X.epub」
+- 「translate offline X.epub」「local translate X.epub」
+- Any phrase that names an ollama model + a book path
+
+Driver — main session runs:
+
+```bash
+python3 ~/.claude/skills/book-translator/scripts/translate_book_ollama.py \
+    --book /path/to/X.epub \
+    --ollama-model hy-mt2:7b \
+    --out /path/to/translations/
+```
+
+The driver runs end-to-end: extract → sequential per-chapter translate (with
+Phase 1 `[[PARA_N]]` marker enforcement + 1 retry on misalignment) → assemble
+→ 4 audit gates. Progress + state.json checkpointing is per-chapter, so a
+killed/interrupted run resumes on the next invocation.
+
+Expected runtime for a 25-chapter / 200-page book on M1 Max 32GB unified
+memory: 5-25 minutes with hy-mt2:7b; 1-2 hours with translategemma:27b. Quality
+gap vs Anthropic Opus 4.7 is roughly 0.7-1.0 points on the 5-dimension manual
+eval (8.5 vs 9.4) — usable for drafts and offline reading; not interchangeable
+for literary fiction.
+
+Single-chapter spot check (no assemble, no audit):
+
+```bash
+python3 ~/.claude/skills/book-translator/scripts/translate_chapter_cli.py \
+    --book /path/to/X.epub --chapter N \
+    --engine ollama --ollama-model hy-mt2:7b \
+    --out runs/spot-check/ --validate-markers
+```
+
+Cross-model benchmark (multiple models, side-by-side first paragraphs):
+
+```bash
+python3 ~/.claude/skills/book-translator/scripts/run_benchmark.py \
+    --book /path/to/X.epub \
+    --models hy-mt2:7b,translategemma:27b \
+    --chapters 5,6 \
+    --out runs/benchmark/
+```
+
+### Installing the Hy-MT2 models
+
+Hy-MT2 GGUFs have a broken auto-generated chat template on ollama 0.24. Install
+via the project's pre-built Modelfiles (one-time):
+
+```bash
+ollama pull hf.co/tencent/Hy-MT2-1.8B-GGUF:Q4_K_M
+ollama pull hf.co/tencent/Hy-MT2-7B-GGUF:Q4_K_M
+ollama create hy-mt2:1.8b -f ~/.claude/skills/book-translator/scripts/modelfiles/Modelfile.hy-mt2-1.8b
+ollama create hy-mt2:7b   -f ~/.claude/skills/book-translator/scripts/modelfiles/Modelfile.hy-mt2-7b
+```
+
+translategemma models work as-is: `ollama pull translategemma:{4b,12b,27b}`.
 
 Provider abstraction lives in `scripts/providers/`; new engines plug in by
 subclassing `TranslationProvider` and registering with `provider_factory()`.
