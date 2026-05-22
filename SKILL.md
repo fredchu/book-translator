@@ -1,7 +1,7 @@
 ---
 name: book-translator
 description: |-
-  Translate full-length books (EPUB) to Traditional Chinese (Taiwan) with literary tone fidelity, cross-chapter coherence, and deterministic EPUB structure preservation. Use when the user says "翻書", "翻電子書", "翻譯整本書", "book translate", "bilingual epub", or provides an .epub file expecting literary translation. Main session extracts a full OPF spine manifest v2 plus a per-book glossary + style anchor, then dispatches parallel subagents to translate translate-strategy spine items — each subagent receives glossary + style anchor + last-paragraph carryover for cross-chunk coherence. After the first translated item a preview is printed and the user confirms tone before fanning out the rest. Produces a bilingual .epub (source + translation interleaved), manifest.json, glossary.json, and state.json for resume. Differs from translate-book (which is a generic PDF/DOCX/EPUB translator using Sonnet, single-language output, no coherence mechanisms) — book-translator targets literary works specifically, uses Opus 4.7, gates translation quality with cross-modal eval, and gates EPUB completeness with structural_audit.py before shipping. Not for short articles (use polish), not for SRT subtitles (use srt).
+  Translate full-length books (EPUB) to Traditional Chinese (Taiwan) with literary tone fidelity, cross-chapter coherence, and deterministic EPUB structure preservation. Use when the user says "翻書", "翻電子書", "翻譯整本書", "book translate", "bilingual epub", or provides an .epub file expecting literary translation. Main session extracts a full OPF spine manifest v2 plus a per-book glossary + style anchor, then dispatches parallel subagents to translate translate-strategy spine items — each subagent receives glossary + style anchor + last-paragraph carryover for cross-chunk coherence. After the first translated item a preview is printed and the user confirms tone before fanning out the rest. Produces a bilingual .epub (source + translation interleaved), manifest.json, glossary.json, and state.json for resume. Differs from translate-book (which is a generic PDF/DOCX/EPUB translator using Sonnet, single-language output, no coherence mechanisms) — book-translator targets literary works specifically, uses Opus 4.7 for the ch.01 style-anchor pass and Sonnet 4.6 for the parallel ch.02+ fan-out (with Opus escalation on validation reject), gates translation quality with cross-modal eval, and gates EPUB completeness with structural_audit.py before shipping. Not for short articles (use polish), not for SRT subtitles (use srt).
 allowed-tools:
   - Read
   - Write
@@ -166,6 +166,29 @@ dispatch, assemble, and audits.
 2. **Style anchor** — chapter 1 translated in main session becomes the reference style; every subagent prompt includes the first 500 chars as anchor.
 3. **Last-paragraph carryover** — each subagent gets the last 200 chars of the *previous chapter's translation* so the opening flows.
 4. **Spot-check pass** — after all chapters complete, main session samples 5 random paragraphs and cross-references character name appearances against glossary. Mismatches → flag, do not auto-fix (avoid silent corruption).
+
+### Model selection discipline
+
+| Stage | Model | Why |
+|---|---|---|
+| Glossary build (full-book read) | Sonnet 4.6 | Throughput; the LLM is summarizing structured fields, not producing literary text. |
+| Ch.01 style sample (main session) | **Opus 4.7** | The translation here becomes the style anchor for every subsequent subagent. Pay for quality once. |
+| Ch.02..ch.N fan-out (subagent batch) | **Sonnet 4.6** (default) | Bulk throughput. The style anchor + glossary + carryover constrain Sonnet's register adequately for business / popular-science / general non-fiction books. |
+| Escalation on validation reject | Opus 4.7 | Retry with the same prompt but better model when Sonnet fails marker alignment, leaks persona, or produces refusal language (non-AUP). |
+| Spot-check pass (random 5 paragraphs) | Sonnet 4.6 | Lightweight read; main session calls inline. |
+
+**Why not Opus everywhere?** Token cost. Bocky's 9-book实战 baseline (Opus
+default) ran at ~12h / book because 100+ chunks × Opus eats the 5h Anthropic
+quota window 2-3 times per book. Sonnet for fan-out cuts the token cost ~5x
+without dropping below the literary-tone-fidelity floor for our scope
+(business / popular-science). For literary fiction or
+philosophy-heavy texts (Taleb / Mandelbrot register), override to Opus default
+via `model: "opus"` on the Agent dispatch.
+
+**How to override per book**: the orchestrating session sets `model:` on the
+Agent tool call. There is no config file — model selection is a per-dispatch
+decision the main session makes based on the book's domain and the user's
+quality preference for that batch.
 
 ## Workflow
 
