@@ -90,6 +90,16 @@ GENERIC_SUBAGENT_RULES = [
     "Avoid 翻譯腔. Default to short, natural sentences over literary clichés.",
 ]
 
+_LEAK_PREFIX_PATTERNS = [
+    re.compile(r"^Here\s+(is|are)\s+(the|your)?\s*translation[^\n]*\n+", re.IGNORECASE),
+    re.compile(r"^Translation\s*:\s*\n+", re.IGNORECASE),
+    re.compile(r"^Sure[,!]?\s+[^\n]*\n+", re.IGNORECASE),
+    re.compile(r"^Okay[,!]?\s+[^\n]*\n+", re.IGNORECASE),
+    re.compile(r"^I'll\s+translate[^\n]*\n+", re.IGNORECASE),
+]
+
+_FENCE_RE = re.compile(r"^```[a-zA-Z]*\s*\n(.*?)\n```\s*$", re.DOTALL)
+
 
 def html_to_paragraphs(html: str) -> list[str]:
     """Convert chapter HTML to canonical plain-text paragraphs."""
@@ -149,6 +159,29 @@ def _format_register_specific_rules(rules: list[str], *, start: int) -> str:
     return "\n".join(f"  {index}. {rule}" for index, rule in enumerate(rules, start=start))
 
 
+def strip_known_leak_prefixes(raw: str) -> str:
+    """Remove known leak prefixes and markdown fences from a subagent response.
+
+    Idempotent — if the response is already clean, returns it unchanged.
+    """
+    text = (raw or "").lstrip()
+    # Markdown fence — pull body out
+    fence_match = _FENCE_RE.match(text)
+    if fence_match:
+        text = fence_match.group(1).strip()
+    # Preface patterns — strip recursively in case multiple stacked
+    for _ in range(3):
+        stripped = False
+        for pat in _LEAK_PREFIX_PATTERNS:
+            new_text = pat.sub("", text, count=1)
+            if new_text != text:
+                text = new_text.lstrip()
+                stripped = True
+        if not stripped:
+            break
+    return text
+
+
 def validate_translation(translation: str, chapter_html: str, *, min_ratio: float = 0.5) -> list[str]:
     """Sanity checks on a subagent return. Returns warning list (empty = OK).
 
@@ -206,7 +239,8 @@ def extract_aligned_translation(raw_output: str, expected_count: int) -> str:
     of marker tokens themselves. Raises ValueError on misalignment so callers
     can catch and route to the retry / AUP / manual-fix path.
     """
-    result = ma.parse_marker_output(raw_output, expected_count=expected_count)
+    cleaned = strip_known_leak_prefixes(raw_output)
+    result = ma.parse_marker_output(cleaned, expected_count=expected_count)
     if result.missing_markers:
         raise ValueError(f"missing markers in subagent output: {result.missing_markers}")
     if result.extra_markers:

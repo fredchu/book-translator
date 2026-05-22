@@ -211,6 +211,24 @@ def test_extract_aligned_translation_strips_marker_lines_from_body():
     assert "[[PARA_2]]" not in text
 
 
+def test_strip_known_leak_prefixes_removes_here_is_translation():
+    raw = "Here is the translation:\n\n[[PARA_1]]\n甲"
+    cleaned = dispatch.strip_known_leak_prefixes(raw)
+    assert cleaned.startswith("[[PARA_1]]")
+
+
+def test_strip_known_leak_prefixes_removes_markdown_fence():
+    raw = "```\n[[PARA_1]]\n甲\n```"
+    cleaned = dispatch.strip_known_leak_prefixes(raw)
+    assert "```" not in cleaned
+    assert cleaned.startswith("[[PARA_1]]")
+
+
+def test_strip_known_leak_prefixes_leaves_clean_output_unchanged():
+    raw = "[[PARA_1]]\n甲\n\n[[PARA_2]]\n乙"
+    assert dispatch.strip_known_leak_prefixes(raw) == raw
+
+
 def test_subagent_prompt_includes_bocky_style_rules():
     """Bocky's verified style rules (5-8) must reach every subagent prompt:
     並列格式 / 第一人稱保留 / 對話與打油詩保幽默 / 不學術化.
