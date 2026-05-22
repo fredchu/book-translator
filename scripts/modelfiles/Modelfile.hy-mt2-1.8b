@@ -1,0 +1,15 @@
+FROM hf.co/tencent/Hy-MT2-1.8B-GGUF:Q4_K_M
+
+TEMPLATE """{{- if .System }}<｜hy_begin▁of▁sentence｜>{{ .System }}<｜hy_place▁holder▁no▁3｜>{{- else }}<｜hy_begin▁of▁sentence｜>{{- end }}
+{{- range .Messages }}
+{{- if eq .Role "user" }}<｜hy_User｜>{{ .Content }}
+{{- else if eq .Role "assistant" }}<｜hy_Assistant｜>{{ .Content }}<｜hy_place▁holder▁no▁2｜>
+{{- end }}
+{{- end }}<｜hy_Assistant｜>"""
+
+PARAMETER stop "<｜hy_place▁holder▁no▁2｜>"
+PARAMETER stop "<｜hy_end▁of▁sentence｜>"
+PARAMETER temperature 0.3
+PARAMETER top_p 0.6
+PARAMETER top_k 20
+PARAMETER repeat_penalty 1.05
