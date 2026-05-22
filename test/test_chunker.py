@@ -89,3 +89,21 @@ def test_stitch_skips_empty_chunks():
 def test_stitch_strips_whitespace_at_chunk_edges():
     chunks = ["  alpha\n", "\nbeta  "]
     assert chk.stitch(chunks) == "alpha\n\nbeta"
+
+
+def test_max_paragraphs_caps_chunk_size_even_under_char_budget():
+    # 60 tiny references each 20 chars (total 1200 chars), well under
+    # max_chars 3000 — but should still split because max_paragraphs=20.
+    paras = ["ref" * 6 for _ in range(60)]  # 18 chars each = 1080 chars total
+    plan = chk.chunk_paragraphs(paras, max_chars=3000, max_paragraphs=20)
+    assert len(plan.chunks) == 3
+    for c in plan.chunks:
+        assert len(c.paragraphs) == 20
+
+
+def test_max_paragraphs_default_is_twenty():
+    paras = ["x"] * 25
+    plan = chk.chunk_paragraphs(paras, max_chars=10000)
+    assert len(plan.chunks) == 2
+    assert len(plan.chunks[0].paragraphs) == 20
+    assert len(plan.chunks[1].paragraphs) == 5

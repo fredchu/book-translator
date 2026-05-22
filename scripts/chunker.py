@@ -30,6 +30,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 DEFAULT_CHARS_PER_CHUNK = 3000
+DEFAULT_MAX_PARAGRAPHS_PER_CHUNK = 20
 
 
 @dataclass(frozen=True)
@@ -62,11 +63,17 @@ def chunk_paragraphs(
     paragraphs: list[str],
     *,
     max_chars: int = DEFAULT_CHARS_PER_CHUNK,
+    max_paragraphs: int = DEFAULT_MAX_PARAGRAPHS_PER_CHUNK,
 ) -> ChunkPlan:
-    """Pack paragraphs into chunks under `max_chars` total source chars each.
+    """Pack paragraphs into chunks bounded by BOTH max_chars and max_paragraphs.
 
-    Each chunk is at least one paragraph (a single paragraph longer than
-    `max_chars` becomes its own chunk; we don't sub-split paragraphs).
+    Marker-aligned prompts strain on two axes: total tokens (covered by
+    max_chars) and marker count (covered by max_paragraphs). A reference list
+    might pack 100+ tiny one-line citations under the char budget but the
+    model can't reliably echo 100 markers — so we cap paragraph count too.
+
+    Each chunk is at least one paragraph (an oversized single paragraph
+    becomes its own chunk; we don't sub-split paragraphs).
     """
     plan = ChunkPlan()
     current: list[str] = []
@@ -75,9 +82,9 @@ def chunk_paragraphs(
 
     for i, p in enumerate(paragraphs):
         plen = len(p)
-        # Flush before adding when the new paragraph would overflow, unless the
-        # current chunk is empty (single oversized paragraph case).
-        if current and current_chars + plen > max_chars:
+        would_overflow_chars = current_chars + plen > max_chars
+        would_overflow_count = len(current) >= max_paragraphs
+        if current and (would_overflow_chars or would_overflow_count):
             plan.chunks.append(Chunk(paragraphs=tuple(current), start_idx=start_idx))
             current = []
             current_chars = 0
