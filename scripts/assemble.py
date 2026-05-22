@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import argparse, html, posixpath, sys, zipfile
+import argparse, html, json, posixpath, sys, zipfile
 from pathlib import Path
 
 from bs4 import BeautifulSoup
@@ -66,7 +66,8 @@ def assemble(book_dir: Path, out_path: Path, strict_nav: bool = True) -> Path:
 
     translations_extra = _load_translations_extra(book_dir)
     spine_entries = [_entry_with_translations_extra(entry, translations_extra) for entry in _manifest_spine(manifest)]
-    translation_paths = _preflight(book_dir, spine_entries)
+    state = _load_state(book_dir)
+    translation_paths = _preflight(book_dir, spine_entries, state)
     source_epub = Path(str(manifest.get("source_epub", "")))
     opf_path = manifest.get("opf_path") or opf_builder.fallback_opf_path()
     opf_dir = posixpath.dirname(opf_path)
@@ -78,7 +79,22 @@ def assemble(book_dir: Path, out_path: Path, strict_nav: bool = True) -> Path:
     for entry in represented_entries:
         source_html = _read_entry_html(book_dir, entry, opf_path)
         translations = _translations_for_entry(book_dir, entry, translation_paths)
-        item_html, item_warnings = bilingual_rewriter.insert_bilingual(source_html, entry, translations)
+        chapter_status = state.get("chapters", {}).get(entry["id"], {}).get("status")
+        aup_reason = (
+            state.get("chapters", {}).get(entry["id"], {}).get("reason")
+            if chapter_status == "aup_refused" else None
+        )
+        rewritten = bilingual_rewriter.insert_bilingual(
+            src_html=source_html,
+            entry=entry,
+            translations=translations,
+            chapter_status=chapter_status,
+            aup_reason=aup_reason,
+        )
+        if isinstance(rewritten, tuple):
+            item_html, item_warnings = rewritten
+        else:
+            item_html, item_warnings = rewritten, []
         warnings.extend(item_warnings)
         warnings.extend(_missing_image_warnings(book_dir, entry, item_html))
         replacements[_entry_original_path(entry, opf_path)] = item_html.encode("utf-8")
@@ -124,6 +140,12 @@ def assemble(book_dir: Path, out_path: Path, strict_nav: bool = True) -> Path:
 def _load_translations_extra(book_dir: Path) -> dict:
     return translations_extra_module.load(book_dir)
 
+def _load_state(book_dir: Path) -> dict:
+    path = book_dir / "state.json"
+    if not path.is_file():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
+
 def _entry_with_translations_extra(entry: dict, translations_extra: dict) -> dict:
     if not translations_extra:
         return entry
@@ -134,11 +156,13 @@ def _entry_with_translations_extra(entry: dict, translations_extra: dict) -> dic
 def _manifest_spine(manifest: dict) -> list[dict]:
     return [entry.as_dict() for entry in manifest_module.normalize_entries(manifest)]
 
-def _preflight(book_dir: Path, spine_entries: list[dict]) -> dict[str, Path]:
+def _preflight(book_dir: Path, spine_entries: list[dict], state: dict | None = None) -> dict[str, Path]:
+    state = state or {}
     translation_paths: dict[str, Path] = {}
     errors: list[str] = []
     for entry in spine_entries:
         strategy = entry.get("output_strategy")
+        chapter_status = state.get("chapters", {}).get(entry.get("id"), {}).get("status")
         if strategy not in VALID_STRATEGIES:
             errors.append(f"{entry.get('id', '(unknown)')}: unknown output_strategy {strategy!r}")
             continue
@@ -146,7 +170,7 @@ def _preflight(book_dir: Path, spine_entries: list[dict]) -> dict[str, Path]:
             errors.append(f"{entry['id']}: drop_explicit requires a non-empty reason")
         if strategy in {"translate", "source_only"} and _source_html_path(book_dir, entry, None) is None:
             errors.append(f"{entry['id']}: source html missing: {entry.get('href') or entry.get('original_path')}")
-        if strategy == "translate":
+        if strategy == "translate" and chapter_status != "aup_refused":
             path = _translation_path(book_dir, entry)
             if path is None:
                 item_path = book_dir / "chapters" / f"{entry['id']}_translation.txt"
@@ -193,7 +217,7 @@ def _source_html_path(book_dir: Path, entry: dict, opf_path: str | None) -> Path
     return next((candidate for candidate in candidates if candidate.is_file()), None)
 
 def _translations_for_entry(book_dir: Path, entry: dict, translation_paths: dict[str, Path]) -> list[str]:
-    if entry.get("output_strategy") == "translate":
+    if entry.get("output_strategy") == "translate" and entry["id"] in translation_paths:
         text = translation_paths[entry["id"]].read_text(encoding="utf-8")
         return [p.strip() for p in text.split("\n\n") if p.strip()]
     return []

@@ -44,8 +44,31 @@ CONTENTS_LINK_LABELS_ZH_TW = {
 }
 
 
-def insert_bilingual(src_html: str, entry: dict, translations: list[str]) -> tuple[str, list[str]]:
-    """Rewrite source XHTML by interleaving target-language paragraphs after source text nodes."""
+_AUP_NOTE_HTML_TEMPLATE = (
+    '<div class="aup-refused-note" '
+    'style="border-left: 4px solid #c44; padding: 0.5em 1em; margin: 1em 0; '
+    'background: #fff4f0; font-size: 0.9em;">'
+    '<strong>本章因 LLM 政策拒答，保留原文未譯</strong><br/>'
+    "This chapter was refused by the translation LLM's usage policy; "
+    "the original English is preserved verbatim. "
+    '<em>Reason: {reason}</em>'
+    '</div>'
+)
+
+
+def insert_bilingual(
+    src_html: str,
+    entry: dict,
+    translations: list[str],
+    *,
+    chapter_status: str | None = None,
+    aup_reason: str | None = None,
+) -> tuple[str, list[str]] | str:
+    """Per-paragraph interleave src + translation. If chapter_status='aup_refused',
+    return source HTML with a visible annotation block prepended; do not insert
+    translation siblings."""
+    if chapter_status == "aup_refused":
+        return _emit_aup_refused_chapter(src_html, aup_reason or "")
     soup = BeautifulSoup(src_html, "html.parser")
     _promote_header_headings(soup)
     for tag in soup(["script", "style", "nav", "footer"]):
@@ -83,6 +106,19 @@ def insert_bilingual(src_html: str, entry: dict, translations: list[str]) -> tup
         target.string = translated
         node.insert_after(target)
     return str(soup), warnings
+
+
+def _emit_aup_refused_chapter(src_html: str, reason: str) -> str:
+    """Inject an AUP-refused notice at the top of <body> and return the result."""
+    from bs4 import BeautifulSoup
+    safe_reason = (reason or "(no reason recorded)").replace("<", "&lt;").replace(">", "&gt;")
+    note = _AUP_NOTE_HTML_TEMPLATE.format(reason=safe_reason)
+    soup = BeautifulSoup(src_html, "html.parser")
+    body = soup.find("body")
+    if body is None:
+        return note + src_html
+    body.insert(0, BeautifulSoup(note, "html.parser"))
+    return str(soup)
 
 
 def _promote_header_headings(soup: BeautifulSoup) -> None:
