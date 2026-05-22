@@ -41,6 +41,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
+import chunker  # noqa: E402
 import dispatch  # noqa: E402
 import extract_epub  # noqa: E402
 import state as state_mod  # noqa: E402
@@ -63,46 +64,55 @@ MINIMAL_GLOSSARY = {
 }
 
 
-def _translate_chapter(
+def _translate_chunk(
     provider: OllamaProvider,
     *,
-    html: str,
-    chapter_id: str,
+    chunk_paragraphs: tuple[str, ...],
     chapter_label: str,
+    chunk_label: str,
     book_title: str,
     target_lang: str,
     carryover: str,
     book_dir: Path,
+    default_temperature: float,
 ) -> tuple[str | None, str, list[str]]:
-    """Return (aligned_text_or_None, raw_text, warnings). Two attempts."""
+    """Translate one chunk (≤ ~3000 source chars). Returns (aligned, raw, warnings).
+
+    Two attempts: attempt 0 at default temperature, attempt 1 at temperature=0.5.
+    Marker contract is local within the chunk: prompt shows [[PARA_1]]..[[PARA_N]]
+    where N == len(chunk_paragraphs). Caller is responsible for stitching.
+    """
+    # Build a synthetic HTML containing just this chunk's paragraphs so the
+    # existing dispatch.build_subagent_prompt + html_to_paragraphs pipeline
+    # produces a chunk-scoped marker prompt without further refactoring.
+    chunk_html = "".join(f"<p>{p}</p>" for p in chunk_paragraphs)
     prompt = dispatch.build_subagent_prompt(
-        chapter_label=chapter_label,
+        chapter_label=f"{chapter_label} ({chunk_label})",
         book_title=book_title,
         target_lang=target_lang,
         glossary=MINIMAL_GLOSSARY,
         style_sample="",
         carryover=carryover,
-        chapter_html=html,
+        chapter_html=chunk_html,
     )
-    expected_count = len(dispatch.html_to_paragraphs(html))
+    expected_count = len(chunk_paragraphs)
     log_dir = book_dir / "_ollama_logs"
     raw = ""
     warnings: list[str] = []
 
     for attempt in (0, 1):
-        if attempt == 1:
-            provider.temperature = 0.5  # one nudge upward on retry
+        provider.temperature = 0.5 if attempt == 1 else default_temperature
         try:
             result = provider.translate(
                 prompt,
-                request_id=f"{chapter_id}_attempt_{attempt}",
+                request_id=f"{chapter_label}_{chunk_label}_attempt_{attempt}",
                 log_dir=log_dir,
             )
         except ProviderError as exc:
             warnings.append(f"attempt {attempt}: ProviderError: {exc}")
             continue
         raw = result.raw_text
-        warnings = dispatch.validate_translation(raw, html)
+        warnings = dispatch.validate_translation(raw, chunk_html)
         cleaned = dispatch.strip_known_leak_prefixes(raw)
         try:
             aligned = dispatch.extract_aligned_translation(cleaned, expected_count=expected_count)
@@ -112,6 +122,56 @@ def _translate_chapter(
             continue
 
     return None, raw, warnings
+
+
+def _translate_chapter_chunked(
+    provider: OllamaProvider,
+    *,
+    html: str,
+    chapter_id: str,
+    chapter_label: str,
+    book_title: str,
+    target_lang: str,
+    carryover: str,
+    book_dir: Path,
+    default_temperature: float,
+    chunk_max_chars: int,
+) -> tuple[str | None, list[str]]:
+    """Translate a chapter via paragraph chunking. Returns (stitched_or_None, warnings)."""
+    paragraphs = dispatch.html_to_paragraphs(html)
+    if not paragraphs:
+        return "", []
+    plan = chunker.chunk_paragraphs(paragraphs, max_chars=chunk_max_chars)
+
+    accumulated: list[str] = []
+    chunk_carry = carryover
+    all_warnings: list[str] = []
+
+    for i, chunk in enumerate(plan.chunks, start=1):
+        chunk_label = f"ck{i:02d}of{len(plan.chunks):02d}"
+        aligned, raw, warns = _translate_chunk(
+            provider,
+            chunk_paragraphs=chunk.paragraphs,
+            chapter_label=chapter_label,
+            chunk_label=chunk_label,
+            book_title=book_title,
+            target_lang=target_lang,
+            carryover=chunk_carry,
+            book_dir=book_dir,
+            default_temperature=default_temperature,
+        )
+        all_warnings.extend(
+            [f"{chunk_label} (paras {chunk.start_idx + 1}-{chunk.end_idx}): {w}" for w in warns]
+        )
+        if aligned is None:
+            all_warnings.append(
+                f"{chunk_label}: chunk failed after 2 attempts ({len(chunk.paragraphs)} paragraphs)"
+            )
+            return None, all_warnings
+        accumulated.append(aligned)
+        chunk_carry = aligned[-200:]
+
+    return chunker.stitch(accumulated), all_warnings
 
 
 def main() -> int:
@@ -126,9 +186,13 @@ def main() -> int:
     parser.add_argument("--book-title", default=None, help="title injected into prompt (default: book stem)")
     parser.add_argument("--target-lang", default="zh-tw")
     parser.add_argument("--timeout", type=int, default=1800)
-    parser.add_argument("--num-ctx", type=int, default=32768)
-    parser.add_argument("--num-predict", type=int, default=16384)
+    parser.add_argument("--num-ctx", type=int, default=8192,
+                        help="num_ctx per chunk; smaller is faster (default 8192 — chunks ≤ ~3K source chars)")
+    parser.add_argument("--num-predict", type=int, default=4096,
+                        help="num_predict per chunk; output is 60-80%% of input tokens")
     parser.add_argument("--temperature", type=float, default=0.3)
+    parser.add_argument("--chunk-max-chars", type=int, default=3000,
+                        help="source-side chunk budget in chars (Bocky default ~1500 tokens ≈ 3000 chars)")
     parser.add_argument("--no-audit", action="store_true", help="skip the 4 deterministic audits at the end")
     parser.add_argument("--no-resume", action="store_true", help="re-extract + re-translate from scratch")
     parser.add_argument("--limit", type=int, default=None, help="cap on chapters translated this run (debug)")
@@ -207,7 +271,7 @@ def main() -> int:
         ch_label = cid.replace("item_", "").lstrip("0") or "0"
 
         t0 = time.monotonic()
-        aligned, raw, warns = _translate_chapter(
+        aligned, warns = _translate_chapter_chunked(
             provider,
             html=html,
             chapter_id=cid,
@@ -216,6 +280,8 @@ def main() -> int:
             target_lang=args.target_lang,
             carryover=carryover,
             book_dir=book_dir,
+            default_temperature=args.temperature,
+            chunk_max_chars=args.chunk_max_chars,
         )
         elapsed = time.monotonic() - t0
         provider.temperature = args.temperature  # reset after retry bump
@@ -223,8 +289,8 @@ def main() -> int:
         translation_log.write_log_entry(
             book_dir=book_dir,
             chapter_id=cid,
-            prompt=f"(see _ollama_logs/{cid}_attempt_*.json)",
-            raw_response=raw,
+            prompt=f"(see _ollama_logs/{ch_label}_ck*.json)",
+            raw_response="(chunked — see _ollama_logs for raw chunks)",
             parsed_translation=aligned or "",
             validation_warnings=warns,
             model=args.ollama_model,
