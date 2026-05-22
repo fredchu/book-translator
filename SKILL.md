@@ -464,6 +464,26 @@ Main session samples 5 random paragraphs across chapters:
 
 Report findings; do not auto-fix.
 
+### Step 10: Per-chapter translation log
+
+After each subagent return + validation, the main session calls
+`translation_log.write_log_entry(...)` to persist the full prompt, raw
+response, parsed translation, validation warnings, model, and marker counts
+under `<book_dir>/translation_log/<chapter_id>.json`.
+
+When an audit catches a regression in a single chapter, repair it offline
+without re-dispatching the subagent:
+
+```bash
+python3 ~/.claude/skills/book-translator/scripts/replay_chapter.py \
+    --book-dir <out_dir>/<book_stem> \
+    --chapter item_007 \
+    --rewrite-translation-file
+```
+
+Then re-run `assemble.py` on the same `book_dir`; the rewritten translation
+file will be picked up.
+
 ## State machine (`state.json`)
 
 ```json
@@ -589,6 +609,7 @@ This skill writes to:
 - `<out_dir>/<book_stem>/manifest.json` — full OPF spine manifest v2
 - `<out_dir>/<book_stem>/chapters/item_NNN.html` — extracted source spine items
 - `<out_dir>/<book_stem>/chapters/item_NNN_translation.txt` — per-item translation for `translate` items
+- `<out_dir>/<book_stem>/translation_log/<chapter_id>.json` — per-chapter prompt, raw response, parsed translation, validation warnings, model, and marker counts
 - `<out_dir>/<book_stem>/cover.jpg` (or `.png`) — extracted cover image, embedded into the output EPUB by `assemble.py` (3-strategy lookup: EPUB 3 `properties="cover-image"` → EPUB 2 `meta name="cover"` → id-contains-"cover" image)
 - `<out_dir>/<book_stem>/images/` — every inline image from the source EPUB, flattened to bare filenames. `assemble.py` calls `html_to_blocks()` to interleave text-translation pairs with standalone image blocks (`<div><img/></div>` and `<figure>` wrappers); inline decorative imgs inside `<p>text<img/></p>` are dropped as visual markers
 - `<out_dir>/<book_stem>_bilingual.epub` — final bilingual EPUB (the only artifact the user needs to keep)
