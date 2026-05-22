@@ -38,12 +38,31 @@ Real user phrases that should route here:
 | Dimension | translate-book | book-translator |
 |-----------|---------------|-----------------|
 | Input | PDF/DOCX/EPUB | EPUB only |
-| Subagent model | Sonnet | **Opus 4.7** |
+| Subagent model | Sonnet | **Opus 4.7** (default) / local Ollama (opt-in) |
 | Output | 翻譯版 (single language) | **Bilingual** (source + translation interleaved) |
 | Coherence | None | Glossary + style anchor + carryover + spot-check |
 | Quality gate | None | **Cross-modal eval** (Gemini 2.x Pro + GPT-4o, avg ≥ 8.0) |
 | Resume | None | `state.json` |
 | Domain | Generic | Literary (tone-critical) |
+
+## Translation provider (engine)
+
+The skill supports two providers selected via `--engine`:
+
+- **`--engine anthropic`** (default) — Claude Code subagents (Opus 4.7), parallel
+  fan-out at `concurrency=5`. Best quality; spends CC subscription quota.
+- **`--engine ollama` `--ollama-model translategemma:27b`** — local Ollama server
+  at `localhost:11434`, **sequential** (single GPU). Free; runs offline; quality
+  varies by model. Useful as a CC-quota fallback or for quick-iteration drafts.
+
+Single-chapter test: `python3 scripts/translate_chapter_cli.py --book X.epub
+--chapter N --engine ollama --ollama-model translategemma:27b --out runs/test/`.
+
+Cross-model benchmark (multiple models on the same chapter):
+`python3 scripts/run_benchmark.py --book X.epub --models translategemma:4b,translategemma:12b,translategemma:27b --chapters 5 --out runs/benchmark/`.
+
+Provider abstraction lives in `scripts/providers/`; new engines plug in by
+subclassing `TranslationProvider` and registering with `provider_factory()`.
 
 ## Contract
 

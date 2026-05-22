@@ -5,3 +5,4 @@ __pycache__/
 .automl/
 .automl-goal-draft.md
 .codex-dispatch/
+runs/

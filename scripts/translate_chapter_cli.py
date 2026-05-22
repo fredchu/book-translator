@@ -23,14 +23,13 @@ import argparse
 import json
 import sys
 import time
-import zipfile
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 import dispatch  # noqa: E402
-from epub_reader import EPUBReader, find_opf_path  # noqa: E402
+from epub_reader import EPUBReader  # noqa: E402
 from providers import provider_factory  # noqa: E402
 
 
@@ -48,37 +47,24 @@ MINIMAL_GLOSSARY = {
 
 
 def _read_chapter_html(epub_path: Path, chapter_index: int) -> tuple[str, str]:
-    """Pull the N-th *translate-worthy* spine item out of the EPUB.
+    """Pull the N-th xhtml spine item out of the EPUB.
 
-    Returns (xhtml_text, item_name). chapter_index is 1-indexed and counts only
-    spine items whose href ends with .xhtml/.html (skip nav, css, fonts).
+    Returns (xhtml_text, item_path). 1-indexed; uses EPUBReader.spine_xhtml_paths()
+    which already filters to media-type application/xhtml+xml and excludes nav by
+    default. Front matter pages (cover, title) are part of this count, so the
+    caller is responsible for picking the correct chapter number.
     """
-    with zipfile.ZipFile(epub_path) as zf:
-        opf_path = find_opf_path(zf)
-        if opf_path is None:
-            raise SystemExit(f"could not locate OPF in {epub_path}")
-        pkg = EPUBReader(zf).read_package(opf_path)
-        spine_items = []
-        for idref in pkg.spine_idrefs:
-            item = pkg.manifest.get(idref)
-            if item is None:
-                continue
-            href = item.href.lower()
-            if href.endswith((".xhtml", ".html", ".htm")):
-                spine_items.append(item)
-        if not spine_items:
-            raise SystemExit(f"no html/xhtml spine items in {epub_path}")
-        if chapter_index < 1 or chapter_index > len(spine_items):
+    with EPUBReader(epub_path) as reader:
+        paths = reader.spine_xhtml_paths()
+        if not paths:
+            raise SystemExit(f"no xhtml spine items in {epub_path}")
+        if chapter_index < 1 or chapter_index > len(paths):
             raise SystemExit(
-                f"chapter {chapter_index} out of range (1..{len(spine_items)})"
+                f"chapter {chapter_index} out of range (1..{len(paths)})"
             )
-        chosen = spine_items[chapter_index - 1]
-        # resolve href against opf dir
-        opf_dir = "/".join(opf_path.split("/")[:-1])
-        full_path = f"{opf_dir}/{chosen.href}" if opf_dir else chosen.href
-        with zf.open(full_path) as fh:
-            html = fh.read().decode("utf-8", errors="replace")
-        return html, chosen.href
+        chosen = paths[chapter_index - 1]
+        html = reader.read(chosen).decode("utf-8", errors="replace")
+        return html, chosen
 
 
 def _build_prompt(chapter_html: str, *, chapter_label: str, book_title: str) -> str:
