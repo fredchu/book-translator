@@ -82,37 +82,38 @@ def _translate_chunk(
     Marker contract is local within the chunk: prompt shows [[PARA_1]]..[[PARA_N]]
     where N == len(chunk_paragraphs). Caller is responsible for stitching.
     """
-    # Build a synthetic HTML containing just this chunk's paragraphs so the
-    # existing dispatch.build_subagent_prompt + html_to_paragraphs pipeline
-    # produces a chunk-scoped marker prompt without further refactoring.
-    chunk_html = "".join(f"<p>{p}</p>" for p in chunk_paragraphs)
-    prompt = dispatch.build_subagent_prompt(
-        chapter_label=f"{chapter_label} ({chunk_label})",
-        book_title=book_title,
+    # Compact Ollama prompt: system = stable role + marker contract,
+    # user = per-chunk paragraphs + optional carryover. Removes glossary JSON,
+    # style anchor, register rules, and self-verification block that confused
+    # hy-mt2:7b into empty-stop on item_004/item_005 of The Next Renaissance.
+    system_msg, user_msg = dispatch.build_ollama_chunk_prompt(
+        chunk_paragraphs=chunk_paragraphs,
         target_lang=target_lang,
-        glossary=MINIMAL_GLOSSARY,
-        style_sample="",
         carryover=carryover,
-        chapter_html=chunk_html,
     )
     expected_count = len(chunk_paragraphs)
     log_dir = book_dir / "_ollama_logs"
     raw = ""
     warnings: list[str] = []
+    # Build a synthetic chunk_html only to feed dispatch.validate_translation
+    # (which expects raw HTML for paragraph counting); the actual prompt sent
+    # to ollama is system_msg + user_msg above.
+    chunk_html_for_validate = "".join(f"<p>{p}</p>" for p in chunk_paragraphs)
 
     for attempt in (0, 1):
         provider.temperature = 0.5 if attempt == 1 else default_temperature
         try:
             result = provider.translate(
-                prompt,
+                user_msg,
                 request_id=f"{chapter_label}_{chunk_label}_attempt_{attempt}",
                 log_dir=log_dir,
+                system=system_msg,
             )
         except ProviderError as exc:
             warnings.append(f"attempt {attempt}: ProviderError: {exc}")
             continue
         raw = result.raw_text
-        warnings = dispatch.validate_translation(raw, chunk_html)
+        warnings = dispatch.validate_translation(raw, chunk_html_for_validate)
         cleaned = dispatch.strip_known_leak_prefixes(raw)
         try:
             aligned = dispatch.extract_aligned_translation(cleaned, expected_count=expected_count)

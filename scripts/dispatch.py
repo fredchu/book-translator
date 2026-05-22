@@ -127,6 +127,56 @@ def chapter_text_for_prompt(html: str) -> str:
     return "\n\n".join(html_to_paragraphs(html))
 
 
+OLLAMA_SYSTEM_PROMPT = (
+    "You are a professional book translator. Translate every `[[PARA_N]]` "
+    "block from English to {target_lang_long}. Echo each marker on its own "
+    "line followed by the translated paragraph. Output exactly the same number "
+    "of marker blocks as the input. Begin with `[[PARA_1]]`. No preface, no "
+    "commentary, no markdown fences, no extra markers, no duplicate markers. "
+    "Use 台灣繁體中文 (zh-Hant, Taiwan vocabulary). "
+    "Keep English abbreviations (AI / LLM / GPT / RLHF / AGI / API) verbatim — "
+    "do not translate them into Chinese."
+)
+
+
+def build_ollama_chunk_prompt(
+    *,
+    chunk_paragraphs: list[str] | tuple[str, ...],
+    target_lang: str = "zh-tw",
+    carryover: str = "",
+) -> tuple[str, str]:
+    """Compact (system, user) prompt pair for local Ollama models.
+
+    Strips the legal-context block, glossary JSON, style anchor, register
+    rules, and self-verification rule from `SUBAGENT_PROMPT_TEMPLATE`. Those
+    were designed for Anthropic Opus's larger attention budget; small local
+    models (hy-mt2:7b Q4_K_M) treated the structured ~1500-token prompt as
+    noise and sometimes stopped at the prompt boundary with empty output
+    (observed `done_reason=stop, eval_count=1` on item_004/item_005 of The
+    Next Renaissance).
+
+    The marker contract lives in the system message so it's stable across
+    requests; the user message carries only the per-chunk paragraphs +
+    optional carryover.
+    """
+    paragraphs = list(chunk_paragraphs)
+    target_lang_long = _target_long(target_lang)
+    system = OLLAMA_SYSTEM_PROMPT.format(target_lang_long=target_lang_long)
+    parts: list[str] = []
+    if carryover.strip():
+        parts.append(
+            f"[Context — last paragraph of the prior chunk; for narrative flow only, "
+            f"do not translate or repeat]:\n{carryover.strip()[-200:]}\n"
+        )
+    parts.append(
+        f"[Translate the following {len(paragraphs)} paragraph block(s). "
+        f"Output {len(paragraphs)} marker block(s) starting with `[[PARA_1]]`.]\n"
+    )
+    parts.append(ma.wrap_paragraphs(paragraphs))
+    user = "\n".join(parts)
+    return system, user
+
+
 def build_subagent_prompt(
     *,
     chapter_label: str,

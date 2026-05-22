@@ -53,11 +53,20 @@ class OllamaProvider(TranslationProvider):
         *,
         request_id: str,
         log_dir: Path | None = None,
+        system: str | None = None,
     ) -> ProviderResult:
+        """Send a chat request. If `system` is provided, prepend it as a system
+        role message so the model's chat template separates stable role rules
+        (translator persona + marker contract) from the per-chunk user content.
+        """
         url = f"{self.host}/api/chat"
+        messages: list[dict[str, str]] = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
         payload: dict[str, Any] = {
             "model": self.model,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": messages,
             "stream": False,
             "options": {
                 "temperature": self.temperature,
