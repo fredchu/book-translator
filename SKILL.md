@@ -320,6 +320,24 @@ After each subagent returns, the main session:
    misaligns, escalate to Opus (see Phase 4) or mark `aup_refused` if the
    response contains refusal language; mark `failed` otherwise.
 
+#### Retry / escalation discipline (post Phase 1-3 upgrades)
+
+After each subagent returns, the main session runs:
+
+1. `warnings = dispatch.validate_translation(raw, chapter_html)`
+2. If `warnings` contains an entry starting with `AUP_REFUSED:` →
+   `state.mark_aup_refused(state, chapter_id, reason=warnings[0])`. Do not retry.
+3. If `warnings` is empty → `dispatch.extract_aligned_translation(raw, N)` →
+   `state.mark_done(state, chapter_id, text)`.
+4. If `warnings` contains marker misalignment OR refusal language (other than
+   AUP) OR preface leak → retry **once** with the same subagent prompt.
+5. If retry still fails → escalate: re-dispatch with `model: "opus"` (Phase 4).
+6. If escalation also fails → `state.mark_failed(state, chapter_id, error)`.
+
+Marker misalignment is the most common warning; preface leak is usually fixed
+by `strip_known_leak_prefixes` before the marker parse, so it rarely surfaces
+as a real warning unless the leak text contained no marker at all.
+
 ### Step 7: Assemble bilingual EPUB
 
 ```bash
