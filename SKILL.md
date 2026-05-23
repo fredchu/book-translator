@@ -77,6 +77,7 @@ Triggers (main session routes here when the user says):
 - 「用 Qwopus 翻書 X.epub」「用 omlx 翻 X.epub」 → same path (explicit)
 - 「用 hy-mt2:7b 翻書 X.epub」「用 translategemma:27b 翻書 X.epub」「ollama 翻書 X.epub」
   → ollama path with specified model (alternate / legacy)
+- 「批次翻 X.epub Y.epub」「翻這幾本 ...」 → multi-book driver 同個 path
 - Any phrase that names an ollama model + a book path → ollama path
 
 Driver — main session runs (omlx default, no engine/model flag needed):
@@ -87,6 +88,17 @@ python3 ~/.claude/skills/book-translator/scripts/translate_book_ollama.py \
     --out /path/to/translations/
 # expands to: --engine omlx --omlx-model Qwopus3.6-27B-v2-MLX-4bit
 ```
+
+**Multi-book batch (2026-05-23 ship)** — 一次傳多本，driver 內序列翻譯，
+per-book error containment：
+
+```bash
+python3 ~/.claude/skills/book-translator/scripts/translate_book_ollama.py \
+    --book /path/A.epub /path/B.epub /path/C.epub \
+    --out /path/to/translations/
+```
+
+Final summary 印每本 success/failed + duration。
 
 For ollama path (alternate):
 

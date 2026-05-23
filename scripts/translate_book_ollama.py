@@ -68,6 +68,59 @@ MINIMAL_GLOSSARY = {
 LocalSequentialProvider = OllamaProvider | OmlxProvider
 
 
+class BookPathAction(argparse.Action):
+    """Collect one or more --book values, including repeated --book flags."""
+
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: list[Path],
+        option_string: str | None = None,
+    ) -> None:
+        current = getattr(namespace, self.dest, None) or []
+        current.extend(values)
+        setattr(namespace, self.dest, current)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--book",
+        required=True,
+        nargs="+",
+        type=Path,
+        action=BookPathAction,
+        help="path(s) to .epub",
+    )
+    parser.add_argument("--engine", choices=["ollama", "omlx"], default="omlx",
+                        help="default omlx (Qwopus3.6-27B-v2-MLX-4bit) — fastest+highest-quality offline path on M1 Max; ollama+hy-mt2:7b/translategemma:12b are alternates")
+    parser.add_argument("--ollama-model", default=None, help="e.g. hy-mt2:7b / translategemma:27b")
+    parser.add_argument("--omlx-model", default="Qwopus3.6-27B-v2-MLX-4bit",
+                        help="default Qwopus3.6-27B-v2-MLX-4bit (Claude Opus 4.6/4.7 distilled, ~2h13m for 23-chapter book on M1 Max 32GB)")
+    parser.add_argument("--out", required=False, type=Path, default=None,
+                        help="output parent dir; per-book dir created inside (default: book's parent dir)")
+    parser.add_argument("--ollama-host", default="http://localhost:11434")
+    parser.add_argument("--omlx-host", default="http://localhost:8090")
+    parser.add_argument("--book-title", default=None, help="title injected into prompt (default: book stem)")
+    parser.add_argument("--target-lang", default="zh-tw")
+    parser.add_argument("--timeout", type=int, default=1800)
+    parser.add_argument("--num-ctx", type=int, default=8192,
+                        help="num_ctx per chunk; smaller is faster (default 8192 — chunks ≤ ~3K source chars)")
+    parser.add_argument("--num-predict", type=int, default=4096,
+                        help="num_predict per chunk; output is 60-80%% of input tokens")
+    parser.add_argument("--temperature", type=float, default=0.3)
+    parser.add_argument("--chunk-max-chars", type=int, default=3000,
+                        help="source-side chunk budget in chars (Bocky default ~1500 tokens ≈ 3000 chars)")
+    parser.add_argument("--no-audit", action="store_true", help="skip the 4 deterministic audits at the end")
+    parser.add_argument("--no-resume", action="store_true", help="re-extract + re-translate from scratch")
+    parser.add_argument("--limit", type=int, default=None, help="cap on chapters translated this run (debug)")
+    return parser
+
+
 def _translate_chunk(
     provider: LocalSequentialProvider,
     *,
@@ -342,52 +395,21 @@ def _record_partial_paragraphs(
     log_path.write_text(json.dumps(entry, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(
-        description=__doc__,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    parser.add_argument("--book", required=True, type=Path, help="path to .epub")
-    parser.add_argument("--engine", choices=["ollama", "omlx"], default="omlx",
-                        help="default omlx (Qwopus3.6-27B-v2-MLX-4bit) — fastest+highest-quality offline path on M1 Max; ollama+hy-mt2:7b/translategemma:12b are alternates")
-    parser.add_argument("--ollama-model", default=None, help="e.g. hy-mt2:7b / translategemma:27b")
-    parser.add_argument("--omlx-model", default="Qwopus3.6-27B-v2-MLX-4bit",
-                        help="default Qwopus3.6-27B-v2-MLX-4bit (Claude Opus 4.6/4.7 distilled, ~2h13m for 23-chapter book on M1 Max 32GB)")
-    parser.add_argument("--out", required=False, type=Path, default=None,
-                        help="output parent dir; per-book dir created inside (default: book's parent dir)")
-    parser.add_argument("--ollama-host", default="http://localhost:11434")
-    parser.add_argument("--omlx-host", default="http://localhost:8090")
-    parser.add_argument("--book-title", default=None, help="title injected into prompt (default: book stem)")
-    parser.add_argument("--target-lang", default="zh-tw")
-    parser.add_argument("--timeout", type=int, default=1800)
-    parser.add_argument("--num-ctx", type=int, default=8192,
-                        help="num_ctx per chunk; smaller is faster (default 8192 — chunks ≤ ~3K source chars)")
-    parser.add_argument("--num-predict", type=int, default=4096,
-                        help="num_predict per chunk; output is 60-80%% of input tokens")
-    parser.add_argument("--temperature", type=float, default=0.3)
-    parser.add_argument("--chunk-max-chars", type=int, default=3000,
-                        help="source-side chunk budget in chars (Bocky default ~1500 tokens ≈ 3000 chars)")
-    parser.add_argument("--no-audit", action="store_true", help="skip the 4 deterministic audits at the end")
-    parser.add_argument("--no-resume", action="store_true", help="re-extract + re-translate from scratch")
-    parser.add_argument("--limit", type=int, default=None, help="cap on chapters translated this run (debug)")
-    args = parser.parse_args()
-
-    if args.engine == "ollama" and not args.ollama_model:
-        parser.error("--ollama-model is required when --engine=ollama")
-    if args.engine == "omlx" and not args.omlx_model:
-        parser.error("--omlx-model is required when --engine=omlx")
-
-    if args.out is None:
-        args.out = args.book.parent
-    args.out.mkdir(parents=True, exist_ok=True)
-    book_stem = args.book.stem
-    book_dir = args.out / book_stem
+def translate_single_book(book_path: Path, args: argparse.Namespace) -> dict[str, object]:
+    started = time.monotonic()
+    out_parent = args.out or book_path.parent
+    out_parent.mkdir(parents=True, exist_ok=True)
+    book_stem = book_path.stem
+    book_dir = out_parent / book_stem
     state_path = book_dir / "state.json"
     manifest_path = book_dir / "manifest.json"
 
+    return_code = 0
+    error_summary = ""
+
     if args.no_resume or not manifest_path.exists():
-        print(f"[extract] {args.book.name} -> {book_dir}", file=sys.stderr)
-        extract_epub.extract(args.book, args.out)
+        print(f"[extract] {book_path.name} -> {book_dir}", file=sys.stderr)
+        extract_epub.extract(book_path, out_parent)
     else:
         print(f"[extract] cached at {book_dir} (--no-resume to redo)", file=sys.stderr)
 
@@ -397,7 +419,7 @@ def main() -> int:
         print(f"[state] resumed from {state_path}", file=sys.stderr)
     else:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        state = state_mod.init_state(args.book, manifest.get("spine", []), args.target_lang)
+        state = state_mod.init_state(book_path, manifest.get("spine", []), args.target_lang)
         state_mod.save(state_path, state)
         print(f"[state] initialized {len(state['chapters'])} chapters at {state_path}", file=sys.stderr)
 
@@ -423,8 +445,17 @@ def main() -> int:
             temperature=args.temperature,
         )
     if not provider.ping():
-        print(f"ERROR: {args.engine} unreachable at {selected_host}", file=sys.stderr)
-        return 2
+        error_summary = f"{args.engine} unreachable at {selected_host}"
+        print(f"ERROR: {error_summary}", file=sys.stderr)
+        return_code = 2
+        duration_sec = time.monotonic() - started
+        return {
+            "path": book_path,
+            "status": "failed",
+            "duration_sec": duration_sec,
+            "error_summary": error_summary,
+            "return_code": return_code,
+        }
 
     book_title = args.book_title or book_stem
     chapters = state["chapters"]
@@ -441,7 +472,7 @@ def main() -> int:
     done_count = 0
     failed_count = 0
     skipped_count = 0
-    started = time.monotonic()
+    translate_started = time.monotonic()
 
     for i, cid in enumerate(translate_ids, 1):
         if args.limit is not None and (done_count + failed_count) >= args.limit:
@@ -517,7 +548,7 @@ def main() -> int:
             )
         state_mod.save(state_path, state)
 
-    total = time.monotonic() - started
+    total = time.monotonic() - translate_started
     print(
         f"[translate] done={done_count} failed={failed_count} skipped={skipped_count} "
         f"elapsed={total/60:.1f}min",
@@ -538,9 +569,16 @@ def main() -> int:
             f"rerun (resume) to finish before assembling",
             file=sys.stderr,
         )
-        return 0
+        duration_sec = time.monotonic() - started
+        return {
+            "path": book_path,
+            "status": "success",
+            "duration_sec": duration_sec,
+            "error_summary": "",
+            "return_code": 0,
+        }
 
-    out_epub = args.out / f"{book_stem}_bilingual.epub"
+    out_epub = out_parent / f"{book_stem}_bilingual.epub"
     print(f"[assemble] -> {out_epub}", file=sys.stderr)
     try:
         # strict_nav=False because minimal glossary has no chapter_titles_zh, so
@@ -548,18 +586,91 @@ def main() -> int:
         assemble(book_dir=book_dir, out_path=out_epub, strict_nav=False)
     except Exception as exc:
         print(f"[assemble] FAILED: {exc}", file=sys.stderr)
-        return 3
+        return_code = 3
+        error_summary = f"assemble failed: {exc}"
+        duration_sec = time.monotonic() - started
+        return {
+            "path": book_path,
+            "status": "failed",
+            "duration_sec": duration_sec,
+            "error_summary": error_summary,
+            "return_code": return_code,
+        }
 
     if not args.no_audit:
         print("[audit] running 4 deterministic gates", file=sys.stderr)
-        results = run_audits(source=args.book, output=out_epub, book_dir=book_dir)
+        results = run_audits(source=book_path, output=out_epub, book_dir=book_dir)
         print(format_summary(results), file=sys.stderr)
         if not all_passed(results):
             print("[audit] one or more gates failed; review report above", file=sys.stderr)
-            return 4
+            return_code = 4
+            error_summary = "audit failed"
+            duration_sec = time.monotonic() - started
+            return {
+                "path": book_path,
+                "status": "failed",
+                "duration_sec": duration_sec,
+                "error_summary": error_summary,
+                "return_code": return_code,
+            }
 
     print(f"[OK] {out_epub}", file=sys.stderr)
-    return 0
+    duration_sec = time.monotonic() - started
+    return {
+        "path": book_path,
+        "status": "success",
+        "duration_sec": duration_sec,
+        "error_summary": "",
+        "return_code": return_code,
+    }
+
+
+def _print_summary(results: list[dict[str, object]]) -> None:
+    success_count = sum(1 for result in results if result["status"] == "success")
+    total = len(results)
+    print(f"=== Summary === {success_count}/{total} books succeeded", file=sys.stderr)
+    for result in results:
+        path = result["path"]
+        assert isinstance(path, Path)
+        status = result["status"]
+        duration_sec = float(result["duration_sec"])
+        error_summary = result["error_summary"]
+        suffix = f" error={error_summary}" if error_summary else ""
+        print(f"- {path.name}: {status} {duration_sec:.1f}s{suffix}", file=sys.stderr)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    if args.engine == "ollama" and not args.ollama_model:
+        parser.error("--ollama-model is required when --engine=ollama")
+    if args.engine == "omlx" and not args.omlx_model:
+        parser.error("--omlx-model is required when --engine=omlx")
+
+    results: list[dict[str, object]] = []
+    total_books = len(args.book)
+    for index, book_path in enumerate(args.book, start=1):
+        print(f"=== [{index}/{total_books}] book: {book_path.name} ===", file=sys.stderr)
+        book_started = time.monotonic()
+        try:
+            result = translate_single_book(book_path, args)
+        except Exception as exc:
+            result = {
+                "path": book_path,
+                "status": "failed",
+                "duration_sec": time.monotonic() - book_started,
+                "error_summary": str(exc),
+                "return_code": 1,
+            }
+            print(f"[ERROR {book_path.name}] {exc}", file=sys.stderr)
+        else:
+            if result["status"] != "success":
+                print(f"[ERROR {book_path.name}] {result['error_summary']}", file=sys.stderr)
+        results.append(result)
+
+    _print_summary(results)
+    return 0 if all(result["status"] == "success" for result in results) else 1
 
 
 if __name__ == "__main__":
