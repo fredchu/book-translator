@@ -83,9 +83,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--book", required=True, type=Path, help="path to .epub")
     parser.add_argument("--chapter", type=int, default=1, help="1-indexed chapter (default 1)")
-    parser.add_argument("--engine", default="ollama", choices=["anthropic", "ollama"])
+    parser.add_argument("--engine", default="ollama", choices=["anthropic", "ollama", "omlx"])
     parser.add_argument("--ollama-model", default=None, help="e.g. translategemma:27b")
     parser.add_argument("--ollama-host", default="http://localhost:11434")
+    parser.add_argument("--omlx-model", default=None, help="e.g. Qwopus3.6-27B-v2-MLX-4bit")
+    parser.add_argument("--omlx-host", default="http://localhost:8090")
     parser.add_argument("--out", required=True, type=Path, help="output dir")
     parser.add_argument("--book-title", default=None, help="title to inject into prompt")
     parser.add_argument("--timeout", type=int, default=1200)
@@ -102,6 +104,8 @@ def main() -> int:
 
     if args.engine == "ollama" and not args.ollama_model:
         parser.error("--ollama-model is required when --engine=ollama")
+    if args.engine == "omlx" and not args.omlx_model:
+        parser.error("--omlx-model is required when --engine=omlx")
 
     args.out.mkdir(parents=True, exist_ok=True)
 
@@ -110,26 +114,42 @@ def main() -> int:
     source_paragraphs = dispatch.html_to_paragraphs(chapter_html)
     prompt = _build_prompt(chapter_html, chapter_label=str(args.chapter), book_title=book_title)
 
-    provider = provider_factory(
-        args.engine,
-        model=args.ollama_model,
-        host=args.ollama_host,
-        timeout=args.timeout,
-        num_ctx=args.num_ctx,
-        num_predict=args.num_predict,
-        temperature=args.temperature,
-    ) if args.engine == "ollama" else provider_factory(args.engine, model=args.ollama_model)
+    if args.engine == "ollama":
+        provider = provider_factory(
+            args.engine,
+            model=args.ollama_model,
+            host=args.ollama_host,
+            timeout=args.timeout,
+            num_ctx=args.num_ctx,
+            num_predict=args.num_predict,
+            temperature=args.temperature,
+        )
+    elif args.engine == "omlx":
+        provider = provider_factory(
+            args.engine,
+            model=args.omlx_model,
+            host=args.omlx_host,
+            timeout=args.timeout,
+            max_tokens=args.num_predict,
+            temperature=args.temperature,
+        )
+    else:
+        provider = provider_factory(args.engine, model=args.ollama_model)
 
     if args.engine == "ollama" and not provider.ping():  # type: ignore[attr-defined]
         print(f"ERROR: ollama server unreachable at {args.ollama_host}", file=sys.stderr)
         return 2
+    if args.engine == "omlx" and not provider.ping():  # type: ignore[attr-defined]
+        print(f"ERROR: omlx server unreachable at {args.omlx_host}", file=sys.stderr)
+        return 2
 
-    model_slug = (args.ollama_model or "anthropic").replace(":", "_").replace("/", "_")
+    selected_model = args.omlx_model if args.engine == "omlx" else args.ollama_model
+    model_slug = (selected_model or "anthropic").replace(":", "_").replace("/", "_")
     request_id = f"ch{args.chapter:02d}_{model_slug}"
     log_dir = args.out / "_logs"
 
     print(
-        f"[run] engine={args.engine} model={args.ollama_model or 'opus'} "
+        f"[run] engine={args.engine} model={selected_model or 'opus'} "
         f"chapter={args.chapter} ({item_name}) source_paragraphs={len(source_paragraphs)}",
         file=sys.stderr,
     )

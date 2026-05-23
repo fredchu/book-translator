@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""End-to-end book translation driver using a local Ollama model.
+"""End-to-end book translation driver using a local Ollama or omlx model.
 
 Sequential per-chapter loop (single GPU). Phase 1 marker alignment is enforced
 on every chunk; misalignment triggers one retry with a higher temperature,
@@ -49,7 +49,7 @@ import state as state_mod  # noqa: E402
 import translation_log  # noqa: E402
 from assemble import assemble  # noqa: E402
 from audit_suite import all_passed, format_summary, run_all as run_audits  # noqa: E402
-from providers import OllamaProvider, ProviderError  # noqa: E402
+from providers import OllamaProvider, OmlxProvider, ProviderError  # noqa: E402
 
 
 MINIMAL_GLOSSARY = {
@@ -65,8 +65,11 @@ MINIMAL_GLOSSARY = {
 }
 
 
+LocalSequentialProvider = OllamaProvider | OmlxProvider
+
+
 def _translate_chunk(
-    provider: OllamaProvider,
+    provider: LocalSequentialProvider,
     *,
     chunk_paragraphs: tuple[str, ...],
     chapter_label: str,
@@ -128,7 +131,7 @@ def _translate_chunk(
 
 
 def _translate_single_paragraph_fallback(
-    provider: OllamaProvider,
+    provider: LocalSequentialProvider,
     paragraph: str,
     target_lang: str,
     book_dir: Path,
@@ -164,7 +167,7 @@ def _translate_single_paragraph_fallback(
 
 
 def _translate_chunk_with_recursion(
-    provider: OllamaProvider,
+    provider: LocalSequentialProvider,
     *,
     chunk_paragraphs: tuple[str, ...],
     chapter_label: str,
@@ -274,7 +277,7 @@ def _translate_chunk_with_recursion(
 
 
 def _translate_chapter_chunked(
-    provider: OllamaProvider,
+    provider: LocalSequentialProvider,
     *,
     html: str,
     chapter_id: str,
@@ -345,10 +348,13 @@ def main() -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--book", required=True, type=Path, help="path to .epub")
-    parser.add_argument("--ollama-model", required=True, help="e.g. hy-mt2:7b / translategemma:27b")
+    parser.add_argument("--engine", choices=["ollama", "omlx"], default="ollama")
+    parser.add_argument("--ollama-model", default=None, help="e.g. hy-mt2:7b / translategemma:27b")
+    parser.add_argument("--omlx-model", default=None, help="e.g. Qwopus3.6-27B-v2-MLX-4bit")
     parser.add_argument("--out", required=False, type=Path, default=None,
                         help="output parent dir; per-book dir created inside (default: book's parent dir)")
     parser.add_argument("--ollama-host", default="http://localhost:11434")
+    parser.add_argument("--omlx-host", default="http://localhost:8090")
     parser.add_argument("--book-title", default=None, help="title injected into prompt (default: book stem)")
     parser.add_argument("--target-lang", default="zh-tw")
     parser.add_argument("--timeout", type=int, default=1800)
@@ -363,6 +369,11 @@ def main() -> int:
     parser.add_argument("--no-resume", action="store_true", help="re-extract + re-translate from scratch")
     parser.add_argument("--limit", type=int, default=None, help="cap on chapters translated this run (debug)")
     args = parser.parse_args()
+
+    if args.engine == "ollama" and not args.ollama_model:
+        parser.error("--ollama-model is required when --engine=ollama")
+    if args.engine == "omlx" and not args.omlx_model:
+        parser.error("--omlx-model is required when --engine=omlx")
 
     if args.out is None:
         args.out = args.book.parent
@@ -388,16 +399,29 @@ def main() -> int:
         state_mod.save(state_path, state)
         print(f"[state] initialized {len(state['chapters'])} chapters at {state_path}", file=sys.stderr)
 
-    provider = OllamaProvider(
-        model=args.ollama_model,
-        host=args.ollama_host,
-        timeout=args.timeout,
-        num_ctx=args.num_ctx,
-        num_predict=args.num_predict,
-        temperature=args.temperature,
-    )
+    if args.engine == "ollama":
+        selected_model = args.ollama_model
+        selected_host = args.ollama_host
+        provider = OllamaProvider(
+            model=args.ollama_model,
+            host=args.ollama_host,
+            timeout=args.timeout,
+            num_ctx=args.num_ctx,
+            num_predict=args.num_predict,
+            temperature=args.temperature,
+        )
+    else:
+        selected_model = args.omlx_model
+        selected_host = args.omlx_host
+        provider = OmlxProvider(
+            model=args.omlx_model,
+            host=args.omlx_host,
+            timeout=args.timeout,
+            max_tokens=args.num_predict,
+            temperature=args.temperature,
+        )
     if not provider.ping():
-        print(f"ERROR: ollama unreachable at {args.ollama_host}", file=sys.stderr)
+        print(f"ERROR: {args.engine} unreachable at {selected_host}", file=sys.stderr)
         return 2
 
     book_title = args.book_title or book_stem
@@ -406,7 +430,8 @@ def main() -> int:
         cid for cid, entry in chapters.items() if entry.get("output_strategy") == state_mod.TRANSLATE
     )
     print(
-        f"[run] model={args.ollama_model} chapters={len(translate_ids)} target={args.target_lang}",
+        f"[run] engine={args.engine} model={selected_model} chapters={len(translate_ids)} "
+        f"target={args.target_lang}",
         file=sys.stderr,
     )
 
@@ -463,7 +488,7 @@ def main() -> int:
             raw_response="(chunked — see _ollama_logs for raw chunks)",
             parsed_translation=aligned or "",
             validation_warnings=warns,
-            model=args.ollama_model,
+            model=selected_model,
             source_paragraph_count=total_paragraphs,
         )
         _record_partial_paragraphs(log_path=log_path, partial_paragraph_count=partial_paragraph_count)
