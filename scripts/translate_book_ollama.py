@@ -348,9 +348,11 @@ def main() -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--book", required=True, type=Path, help="path to .epub")
-    parser.add_argument("--engine", choices=["ollama", "omlx"], default="ollama")
+    parser.add_argument("--engine", choices=["ollama", "omlx"], default="omlx",
+                        help="default omlx (Qwopus3.6-27B-v2-MLX-4bit) — fastest+highest-quality offline path on M1 Max; ollama+hy-mt2:7b/translategemma:12b are alternates")
     parser.add_argument("--ollama-model", default=None, help="e.g. hy-mt2:7b / translategemma:27b")
-    parser.add_argument("--omlx-model", default=None, help="e.g. Qwopus3.6-27B-v2-MLX-4bit")
+    parser.add_argument("--omlx-model", default="Qwopus3.6-27B-v2-MLX-4bit",
+                        help="default Qwopus3.6-27B-v2-MLX-4bit (Claude Opus 4.6/4.7 distilled, ~2h13m for 23-chapter book on M1 Max 32GB)")
     parser.add_argument("--out", required=False, type=Path, default=None,
                         help="output parent dir; per-book dir created inside (default: book's parent dir)")
     parser.add_argument("--ollama-host", default="http://localhost:11434")

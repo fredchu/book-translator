@@ -49,30 +49,51 @@ Real user phrases that should route here:
 
 The skill supports two providers:
 
-- **Anthropic** (default) — Claude Code subagents (Opus 4.7 anchor + Sonnet 4.6
-  fan-out), parallel `concurrency=5`. Best quality; spends CC subscription quota.
-  Triggered by the main workflow (see "Workflow" section below).
-- **Ollama** — local Ollama server at `localhost:11434`, **sequential** (single
-  GPU). Free; runs offline; quality varies by model. Useful as a CC-quota
-  fallback or for quick-iteration drafts. **Recommended model: `hy-mt2:7b`**
-  (Hy-MT2 7B at Q4_K_M, ~13s per short chapter, 5x faster than translategemma:27b
-  at comparable quality, follows Traditional Chinese / Taiwan conventions).
+- **Anthropic** (default for online quality-first) — Claude Code subagents
+  (Opus 4.7 anchor + Sonnet 4.6 fan-out), parallel `concurrency=5`. Best
+  quality; spends CC subscription quota. Triggered by the main workflow
+  (see "Workflow" section below).
+- **omlx** (**default for offline** — 2026-05-23 ship) — local omlx server at
+  `localhost:8090`, **sequential** MLX inference on Apple Silicon Metal.
+  **Default model: `Qwopus3.6-27B-v2-MLX-4bit`** (Jackrong, Claude Opus 4.6/4.7
+  TraceInversion distilled on Qwen3.5-27B base, 14 GB MLX safetensors). On M1
+  Max 32GB: 23-chapter book E2E ~2h13m, Opus-tier register, ~0.9% Simplified
+  leak. Engine auto-selected when `--engine` omitted. See `2026-05-23-local-translation-acceleration-research.md`
+  for the multi-engine benchmark that promoted this as default.
+- **Ollama** (alternate offline) — local Ollama server at `localhost:11434`,
+  sequential (single GPU via llama.cpp). Useful for GGUF-only models (Hy-MT2,
+  translategemma) when omlx is unavailable. Alternates: `translategemma:12b`
+  (~1h27m E2E, fast but Simp leak high before TRADITIONAL_CHINESE_ENFORCEMENT
+  prompt); `hy-mt2:7b` (~2h27m E2E, recursive split on 2-3 large chapters).
+  See `2026-05-23-five-way-quality-comparison.md` for the full matrix that
+  motivated the move off Ollama defaults.
 
-### Ollama mode — triggers + workflow
+### Offline mode — triggers + workflow
 
 Triggers (main session routes here when the user says):
 
-- 「用 hy-mt2:7b 翻書 X.epub」「用 translategemma:27b 翻書 X.epub」
-- 「離線翻 X.epub」「ollama 翻書 X.epub」
-- 「translate offline X.epub」「local translate X.epub」
-- Any phrase that names an ollama model + a book path
+- 「離線翻 X.epub」「local translate X.epub」「translate offline X.epub」
+  → **omlx + Qwopus3.6-27B-v2-MLX-4bit (new default)**
+- 「用 Qwopus 翻書 X.epub」「用 omlx 翻 X.epub」 → same path (explicit)
+- 「用 hy-mt2:7b 翻書 X.epub」「用 translategemma:27b 翻書 X.epub」「ollama 翻書 X.epub」
+  → ollama path with specified model (alternate / legacy)
+- Any phrase that names an ollama model + a book path → ollama path
 
-Driver — main session runs:
+Driver — main session runs (omlx default, no engine/model flag needed):
 
 ```bash
 python3 ~/.claude/skills/book-translator/scripts/translate_book_ollama.py \
     --book /path/to/X.epub \
-    --ollama-model hy-mt2:7b \
+    --out /path/to/translations/
+# expands to: --engine omlx --omlx-model Qwopus3.6-27B-v2-MLX-4bit
+```
+
+For ollama path (alternate):
+
+```bash
+python3 ~/.claude/skills/book-translator/scripts/translate_book_ollama.py \
+    --book /path/to/X.epub \
+    --engine ollama --ollama-model hy-mt2:7b \
     --out /path/to/translations/
 ```
 
@@ -81,24 +102,29 @@ Phase 1 `[[PARA_N]]` marker enforcement + 1 retry on misalignment) → assemble
 → 4 audit gates. Progress + state.json checkpointing is per-chapter, so a
 killed/interrupted run resumes on the next invocation.
 
-Expected runtime for a 25-chapter / 200-page book on M1 Max 32GB unified
-memory (measured 2026-05-23 on *The Next Renaissance*, 23 chapters,
-~150K source chars): **~1h27m with translategemma:12b** (zero recursive
-splits, clean marker compliance); **~2h27m with hy-mt2:7b** (heavy
-recursive splits on 2-3 large chapters dominate wall time); **3-4h with
-translategemma:27b** (proportionally slower; superseded by 12b for most
-use cases). Quality
-gap vs Anthropic Opus 4.7 is roughly 0.7-1.0 points on the 5-dimension manual
-eval (8.5 vs 9.4) — usable for drafts and offline reading; not interchangeable
-for literary fiction.
+Expected runtime for a 23-chapter / ~150K-char book on M1 Max 32GB
+(measured 2026-05-23 on *The Next Renaissance*):
 
-Single-chapter spot check (no assemble, no audit):
+| Engine + Model | E2E duration | Marker align | Simp leak | Quality (5-dim) |
+|---|---|---|---|---|
+| **omlx + Qwopus3.6-27B-v2-MLX-4bit (default)** | **2h13m** | **23/23 = 100%** | **0.9%** | **★★★★★ Opus tier** |
+| ollama + translategemma:12b | 1h27m (fastest) | high | needs new prompt enforcement | ★★★☆☆ |
+| ollama + hy-mt2:7b | 2h27m | moderate | ~100% Trad | ★★★☆☆ |
+| ollama + translategemma:27b | 3-4h | similar to 12b | similar | ★★★☆☆ (12b 全面超越) |
+
+Quality positioning:
+- omlx + Qwopus3.6 ≈ matches Opus 4.7 register tier (sample diffs in chunk-size
+  punch only, see _outputs research file)
+- ollama + hy-mt2:7b / translategemma:12b: 0.7-1.0 lower on 5-dim eval; usable
+  for drafts / offline reading, not interchangeable for literary fiction.
+
+Single-chapter spot check (omlx default; no assemble, no audit):
 
 ```bash
 python3 ~/.claude/skills/book-translator/scripts/translate_chapter_cli.py \
     --book /path/to/X.epub --chapter N \
-    --engine ollama --ollama-model hy-mt2:7b \
     --out runs/spot-check/ --validate-markers
+# expands to: --engine omlx --omlx-model Qwopus3.6-27B-v2-MLX-4bit
 ```
 
 Cross-model benchmark (multiple models, side-by-side first paragraphs):
@@ -111,7 +137,44 @@ python3 ~/.claude/skills/book-translator/scripts/run_benchmark.py \
     --out runs/benchmark/
 ```
 
-### Installing the Hy-MT2 models
+### Installing omlx + Qwopus3.6 (new default offline path)
+
+omlx is the multi-model MLX inference server for Apple Silicon. Install via
+Homebrew tap (one-time):
+
+```bash
+brew install jundot/omlx/omlx
+brew services start jundot/omlx/omlx
+# verify: curl http://127.0.0.1:8090/v1/models | jq '.data[].id'
+```
+
+Download Qwopus3.6-27B-v2-MLX-4bit (~14 GB) into `~/.omlx/models/`:
+
+```bash
+hf download Jackrong/Qwopus3.6-27B-v2-MLX-4bit \
+    --local-dir ~/.omlx/models/Qwopus3.6-27B-v2-MLX-4bit
+# omlx auto-scans on next request; or POST /admin/api/models/Qwopus3.6-27B-v2-MLX-4bit/load
+```
+
+`chat_template_kwargs.enable_thinking=false` is mandatory for translation; the
+`OmlxProvider` sets this by default. Manual API call:
+
+```bash
+curl -X POST http://127.0.0.1:8090/v1/chat/completions \
+    -H "Content-Type: application/json" \
+    -d '{
+        "model": "Qwopus3.6-27B-v2-MLX-4bit",
+        "messages": [{"role":"user","content":"翻譯：Hello"}],
+        "chat_template_kwargs": {"enable_thinking": false}
+    }'
+```
+
+Acceleration toggles (`dflash_enabled` / `mtp_enabled` / `specprefill_enabled`)
+do not help on M1 Max + 27B + translation — verified 2026-05-23 across 12 paths
+(see `wiki/_outputs/2026-05-23-local-translation-acceleration-research.md`).
+Leave them all off for production.
+
+### Installing the Hy-MT2 models (alternate offline path)
 
 Hy-MT2 GGUFs have a broken auto-generated chat template on ollama 0.24. Install
 via the project's pre-built Modelfiles (one-time):
