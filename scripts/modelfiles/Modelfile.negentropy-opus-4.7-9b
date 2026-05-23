@@ -1,0 +1,35 @@
+FROM hf.co/Jackrong/Negentropy-claude-opus-4.7-9B-GGUF:Q4_K_M
+
+# Qwen3 ChatML template + /no_think to suppress <think>...</think> blocks
+# (model is reasoning-distilled from Claude Opus 4.7 on Qwen3.5-9B-base;
+#  thinking blocks would break the [[PARA_N]] marker alignment used by
+#  book-translator's chunked translation pipeline)
+
+TEMPLATE """{{ if .System }}<|im_start|>system
+{{ .System }}<|im_end|>
+{{ end }}{{ range .Messages }}{{ if eq .Role "user" }}<|im_start|>user
+{{ .Content }}<|im_end|>
+{{ else if eq .Role "assistant" }}<|im_start|>assistant
+<think>
+
+</think>
+
+{{ .Content }}<|im_end|>
+{{ end }}{{ end }}<|im_start|>assistant
+<think>
+
+</think>
+
+"""
+
+PARAMETER stop "<|im_end|>"
+PARAMETER stop "<|im_start|>"
+PARAMETER stop "<think>"
+PARAMETER stop "</think>"
+
+# Translation-friendly sampling (lower temp than reasoning default)
+PARAMETER temperature 0.3
+PARAMETER top_p 0.8
+PARAMETER top_k 20
+PARAMETER repeat_penalty 1.05
+PARAMETER num_ctx 8192
