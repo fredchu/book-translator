@@ -67,6 +67,10 @@ Requirements:
      glossary's exact target form.
   4. Separate marker blocks with one blank line. Inside a single marker block,
      do not insert blank lines.
+Traditional Chinese rule: If the target is 台灣繁體中文, output must use
+繁體中文 (Traditional Chinese / Taiwan locale). 禁止使用任何簡體字。
+常見錯誤對照：『学』→『學』、『为』→『為』、『这』→『這』、
+『们』→『們』、『实』→『實』、『时』→『時』、『国』→『國』。
 
 REGISTER-SPECIFIC RULES (matched to glossary.style_anchor.register):
 {register_specific_rules}
@@ -136,6 +140,13 @@ _AUP_PHRASES = [
     "copyright restrictions",
 ]
 
+TRADITIONAL_CHINESE_ENFORCEMENT = (
+    "輸出必須使用繁體中文（Traditional Chinese / Taiwan locale）。"
+    "禁止使用任何簡體字。常見錯誤對照：『学』→『學』、『为』→『為』、"
+    "『这』→『這』、『们』→『們』、『实』→『實』、『时』→『時』、"
+    "『国』→『國』。"
+)
+
 
 def html_to_paragraphs(html: str) -> list[str]:
     """Convert chapter HTML to canonical plain-text paragraphs."""
@@ -158,6 +169,7 @@ OLLAMA_SYSTEM_PROMPT = (
     "of marker blocks as the input. Begin with `[[PARA_1]]`. No preface, no "
     "commentary, no markdown fences, no extra markers, no duplicate markers. "
     "Use 台灣繁體中文 (zh-Hant, Taiwan vocabulary). "
+    f"{TRADITIONAL_CHINESE_ENFORCEMENT} "
     "Keep English abbreviations (AI / LLM / GPT / RLHF / AGI / API) verbatim — "
     "do not translate them into Chinese."
 )
@@ -205,6 +217,7 @@ MINIMAL_PARAGRAPH_SYSTEM_PROMPT = (
     "Translate the user's English paragraph to {target_lang_long}. "
     "Output ONLY the translation. No preface, no commentary, no markdown, "
     "no English echo, no quotes. Use 台灣繁體中文 (Taiwan vocabulary). "
+    f"{TRADITIONAL_CHINESE_ENFORCEMENT} "
     "Keep English abbreviations (AI / LLM / GPT) verbatim."
 )
 

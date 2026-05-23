@@ -43,6 +43,15 @@ BANNED_PATTERNS = [
 ]
 
 HEADING_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
+SIMPLIFIED_CHINESE_CHARS = frozenset(
+    "学国应该时这们个经历实来体现进觉党报见远边长万与业东严两临卫厂厅县发为过还样种从会动问开关车书无语气"
+)
+_HAN_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
+
+
+def contains_simplified_chinese(text: str) -> bool:
+    """Return True when text has enough Han content plus high-confidence Simplified chars."""
+    return bool(_offending_simplified_chinese_chars(text))
 
 
 def audit(
@@ -76,6 +85,12 @@ def audit(
                         failures.append(f"{path}: source-only paragraph not in exceptions: {src_text[:120]}")
                     continue
                 tgt_text = _clean(tgt.get_text(" ", strip=True))
+                simplified_chars = _offending_simplified_chinese_chars(tgt_text)
+                if simplified_chars:
+                    failures.append(
+                        f"{path}: error: target contains Simplified Chinese characters "
+                        f"{simplified_chars!r}: {tgt_text[:120]}"
+                    )
                 if (
                     src.name not in HEADING_TAGS
                     and len(src_text) >= 50
@@ -147,6 +162,18 @@ def _next_tag(node):
 
 def _clean(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
+
+
+def _offending_simplified_chinese_chars(text: str) -> str:
+    if len(_HAN_RE.findall(text or "")) < 8:
+        return ""
+    seen: set[str] = set()
+    chars: list[str] = []
+    for char in text:
+        if char in SIMPLIFIED_CHINESE_CHARS and char not in seen:
+            seen.add(char)
+            chars.append(char)
+    return "".join(chars)
 
 
 def _min_length_ratio_from_book_dir(book_dir: Path | None) -> float:
