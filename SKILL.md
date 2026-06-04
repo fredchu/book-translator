@@ -110,9 +110,23 @@ python3 ~/.claude/skills/book-translator/scripts/translate_book_ollama.py \
 ```
 
 The driver runs end-to-end: extract → sequential per-chapter translate (with
-Phase 1 `[[PARA_N]]` marker enforcement + 1 retry on misalignment) → assemble
-→ 4 audit gates. Progress + state.json checkpointing is per-chapter, so a
-killed/interrupted run resumes on the next invocation.
+Phase 1 `[[PARA_N]]` marker enforcement + 1 retry on misalignment) → offline
+post-processing → assemble → 4 audit gates. Progress + state.json checkpointing
+is per-chapter, so a killed/interrupted run resumes on the next invocation.
+
+Offline post-processing (`scripts/offline_postprocess.py`) recovers the quality
+the skipped glossary/nav build would have provided, since the offline path has no
+glossary:
+- **Simplified→Traditional** — every chapter is run through opencc `s2twp` at
+  write time, fixing the local model's residual Simplified leak and normalising
+  to Taiwan character forms (soft dependency: a no-op with one warning if opencc
+  is absent).
+- **Character-name coherence** — without a glossary the model drifts between
+  transliteration variants (瑪德琳 vs 梅德琳); a conservative pass merges minority
+  variants (length ≥ 3, free-standing, dominated ≥ 4×, never two real names) into
+  the dominant form before assembly.
+- **Bilingual ToC** — nav_overrides are populated from each heading-led chapter's
+  translated title so the table of contents renders bilingual.
 
 Expected runtime for a 23-chapter / ~150K-char book on M1 Max 32GB
 (measured 2026-05-23 on *The Next Renaissance*):

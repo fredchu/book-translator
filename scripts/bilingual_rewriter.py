@@ -70,25 +70,44 @@ def insert_bilingual(
     if chapter_status == "aup_refused":
         return _emit_aup_refused_chapter(src_html, aup_reason or "")
     soup = BeautifulSoup(src_html, "html.parser")
-    _promote_header_headings(soup)
+    promoted_ids = {id(h) for h in _promote_header_headings(soup)}
     for tag in soup(["script", "style", "nav", "footer"]):
         tag.decompose()
     if entry.get("role") == "contents":
         _bilingualize_contents_links(soup)
     nodes = _text_nodes_for_bilingual(soup)
+    # Promoted header headings (chapter numbers / part names) were stripped by
+    # dispatch's extract_blocks, so no translation segment exists for them. Pair
+    # body translations against non-promoted nodes only; promoted headings get a
+    # nav/structural label (if any) without consuming a body slot.
+    body_nodes = [n for n in nodes if id(n) not in promoted_ids]
     warnings: list[str] = []
-    aligned_translations = _align_translations(nodes, translations, entry)
-    if entry.get("output_strategy") == "translate" and len(nodes) != len(aligned_translations):
+    aligned_body = _align_translations(body_nodes, translations, entry)
+    if entry.get("output_strategy") == "translate" and len(body_nodes) != len(aligned_body):
         warnings.append(
             f"{entry.get('translation_id') or entry['id']}: paragraph count mismatch "
-            f"(src_text={len(nodes)} tgt={len(translations)}); pairing available paragraphs"
+            f"(src_text={len(body_nodes)} tgt={len(translations)}); pairing available paragraphs"
         )
 
-    for index, node in enumerate(nodes):
+    body_index = 0
+    for node in nodes:
         source_text = _clean_text(node.get_text(" ", strip=True))
         if not source_text:
             continue
-        candidate = aligned_translations[index] if index < len(aligned_translations) else None
+        if id(node) in promoted_ids:
+            # A promoted header heading that is the chapter title (e.g.
+            # "CHAPTER 1 The Past") takes the nav-override label, since dispatch
+            # stripped it and it is translated nowhere else. A bare chapter number
+            # ("1") instead gets only an exact structural label — using the nav
+            # override there would duplicate the title that already renders on the
+            # separate in-body title heading.
+            if _is_bare_chapter_number(source_text):
+                candidate = _exact_translation_for_text(source_text, entry) or None
+            else:
+                candidate = _heading_zh_label(source_text, entry) or None
+        else:
+            candidate = aligned_body[body_index] if body_index < len(aligned_body) else None
+            body_index += 1
         if _looks_like_identifier(source_text) and not candidate:
             continue
         _add_class(node, "src")
@@ -121,11 +140,17 @@ def _emit_aup_refused_chapter(src_html: str, reason: str) -> str:
     return str(soup)
 
 
-def _promote_header_headings(soup: BeautifulSoup) -> None:
-    """Move h1-h6 out of header into the body root before stripping decor."""
+def _promote_header_headings(soup: BeautifulSoup) -> list:
+    """Move h1-h6 out of header into the body root before stripping decor.
+
+    Returns the promoted heading nodes. dispatch's ``extract_blocks`` strips
+    ``<header>`` entirely, so these headings were never translated; the caller
+    must not let them consume a body translation slot.
+    """
     body = soup.find("body")
     if body is None:
-        return
+        return []
+    promoted: list = []
     insert_at = 0
     heading_tags = ["h1", "h2", "h3", "h4", "h5", "h6"]
     for header in list(soup.find_all("header")):
@@ -133,7 +158,18 @@ def _promote_header_headings(soup: BeautifulSoup) -> None:
             heading.extract()
             body.insert(insert_at, heading)
             insert_at += 1
+            promoted.append(heading)
         header.decompose()
+    return promoted
+
+
+def _is_bare_chapter_number(text: str) -> bool:
+    """True for a standalone chapter-number heading like "1" or roman "IV"."""
+    stripped = text.strip()
+    return bool(
+        re.fullmatch(r"[0-9]{1,4}", stripped)
+        or re.fullmatch(r"[IVXLCDM]{1,8}", stripped)
+    )
 
 
 def _bilingualize_contents_links(soup: BeautifulSoup) -> None:

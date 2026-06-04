@@ -45,6 +45,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 import chunker  # noqa: E402
 import dispatch  # noqa: E402
 import extract_epub  # noqa: E402
+import offline_postprocess  # noqa: E402
 import state as state_mod  # noqa: E402
 import translation_log  # noqa: E402
 from assemble import assemble  # noqa: E402
@@ -527,6 +528,8 @@ def translate_single_book(book_path: Path, args: argparse.Namespace) -> dict[str
         _record_partial_paragraphs(log_path=log_path, partial_paragraph_count=partial_paragraph_count)
 
         if aligned is not None and (total_paragraphs == 0 or partial_paragraph_count < total_paragraphs):
+            # Convert any residual Simplified leak to Taiwan Traditional before persisting.
+            aligned = offline_postprocess.to_traditional(aligned)
             translation_path.write_text(aligned, encoding="utf-8")
             state_mod.mark_done(state, cid, aligned)
             if partial_paragraph_count > 0:
@@ -577,6 +580,21 @@ def translate_single_book(book_path: Path, args: argparse.Namespace) -> dict[str
             "error_summary": "",
             "return_code": 0,
         }
+
+    # Offline coherence passes before assembly (this path has no glossary):
+    # (a) merge minority character-name transliteration variants into the
+    #     dominant form, (b) populate bilingual ToC nav labels from chapter titles.
+    name_merges = offline_postprocess.normalize_character_names(book_dir)
+    if name_merges:
+        preview = ", ".join(f"{v}->{c}" for v, c, _ in name_merges[:8])
+        print(f"[postprocess] normalized {len(name_merges)} name variant(s): {preview}", file=sys.stderr)
+    try:
+        manifest_data = json.loads((book_dir / "manifest.json").read_text(encoding="utf-8"))
+        nav_added = offline_postprocess.build_nav_overrides(book_dir, manifest_data)
+        if nav_added:
+            print(f"[postprocess] wrote {nav_added} bilingual nav label(s)", file=sys.stderr)
+    except Exception as exc:
+        print(f"[postprocess] nav override build skipped: {exc}", file=sys.stderr)
 
     out_epub = out_parent / f"{book_stem}_bilingual.epub"
     print(f"[assemble] -> {out_epub}", file=sys.stderr)
