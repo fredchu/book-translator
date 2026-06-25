@@ -98,10 +98,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="path(s) to .epub",
     )
     parser.add_argument("--engine", choices=["ollama", "omlx"], default="omlx",
-                        help="default omlx (Qwopus3.6-27B-v2-MLX-4bit) — fastest+highest-quality offline path on M1 Max; ollama+hy-mt2:7b/translategemma:12b are alternates")
+                        help="default omlx (Qwen3.6-35B-Heretic-4bit) — fastest offline path on M1 Max; Qwopus3.6-27B-v2-MLX-4bit / ollama+hy-mt2:7b/translategemma:12b are alternates")
     parser.add_argument("--ollama-model", default=None, help="e.g. hy-mt2:7b / translategemma:27b")
-    parser.add_argument("--omlx-model", default="Qwopus3.6-27B-v2-MLX-4bit",
-                        help="default Qwopus3.6-27B-v2-MLX-4bit (Claude Opus 4.6/4.7 distilled, ~2h13m for 23-chapter book on M1 Max 32GB)")
+    parser.add_argument("--omlx-model", default="Qwen3.6-35B-Heretic-4bit",
+                        help="default Qwen3.6-35B-Heretic-4bit (Qwen3.6-35B-A3B 3B-active, ~5x faster than the dense Qwopus-27B-v2 fallback at parity quality; ~25-30min for a 23-chapter book on M1 Max 32GB)")
     parser.add_argument("--out", required=False, type=Path, default=None,
                         help="output parent dir; per-book dir created inside (default: book's parent dir)")
     parser.add_argument("--ollama-host", default="http://localhost:11434")

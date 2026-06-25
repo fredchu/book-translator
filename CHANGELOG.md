@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Offline default model: `Qwopus3.6-27B-v2-MLX-4bit` → `Qwen3.6-35B-Heretic-4bit`**
+  (2026-06-25). The new default is a Qwen3.6-35B-A3B 3B-active MoE that generates
+  ~5x faster (~43 vs ~8 t/s on M1 Max) at parity Opus-tier register and lower
+  Simplified leak (0.3% vs 0.9%) — a 23-chapter book drops from ~2h13m to an
+  estimated ~25-30min. `enable_thinking:False` suppresses thinking cleanly via the
+  model's fixed chat template, so `OmlxProvider` is unchanged. Qwopus3.6-27B-v2
+  remains the documented fallback (smaller RAM footprint). Defaults updated in
+  `translate_chapter_cli.py` + `translate_book_ollama.py`; default-contract tests
+  updated. Evidence: `company/book-translator/2026-06-25-heretic-35b-a3b-local-translation-speedup.md`.
+
 ### Added
 - `<book_dir>/translations_extra.json` schema for per-book overrides
   (`by_exact_text` and `nav_overrides`). The assembler reads this file when

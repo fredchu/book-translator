@@ -85,7 +85,7 @@ def test_omlx_cli_flags_build_provider_and_write_outputs(
 def test_omlx_cli_uses_default_model_when_omitted(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """2026-05-23: --omlx-model defaults to Qwopus3.6-27B-v2-MLX-4bit, and
+    """2026-06-25: --omlx-model defaults to Qwen3.6-35B-Heretic-4bit, and
     --engine defaults to omlx. Previously this test asserted SystemExit when
     --omlx-model was omitted; after the default promotion the parser no longer
     raises. Confirm both defaults flow through to the provider factory.
@@ -124,7 +124,7 @@ def test_omlx_cli_uses_default_model_when_omitted(
     assert cli.main() == 0
     assert len(calls) == 1
     assert calls[0]["engine"] == "omlx"
-    assert calls[0]["model"] == "Qwopus3.6-27B-v2-MLX-4bit"
+    assert calls[0]["model"] == "Qwen3.6-35B-Heretic-4bit"
 
 
 def test_live_omlx_ping_smoke_skips_unless_enabled() -> None:

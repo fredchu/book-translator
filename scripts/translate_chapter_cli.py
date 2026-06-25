@@ -84,11 +84,11 @@ def main() -> int:
     parser.add_argument("--book", required=True, type=Path, help="path to .epub")
     parser.add_argument("--chapter", type=int, default=1, help="1-indexed chapter (default 1)")
     parser.add_argument("--engine", default="omlx", choices=["anthropic", "ollama", "omlx"],
-                        help="default omlx (Qwopus3.6-27B-v2-MLX-4bit) — fastest+highest-quality offline path on M1 Max")
+                        help="default omlx (Qwen3.6-35B-Heretic-4bit) — fastest offline path on M1 Max (3B-active MoE, ~5x faster than the dense 27B at parity quality)")
     parser.add_argument("--ollama-model", default=None, help="e.g. translategemma:27b")
     parser.add_argument("--ollama-host", default="http://localhost:11434")
-    parser.add_argument("--omlx-model", default="Qwopus3.6-27B-v2-MLX-4bit",
-                        help="default Qwopus3.6-27B-v2-MLX-4bit (Claude Opus 4.6/4.7 distilled)")
+    parser.add_argument("--omlx-model", default="Qwen3.6-35B-Heretic-4bit",
+                        help="default Qwen3.6-35B-Heretic-4bit (Qwen3.6-35B-A3B, 3B-active; ~43 t/s, 5x the dense Qwopus-27B-v2 fallback at Opus-tier register)")
     parser.add_argument("--omlx-host", default="http://localhost:8090")
     parser.add_argument("--out", required=True, type=Path, help="output dir")
     parser.add_argument("--book-title", default=None, help="title to inject into prompt")

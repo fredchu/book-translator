@@ -53,13 +53,19 @@ The skill supports two providers:
   (Opus 4.7 anchor + Sonnet 4.6 fan-out), parallel `concurrency=5`. Best
   quality; spends CC subscription quota. Triggered by the main workflow
   (see "Workflow" section below).
-- **omlx** (**default for offline** — 2026-05-23 ship) — local omlx server at
+- **omlx** (**default for offline** — 2026-06-25 ship) — local omlx server at
   `localhost:8090`, **sequential** MLX inference on Apple Silicon Metal.
-  **Default model: `Qwopus3.6-27B-v2-MLX-4bit`** (Jackrong, Claude Opus 4.6/4.7
-  TraceInversion distilled on Qwen3.5-27B base, 14 GB MLX safetensors). On M1
-  Max 32GB: 23-chapter book E2E ~2h13m, Opus-tier register, ~0.9% Simplified
-  leak. Engine auto-selected when `--engine` omitted. See `2026-05-23-local-translation-acceleration-research.md`
-  for the multi-engine benchmark that promoted this as default.
+  **Default model: `Qwen3.6-35B-Heretic-4bit`** (Qwen3.6-35B-A3B, a 3B-active
+  MoE; 20 GB MLX safetensors, ~19.7 GB peak on M1 Max 32GB). Generates at
+  **~43 t/s — ~5x the prior dense `Qwopus3.6-27B-v2-MLX-4bit` default (~8 t/s)**
+  at parity register (Opus-tier) and lower Simplified leak (0.3% vs 0.9%),
+  taking a 23-chapter book from ~2h13m down to ~25-30min. `enable_thinking:False`
+  cleanly suppresses the model's thinking via the fixed chat template, so the
+  existing OmlxProvider needs no change. **`Qwopus3.6-27B-v2-MLX-4bit`** (Jackrong,
+  Claude Opus 4.6/4.7 TraceInversion distilled on Qwen3.5-27B, 14 GB) remains the
+  **fallback** — slower but a smaller RAM footprint. Engine auto-selected when
+  `--engine` omitted. See `2026-06-25-heretic-35b-a3b-local-translation-speedup.md`
+  (model-fit-scout spot check) and `2026-05-23-local-translation-acceleration-research.md`.
 - **Ollama** (alternate offline) — local Ollama server at `localhost:11434`,
   sequential (single GPU via llama.cpp). Useful for GGUF-only models (Hy-MT2,
   translategemma) when omlx is unavailable. Alternates: `translategemma:12b`
@@ -73,8 +79,9 @@ The skill supports two providers:
 Triggers (main session routes here when the user says):
 
 - 「離線翻 X.epub」「local translate X.epub」「translate offline X.epub」
-  → **omlx + Qwopus3.6-27B-v2-MLX-4bit (new default)**
-- 「用 Qwopus 翻書 X.epub」「用 omlx 翻 X.epub」 → same path (explicit)
+  → **omlx + Qwen3.6-35B-Heretic-4bit (default, ~5x faster)**
+- 「用 Qwopus 翻書 X.epub」 → omlx + Qwopus3.6-27B-v2-MLX-4bit (explicit fallback)
+- 「用 omlx 翻 X.epub」 → same default path
 - 「用 hy-mt2:7b 翻書 X.epub」「用 translategemma:27b 翻書 X.epub」「ollama 翻書 X.epub」
   → ollama path with specified model (alternate / legacy)
 - 「批次翻 X.epub Y.epub」「翻這幾本 ...」 → multi-book driver 同個 path
@@ -86,7 +93,7 @@ Driver — main session runs (omlx default, no engine/model flag needed):
 python3 ~/.claude/skills/book-translator/scripts/translate_book_ollama.py \
     --book /path/to/X.epub \
     --out /path/to/translations/
-# expands to: --engine omlx --omlx-model Qwopus3.6-27B-v2-MLX-4bit
+# expands to: --engine omlx --omlx-model Qwen3.6-35B-Heretic-4bit
 ```
 
 **Multi-book batch (2026-05-23 ship)** — 一次傳多本，driver 內序列翻譯，
@@ -133,10 +140,20 @@ Expected runtime for a 23-chapter / ~150K-char book on M1 Max 32GB
 
 | Engine + Model | E2E duration | Marker align | Simp leak | Quality (5-dim) |
 |---|---|---|---|---|
-| **omlx + Qwopus3.6-27B-v2-MLX-4bit (default)** | **2h13m** | **23/23 = 100%** | **0.9%** | **★★★★★ Opus tier** |
-| ollama + translategemma:12b | 1h27m (fastest) | high | needs new prompt enforcement | ★★★☆☆ |
+| **omlx + Qwen3.6-35B-Heretic-4bit (default, 2026-06-25)** | **~25-30min (est, ~5x)** | **100%** | **0.3%** | **★★★★★ Opus tier** |
+| omlx + Qwopus3.6-27B-v2-MLX-4bit (fallback) | 2h13m | 23/23 = 100% | 0.9% | ★★★★★ Opus tier |
+| ollama + translategemma:12b | 1h27m | high | needs new prompt enforcement | ★★★☆☆ |
 | ollama + hy-mt2:7b | 2h27m | moderate | ~100% Trad | ★★★☆☆ |
 | ollama + translategemma:27b | 3-4h | similar to 12b | similar | ★★★☆☆ (12b 全面超越) |
+
+> The 35B-A3B speedup measured on a model-fit-scout spot check (ch9 of *The Next
+> Renaissance*, 123 paras, same prompt): Heretic-35B **43.2 t/s** vs Qwopus-27B-v2
+> **8.0 t/s** (5.4x), both 100% marker-aligned, register parity. The full-book
+> E2E figure above is extrapolated from that per-chapter rate — re-measure on the
+> next real book run and replace the estimate. The Opus-distilled `stamsam/
+> Qwen3.6-35B-A3B-Claude-4.7-Opus-Reasoning-Distilled-MLX-oQ4-MTP` was also tested
+> (36.6 t/s — its MTP draft layer gave no speed gain on M1) and is an alternate
+> if register lineage with the old Qwopus default matters more than raw speed.
 
 Quality positioning:
 - omlx + Qwopus3.6 ≈ matches Opus 4.7 register tier (sample diffs in chunk-size
@@ -150,7 +167,7 @@ Single-chapter spot check (omlx default; no assemble, no audit):
 python3 ~/.claude/skills/book-translator/scripts/translate_chapter_cli.py \
     --book /path/to/X.epub --chapter N \
     --out runs/spot-check/ --validate-markers
-# expands to: --engine omlx --omlx-model Qwopus3.6-27B-v2-MLX-4bit
+# expands to: --engine omlx --omlx-model Qwen3.6-35B-Heretic-4bit
 ```
 
 Cross-model benchmark (multiple models, side-by-side first paragraphs):
@@ -174,22 +191,32 @@ brew services start jundot/omlx/omlx
 # verify: curl http://127.0.0.1:8090/v1/models | jq '.data[].id'
 ```
 
-Download Qwopus3.6-27B-v2-MLX-4bit (~14 GB) into `~/.omlx/models/`:
+Download the default Qwen3.6-35B-Heretic-4bit (~20 GB) into `~/.omlx/models/`
+(use `HF_HUB_DISABLE_XET=1` — the xet transfer path stalls mid-download on large
+MLX repos):
+
+```bash
+HF_HUB_DISABLE_XET=1 hf download froggeric/Qwen3.6-35B-A3B-Uncensored-Heretic-MLX-4bit \
+    --local-dir ~/.omlx/models/Qwen3.6-35B-Heretic-4bit
+# omlx auto-scans on next request; or POST /admin/api/models/Qwen3.6-35B-Heretic-4bit/load
+```
+
+Fallback (smaller RAM footprint, ~14 GB):
 
 ```bash
 hf download Jackrong/Qwopus3.6-27B-v2-MLX-4bit \
     --local-dir ~/.omlx/models/Qwopus3.6-27B-v2-MLX-4bit
-# omlx auto-scans on next request; or POST /admin/api/models/Qwopus3.6-27B-v2-MLX-4bit/load
 ```
 
 `chat_template_kwargs.enable_thinking=false` is mandatory for translation; the
-`OmlxProvider` sets this by default. Manual API call:
+`OmlxProvider` sets this by default, and it works on both the Heretic default
+(via its fixed chat template) and the Qwopus fallback. Manual API call:
 
 ```bash
 curl -X POST http://127.0.0.1:8090/v1/chat/completions \
     -H "Content-Type: application/json" \
     -d '{
-        "model": "Qwopus3.6-27B-v2-MLX-4bit",
+        "model": "Qwen3.6-35B-Heretic-4bit",
         "messages": [{"role":"user","content":"翻譯：Hello"}],
         "chat_template_kwargs": {"enable_thinking": false}
     }'
