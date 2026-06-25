@@ -54,6 +54,11 @@ def contains_simplified_chinese(text: str) -> bool:
     return bool(_offending_simplified_chinese_chars(text))
 
 
+def _contains_han(text: str) -> bool:
+    """True when text has any CJK Han character (i.e. it is already (inline-)translated)."""
+    return any("一" <= ch <= "鿿" for ch in text)
+
+
 def audit(
     output: Path | str | None = None,
     min_length_ratio: float = 0.22,
@@ -81,7 +86,11 @@ def audit(
                     continue
                 tgt = _next_tag(src)
                 if tgt is None or not _has_tgt_class(tgt):
-                    if src_text not in exceptions:
+                    # Inline-bilingual paragraphs (e.g. ToC links rendered
+                    # "English ｜ 中文" by _bilingualize_contents_links) carry their
+                    # translation in the same node, so a missing tgt sibling is not an
+                    # untranslated-source problem when the src text already has Han.
+                    if src_text not in exceptions and not _contains_han(src_text):
                         failures.append(f"{path}: source-only paragraph not in exceptions: {src_text[:120]}")
                     continue
                 tgt_text = _clean(tgt.get_text(" ", strip=True))

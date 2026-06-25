@@ -237,3 +237,114 @@ def build_nav_overrides(book_dir: Path, manifest: dict) -> int:
         extra["nav_overrides"] = nav
         te.save(book_dir, extra)
     return added
+
+
+def _extract_header_title(html_path: Path) -> str:
+    """Chapter display title from the source ``<header>`` (chapter-number heading
+    plus ``role="doc-subtitle"`` title), falling back to the first heading.
+
+    ``build_nav_overrides`` cannot reach these because ``strip_non_content`` drops
+    the ``<header>`` wrapper, so the chapter title is neither translated nor visible
+    as the first walked node. Returns "" when no title text is present.
+    """
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(html_path.read_text(encoding="utf-8"), "html.parser")
+    parts: list[str] = []
+    header = soup.find("header")
+    if header is not None:
+        for el in header.find_all(sorted(_HEADING_TAGS)):
+            text = el.get_text(" ", strip=True)
+            if text:
+                parts.append(text)
+        subtitle = header.find(attrs={"role": "doc-subtitle"})
+        if subtitle is not None:
+            text = subtitle.get_text(" ", strip=True)
+            if text and text not in parts:
+                parts.append(text)
+    if not parts:
+        heading = soup.find(sorted(_HEADING_TAGS))
+        if heading is not None:
+            text = heading.get_text(" ", strip=True)
+            if text:
+                parts.append(text)
+    return " : ".join(parts)
+
+
+def translate_header_titles(book_dir: Path, manifest: dict, provider) -> int:
+    """Fill nav_overrides for translate items whose title lives in a ``<header>``.
+
+    Complements ``build_nav_overrides`` (which only handles items whose first body
+    block is a translated heading). Chapter titles in a ``<header>`` are batch-
+    translated through ``provider`` in a single marker-tagged call, then written to
+    nav_overrides so both the EPUB nav and the in-body promoted heading render
+    bilingually. No-op for items already in nav_overrides or when no provider /
+    titles are available. Returns the number of nav_overrides added.
+    """
+    if provider is None:
+        return 0
+    spine = manifest.get("spine") or manifest.get("chapters") or []
+    extra = te.load(book_dir)
+    nav = dict(extra.get("nav_overrides") or {})
+    pending: list[tuple[str, str]] = []
+    for entry in spine:
+        if not isinstance(entry, dict) or entry.get("output_strategy") != "translate":
+            continue
+        idref = str(entry.get("original_idref") or "")
+        if not idref or idref in nav:
+            continue
+        item_id = str(entry.get("id") or "")
+        html_path = book_dir / "chapters" / f"{item_id}.html"
+        if not html_path.exists():
+            continue
+        title = _extract_header_title(html_path)
+        if title:
+            pending.append((idref, title))
+    if not pending:
+        return 0
+    marked = "\n".join(f"[[T{i + 1}]] {title}" for i, (_, title) in enumerate(pending))
+    prompt = (
+        "Translate each book chapter/section title into 台灣繁體中文 "
+        "(Taiwan Traditional Chinese).\n"
+        "Rules: render 'Chapter N' as '第N章', 'Conclusion' as '結論', "
+        "'Introduction' as '導論', 'Index' as '索引'; translate the subtitle after "
+        "the colon faithfully and concisely; keep the format '第N章：中文副標'.\n"
+        "Echo every marker exactly, one per line, then the translation:\n"
+        "[[T1]] <translation>\n[[T2]] <translation>\nOutput only the marker lines.\n\n"
+        + marked
+    )
+    try:
+        result = provider.translate(
+            prompt,
+            request_id="nav_titles",
+            system=(
+                "You are Qwen, created by Alibaba Cloud. You are a helpful assistant.\n"
+                "<|think_off|>"
+            ),
+        )
+        raw = getattr(result, "raw_text", "") or ""
+    except Exception as exc:  # provider down / signature mismatch — leave to fallback labels
+        print(f"[postprocess] header-title translation skipped: {exc}", file=sys.stderr)
+        return 0
+
+    zh_by_index: dict[int, str] = {}
+    for match in re.finditer(r"\[\[T(\d+)\]\]\s*(.+)", raw):
+        idx = int(match.group(1)) - 1
+        if 0 <= idx < len(pending):
+            zh_by_index[idx] = match.group(2).strip()
+    if not zh_by_index:
+        # Model dropped the markers but kept order + count: map positionally.
+        lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
+        if len(lines) == len(pending):
+            zh_by_index = {i: re.sub(r"^\[\[T\d+\]\]\s*", "", ln) for i, ln in enumerate(lines)}
+
+    added = 0
+    for idx, (idref, _english) in enumerate(pending):
+        zh = to_traditional(zh_by_index.get(idx, "").strip())
+        if zh:
+            nav[idref] = zh
+            added += 1
+    if added:
+        extra["nav_overrides"] = nav
+        te.save(book_dir, extra)
+    return added

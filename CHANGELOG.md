@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Offline bilingual ToC: chapter titles in a `<header>` now get translated**
+  (2026-06-25, systematic-debugging). Root cause: chapter titles live in
+  `<header>` (chapter-number `<h1>` + `role="doc-subtitle"`), which
+  `strip_non_content` drops, so `build_nav_overrides` saw the first body `<p>`
+  (not a heading), skipped, and the EPUB ToC + in-body chapter titles rendered
+  English-only. Only front/back matter (bare `<h1>`) got labels. New
+  `offline_postprocess.translate_header_titles(book_dir, manifest, provider)`
+  extracts the header title and batch-translates it through the model (marker-
+  tagged, positional fallback); the driver calls it after `build_nav_overrides`.
+- **translation_quality audit no longer false-fails on inline-bilingual ToC
+  links.** A source_only paragraph rendered "English ｜ 中文" by
+  `_bilingualize_contents_links` carries its translation inline; the audit now
+  exempts any `src` paragraph that already contains Han (`_contains_han`) instead
+  of demanding a separate `tgt` sibling or a `source_only.json` exception.
+- Both verified end-to-end on *The Meaning of Your Life* (Arthur C. Brooks): 17
+  chapters, 4/4 audit gates green, EPUB nav + in-body titles bilingual. New tests
+  in `test/test_offline_header_titles.py` (6); full suite 324 passed.
+
 ### Changed
 - **Offline default model: `Qwopus3.6-27B-v2-MLX-4bit` → `Qwen3.6-35B-Heretic-4bit`**
   (2026-06-25). The new default is a Qwen3.6-35B-A3B 3B-active MoE that generates

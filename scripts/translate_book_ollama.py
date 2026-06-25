@@ -593,6 +593,16 @@ def translate_single_book(book_path: Path, args: argparse.Namespace) -> dict[str
         nav_added = offline_postprocess.build_nav_overrides(book_dir, manifest_data)
         if nav_added:
             print(f"[postprocess] wrote {nav_added} bilingual nav label(s)", file=sys.stderr)
+        # Chapters whose title lives in a <header> are invisible to build_nav_overrides
+        # (strip_non_content drops the header); translate those titles via the model.
+        title_added = offline_postprocess.translate_header_titles(
+            book_dir, manifest_data, provider
+        )
+        if title_added:
+            print(
+                f"[postprocess] translated {title_added} header chapter title(s)",
+                file=sys.stderr,
+            )
     except Exception as exc:
         print(f"[postprocess] nav override build skipped: {exc}", file=sys.stderr)
 
