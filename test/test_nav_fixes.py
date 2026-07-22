@@ -6,6 +6,8 @@ import sys
 import zipfile
 from pathlib import Path
 
+from bs4 import BeautifulSoup
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 import assemble  # type: ignore  # noqa: E402
 import extract_epub  # type: ignore  # noqa: E402
@@ -91,13 +93,17 @@ def test_toc_ncx_patched_for_top_level_navpoints():
     assert "Old" not in patched
 
 
-def test_toc_ncx_fragment_navpoints_untouched():
+def test_toc_ncx_nested_subsection_untouched_chapter_patched():
     ncx = """<?xml version="1.0" encoding="UTF-8"?>
 <ncx xmlns="http://www.daisy.org/z3986/2005/ncx/">
   <navMap>
     <navPoint id="navPoint-1" playOrder="1">
-      <navLabel><text>Section Anchor</text></navLabel>
-      <content src="xhtml/chapter1.xhtml#section-1"/>
+      <navLabel><text>Old</text></navLabel>
+      <content src="xhtml/chapter1.xhtml#CH001"/>
+      <navPoint id="navPoint-2" playOrder="2">
+        <navLabel><text>Section Anchor</text></navLabel>
+        <content src="xhtml/chapter1.xhtml#section-1"/>
+      </navPoint>
     </navPoint>
   </navMap>
 </ncx>
@@ -110,9 +116,9 @@ def test_toc_ncx_fragment_navpoints_untouched():
         "original_idref": "chap1",
         "_translations_extra": {"nav_overrides": {"chap1": "第一章"}},
     }]
-    patched = assemble._patch_toc_ncx(ncx, entries)
-    assert "Section Anchor" in patched
-    assert "Chapter 1 ｜ 第一章" not in patched
+    soup = BeautifulSoup(assemble._patch_toc_ncx(ncx, entries), "xml")
+    assert soup.find("navPoint", id="navPoint-1").find("navLabel", recursive=False).text == "Chapter 1 ｜ 第一章"
+    assert soup.find("navPoint", id="navPoint-2").find("navLabel", recursive=False).text == "Section Anchor"
 
 
 def test_first_heading_caps_long_string():

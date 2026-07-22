@@ -38,10 +38,28 @@ def test_build_nav_xhtml_uses_public_interface_and_nested_part_children():
     assert soup.find("ol").find("ol") is not None
 
 
-def test_patch_toc_ncx_updates_only_whole_file_navpoints():
+def test_patch_toc_ncx_whole_file_wins_over_fragment_sibling():
+    entries = [{
+        "id": "item_001", "original_path": "OPS/Text/chapter.xhtml", "first_heading": "Chapter 1",
+        "output_strategy": "translate", "original_idref": "chap1",
+        "_translations_extra": {"nav_overrides": {"chap1": "第一章"}},
+    }]
+
+    for navpoints in (
+        '<navPoint id="whole"><navLabel><text>Old</text></navLabel><content src="Text/chapter.xhtml"/></navPoint>'
+        '<navPoint id="fragment"><navLabel><text>Anchor</text></navLabel><content src="Text/chapter.xhtml#p1"/></navPoint>',
+        '<navPoint id="fragment"><navLabel><text>Anchor</text></navLabel><content src="Text/chapter.xhtml#p1"/></navPoint>'
+        '<navPoint id="whole"><navLabel><text>Old</text></navLabel><content src="Text/chapter.xhtml"/></navPoint>',
+    ):
+        soup = BeautifulSoup(patch_toc_ncx(f"<ncx><navMap>{navpoints}</navMap></ncx>", entries), "xml")
+
+        assert soup.find("navPoint", id="whole").find("navLabel", recursive=False).text == "Chapter 1 ｜ 第一章"
+        assert soup.find("navPoint", id="fragment").find("navLabel", recursive=False).text == "Anchor"
+
+
+def test_patch_toc_ncx_lone_fragment_chapter_patched():
     ncx = """<ncx><navMap>
-<navPoint><navLabel><text>Old</text></navLabel><content src="Text/chapter.xhtml"/></navPoint>
-<navPoint><navLabel><text>Anchor</text></navLabel><content src="Text/chapter.xhtml#p1"/></navPoint>
+<navPoint id="chapter"><navLabel><text>Old</text></navLabel><content src="Text/chapter.xhtml#CH001"/></navPoint>
 </navMap></ncx>"""
     entries = [{
         "id": "item_001", "original_path": "OPS/Text/chapter.xhtml", "first_heading": "Chapter 1",
@@ -49,10 +67,46 @@ def test_patch_toc_ncx_updates_only_whole_file_navpoints():
         "_translations_extra": {"nav_overrides": {"chap1": "第一章"}},
     }]
 
-    patched = patch_toc_ncx(ncx, entries)
+    soup = BeautifulSoup(patch_toc_ncx(ncx, entries), "xml")
 
-    assert "Chapter 1 ｜ 第一章" in patched
-    assert "Anchor" in patched
+    assert soup.find("navPoint", id="chapter").find("navLabel", recursive=False).text == "Chapter 1 ｜ 第一章"
+
+
+def test_patch_toc_ncx_repeated_whole_file_all_patched():
+    ncx = """<ncx><navMap>
+<navPoint id="first"><navLabel><text>A</text></navLabel><content src="Text/chapter.xhtml"/></navPoint>
+<navPoint id="second"><navLabel><text>B</text></navLabel><content src="Text/chapter.xhtml"/></navPoint>
+</navMap></ncx>"""
+    entries = [{
+        "id": "item_001", "original_path": "OPS/Text/chapter.xhtml", "first_heading": "Chapter 1",
+        "output_strategy": "translate", "original_idref": "chap1",
+        "_translations_extra": {"nav_overrides": {"chap1": "第一章"}},
+    }]
+
+    soup = BeautifulSoup(patch_toc_ncx(ncx, entries), "xml")
+
+    assert [navpoint.find("navLabel", recursive=False).text for navpoint in soup.find_all("navPoint")] == [
+        "Chapter 1 ｜ 第一章",
+        "Chapter 1 ｜ 第一章",
+    ]
+
+
+def test_patch_toc_ncx_direct_child_only():
+    ncx = """<ncx><navMap>
+<navPoint id="chapter"><navLabel><text>Old</text></navLabel><content src="Text/chapter.xhtml#CH001"/>
+  <navPoint id="section"><navLabel><text>Section Anchor</text></navLabel><content src="Text/chapter.xhtml#section-1"/></navPoint>
+</navPoint>
+</navMap></ncx>"""
+    entries = [{
+        "id": "item_001", "original_path": "OPS/Text/chapter.xhtml", "first_heading": "Chapter 1",
+        "output_strategy": "translate", "original_idref": "chap1",
+        "_translations_extra": {"nav_overrides": {"chap1": "第一章"}},
+    }]
+
+    soup = BeautifulSoup(patch_toc_ncx(ncx, entries), "xml")
+
+    assert soup.find("navPoint", id="chapter").find("navLabel", recursive=False).text == "Chapter 1 ｜ 第一章"
+    assert soup.find("navPoint", id="section").find("navLabel", recursive=False).text == "Section Anchor"
 
 
 def test_nav_path_and_source_ncx_path_read_source_archive(tmp_path: Path):

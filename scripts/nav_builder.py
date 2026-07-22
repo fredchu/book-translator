@@ -123,26 +123,38 @@ def patch_toc_ncx(ncx_xml: str, entries: list[dict]) -> str:
     if not entry_by_filename:
         return ncx_xml
     soup = BeautifulSoup(ncx_xml, "xml")
+    navpoints_by_filename: dict[str, dict[str, list]] = {}
     for navpoint in soup.find_all("navPoint"):
-        content = navpoint.find("content")
+        if navpoint.find_parent("navPoint") is not None:
+            continue
+        content = navpoint.find("content", recursive=False)
         if content is None:
             continue
         src = str(content.get("src") or "")
         src_without_fragment = src.split("#", 1)[0]
-        if src_without_fragment != src:
-            continue
         filename = posixpath.basename(unquote(src_without_fragment.split("?", 1)[0]))
+        if not filename:
+            continue
+        bucket = navpoints_by_filename.setdefault(filename, {"whole_file": [], "fragment": []})
+        bucket["fragment" if "#" in src else "whole_file"].append(navpoint)
+
+    # Known limitation: basename identity can collide across directories
+    # (Text/chapter.xhtml vs Appendix/chapter.xhtml); resolving NCX-relative
+    # paths safely would require plumbing the NCX package path into this function.
+    for filename, bucket in navpoints_by_filename.items():
         entry = entry_by_filename.get(filename)
         if not entry:
             continue
-        text_node = navpoint.find("text")
-        if text_node is None:
-            nav_label = navpoint.find("navLabel")
+        selected = bucket["whole_file"] or bucket["fragment"][:1]
+        for navpoint in selected:
+            nav_label = navpoint.find("navLabel", recursive=False)
             if nav_label is None:
                 continue
-            text_node = soup.new_tag("text")
-            nav_label.append(text_node)
-        text_node.string = _nav_display_label(entry)
+            text_node = nav_label.find("text", recursive=False)
+            if text_node is None:
+                text_node = soup.new_tag("text")
+                nav_label.append(text_node)
+            text_node.string = _nav_display_label(entry)
     return str(soup)
 
 
