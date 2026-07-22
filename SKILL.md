@@ -53,6 +53,15 @@ The skill supports two providers:
   (Opus 4.7 anchor + Sonnet 4.6 fan-out), parallel `concurrency=5`. Best
   quality; spends CC subscription quota. Triggered by the main workflow
   (see "Workflow" section below).
+- Anthropic provider automatically uses the shared quota gate before Opus/Sonnet
+  fan-out. The user does not need to say `agent-orch`:
+  `/Users/fredchu/bin/agent-orch quota check --provider claude --threshold 85 --on-error fail-open --json`.
+  If the command returns exit 2 or `decision=="wait"`, call `ScheduleWakeup`
+  for JSON `resume_at`, persist the current `{book}_state.json`, and resume
+  from completed chapter outputs after waking. If `decision=="probe_failed"`,
+  retry after `retry_at`/`retry_after_seconds`; if `extra_usage.state` is
+  `disabled`/`exhausted`, reduce fan-out concurrency or switch to offline
+  provider instead of waiting for reset.
 - **omlx** (**default for offline** — 2026-06-25 ship) — local omlx server at
   `localhost:8090`, **sequential** MLX inference on Apple Silicon Metal.
   **Default model: `Qwen3.6-35B-Heretic-4bit`** (Qwen3.6-35B-A3B, a 3B-active
