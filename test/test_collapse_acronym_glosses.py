@@ -73,3 +73,35 @@ def test_only_target_terms_change(tmp_path: Path) -> None:
 def test_empty_book_dir_is_safe(tmp_path: Path) -> None:
     (tmp_path / "chapters").mkdir()
     assert pp.collapse_acronym_glosses(tmp_path) == []
+
+
+def test_greedy_match_is_trimmed_to_the_term(tmp_path: Path) -> None:
+    """Real prose puts words before the term; the gloss match must not swallow them.
+
+    Regression from the 2026-08-09 full-book run: 「隨著高度能動的人工智慧（AI）」
+    taught the collapser 隨著高度能動的人工智慧, which matched nothing, so only 1 of
+    241 人工智慧 mentions collapsed. Unit tests had used bracket-at-start prose and
+    missed it entirely.
+    """
+    book = _book(
+        tmp_path,
+        "然而，隨著高度能動的人工智慧（AI）的出現，情況改變了。\n\n人工智慧已經能夠模擬人類智慧。",
+    )
+    result = pp.collapse_acronym_glosses(book)
+    out = _read(book)
+    assert result and result[0][0] == "人工智慧", result
+    assert "隨著高度能動的人工智慧（AI）" in out, "the first gloss must survive intact"
+    assert "AI已經能夠模擬" in out
+
+
+def test_trim_helper_stops_at_function_words() -> None:
+    assert pp._trim_to_term("隨著高度能動的人工智慧") == "人工智慧"
+    assert pp._trim_to_term("代理是建立在大型語言模型") == "大型語言模型"
+    assert pp._trim_to_term("人工通用智慧") == "人工通用智慧"
+
+
+def test_term_shorter_than_two_chars_is_ignored(tmp_path: Path) -> None:
+    """Trimming can leave a single char; collapsing on that would corrupt prose."""
+    book = _book(tmp_path, "這是的慧（GPT）測試。\n\n慧到處都是。")
+    assert pp.collapse_acronym_glosses(book) == []
+    assert "慧到處都是" in _read(book)

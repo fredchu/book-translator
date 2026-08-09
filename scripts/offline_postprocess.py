@@ -31,6 +31,10 @@ except ImportError:  # pragma: no cover - script-style import
 
 _HAN = "一-鿿"
 _HEADING_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
+# Shared with extract_epub.styled_paragraph_title so both sides of a nav
+# label (English from the manifest, Chinese from the translation) agree on
+# what counts as a title block.
+TITLE_BLOCK_MAX_LEN = 60
 
 _CC = None  # cached opencc converter; False once we know it is unavailable
 
@@ -240,6 +244,28 @@ def dedupe_inline_glosses(book_dir: Path) -> list[tuple[str, int]]:
 # reads worse than the acronym, which is already idiomatic in Chinese tech prose.
 ACRONYM_KEEP = ("AI", "LLM", "GPT", "RLHF", "AGI", "API", "GDPR", "CEO", "GPS")
 
+# Chinese has no word delimiters, so a greedy match before （AI） swallows the
+# preceding clause: 「隨著高度能動的人工智慧（AI）」 yields 隨著高度能動的人工智慧
+# rather than 人工智慧, and replacing that long string matches nothing. Walking
+# left from the bracket and stopping at a function word recovers the term.
+# Measured 2026-08-09 on the full Superagency run: without this, only 1 of 241
+# 人工智慧 mentions collapsed.
+# Deliberately narrow. Characters that also occur INSIDE terms must stay out:
+# 用 (通用), 能 (智能), 有 (所有), 為 (行為), 向 (向量), 使 (使用者), 對 (對話式),
+# 過 (超過), 同 (同義). An over-wide set trimmed 人工通用智慧 down to 智慧 and
+# 人工智能 down to nothing.
+_TERM_STOP_CHARS = set("的地得了這那些而但若則之是在和與及把被讓從跟由")
+
+
+def _trim_to_term(candidate: str) -> str:
+    """Trim a greedy pre-bracket match down to the term itself."""
+    cut = 0
+    for i in range(len(candidate) - 1, -1, -1):
+        if candidate[i] in _TERM_STOP_CHARS:
+            cut = i + 1
+            break
+    return candidate[cut:]
+
 
 def collapse_acronym_glosses(book_dir: Path) -> list[tuple[str, str, int]]:
     """After the first 「中譯（ACRONYM）」, replace later 中譯 with the bare acronym.
@@ -260,10 +286,11 @@ def collapse_acronym_glosses(book_dir: Path) -> list[tuple[str, str, int]]:
     # learn 中譯 for each acronym from its surviving gloss, in reading order
     zh_for: dict[str, str] = {}
     gloss_re = re.compile(
-        r"([一-鿿]{2,12})（(" + "|".join(ACRONYM_KEEP) + r")）")
+        r"([一-鿿]{2,14})（(" + "|".join(ACRONYM_KEEP) + r")）")
     for path in files:
         for m in gloss_re.finditer(path.read_text(encoding="utf-8")):
-            zh_for.setdefault(m.group(2), m.group(1))
+            zh_for.setdefault(m.group(2), _trim_to_term(m.group(1)))
+    zh_for = {a: z for a, z in zh_for.items() if len(z) >= 2}
     if not zh_for:
         return []
 
@@ -292,13 +319,38 @@ def _segments(path: Path) -> list[str]:
     return [s.strip() for s in re.split(r"\n\s*\n", raw) if s.strip()]
 
 
-def build_nav_overrides(book_dir: Path, manifest: dict) -> int:
-    """Set nav_overrides[idref] = translated title for heading-led translate items.
+def _leading_title_block_count(soup) -> int:
+    """How many leading blocks read as a title: 0 (none), 1, or 2.
 
-    Only applies when a chapter's first non-header content block is a heading,
-    so its translated title is segment 0. Front matter whose first block is prose
-    (e.g. part-divider epigraphs) is left to structural-label fallback. Existing
-    nav_overrides keys are preserved.
+    A heading tag counts on its own. Publishers that style titles as `<p
+    class="CN">CHAPTER 4</p>` + `<p class="CT">THE TRIUMPH…</p>` also count, but
+    only when the text is short and ALL CAPS — that requirement is what keeps
+    epigraphs and dedications from being mistaken for chapter titles. See
+    `extract_epub.styled_paragraph_title` for the corpus measurements behind it.
+    """
+    count = 0
+    for node in cb.walk_text_nodes(soup):
+        text = node.get_text(" ", strip=True)
+        if not text:
+            continue
+        is_title = node.name in _HEADING_TAGS or (
+            len(text) <= TITLE_BLOCK_MAX_LEN and text.isupper()
+        )
+        if not is_title:
+            break
+        count += 1
+        if count == 2:
+            break
+    return count
+
+
+def build_nav_overrides(book_dir: Path, manifest: dict) -> int:
+    """Set nav_overrides[idref] = translated title for title-led translate items.
+
+    Applies when a chapter opens with a title block: either a heading tag, or the
+    styled-`<p>` shape publishers use instead (short + ALL CAPS). Front matter
+    whose first block is prose (part-divider epigraphs, dedications) is left to
+    structural-label fallback. Existing nav_overrides keys are preserved.
     """
     spine = manifest.get("spine") or manifest.get("chapters") or []
     extra = te.load(book_dir)
@@ -319,13 +371,18 @@ def build_nav_overrides(book_dir: Path, manifest: dict) -> int:
 
         soup = BeautifulSoup(html_path.read_text(encoding="utf-8"), "html.parser")
         cb.strip_non_content(soup)
-        first = next(cb.walk_text_nodes(soup), None)
-        if first is None or first.name not in _HEADING_TAGS:
+        title_blocks = _leading_title_block_count(soup)
+        if not title_blocks:
             continue
         segs = _segments(tr_path)
         if not segs:
             continue
-        nav[idref] = segs[0]
+        # Two title blocks (chapter number + title) become one label so the ToC
+        # reads 第四章：私人公地的勝利 rather than just 第四章.
+        if title_blocks > 1 and len(segs) > 1 and len(segs[0]) <= 12 and len(segs[1]) <= 40:
+            nav[idref] = f"{segs[0]}：{segs[1]}"
+        else:
+            nav[idref] = segs[0]
         added += 1
     if added:
         extra["nav_overrides"] = nav

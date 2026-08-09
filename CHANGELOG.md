@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Chapter titles styled as `<p>` instead of `<h1>`-`<h6>` now reach the ToC**
+  (2026-08-10). Publishers mark titles with CSS classes — `<p class="CN">CHAPTER 4</p>`
+  + `<p class="CT">THE TRIUMPH…</p>` — which neither `extract_epub._first_heading`'s
+  tag scan nor `build_nav_overrides`' heading check recognised. The English side of
+  each nav label fell back to the first 80 characters of body text ("CHAPTER 1
+  HUMANITY HAS ENTERED THE CHAT As 2022 drew to a close…") and the Chinese side was
+  never generated, so every affected book needed a one-off repair script. This was
+  the fifth book to hit it. New `extract_epub.styled_paragraph_title` and
+  `offline_postprocess._leading_title_block_count` share one definition of a title
+  block so both sides of a bilingual label agree; a chapter-number line and its
+  title are joined into one label.
+  **ALL CAPS is the discriminator, and it is load-bearing.** Measured over the local
+  corpus: 52 chapters use the styled-`<p>` shape and are all-caps, the 43 body-prose
+  openings are long and mixed-case, and the 12 short mixed-case leading blocks are
+  epigraphs and dedications ("My heart is not a home for cowards.") that must never
+  become chapter titles. Structural pages that fall through (Copyright, Praise for …)
+  are already covered by `STRUCTURAL_LABELS_ZH_TW`.
+- **`collapse_acronym_glosses` learned the wrong Chinese rendering** (2026-08-10).
+  Chinese has no word delimiters, so the greedy pre-bracket match on
+  「隨著高度能動的人工智慧（AI）」 yielded 隨著高度能動的人工智慧, which matched nothing
+  downstream: the full Superagency run collapsed 1 of 241 人工智慧 mentions. The unit
+  tests missed it because their fixtures put the term at the start of a sentence,
+  which real prose almost never does. Fixed by walking left from the bracket and
+  stopping at a function word; the stop-character set is deliberately narrow, since
+  用 (通用), 能 (智能), 有 (所有) and friends occur inside real terms — an over-wide
+  first attempt trimmed 人工通用智慧 down to 智慧. After the fix: 人工智慧 241 -> 1,
+  大型語言模型 60 -> 1.
+
 ## [1.0.0] — 2026-08-09
 
 ### Changed

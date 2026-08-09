@@ -49,9 +49,11 @@ from bs4 import BeautifulSoup
 from ebooklib import epub
 
 try:  # pragma: no cover - import mode depends on caller
+    from . import content_blocks as cb
     from .epub_reader import EPUBReader, find_opf_path
     from .manifest import SpineEntry, chapters_from_spine, save
 except ImportError:  # pragma: no cover
+    import content_blocks as cb  # type: ignore
     from epub_reader import EPUBReader, find_opf_path
     from manifest import SpineEntry, chapters_from_spine, save
 
@@ -408,7 +410,48 @@ def _first_heading(soup: BeautifulSoup) -> str | None:
             text = re.sub(r"\s+", " ", text).strip()
             if 0 < len(text) <= _HEADING_MAX_LEN and not _looks_like_body_prose_heading(text):
                 return text
-    return None
+    return styled_paragraph_title(soup)
+
+
+# Longest leading all-caps block still treated as a title rather than prose.
+TITLE_BLOCK_MAX_LEN = 60
+
+
+def styled_paragraph_title(soup: BeautifulSoup) -> str | None:
+    """Recover chapter titles that are styled `<p>` rather than `<h1>`-`<h6>`.
+
+    Some publishers mark chapter titles with CSS classes instead of heading tags:
+    `<p class="CN">CHAPTER 4</p>` + `<p class="CT">THE TRIUMPH OF THE PRIVATE
+    COMMONS</p>`. Neither `_first_heading`'s tag scan nor
+    `offline_postprocess.build_nav_overrides`' heading check saw those, so the
+    English side of the ToC fell back to the first 80 characters of body text and
+    the Chinese side was never generated. Hit five separate times on real books
+    before being fixed here.
+
+    Requiring ALL CAPS is what makes this safe. Measured over the local corpus of
+    extracted books: 52 chapters use the styled-`<p>` shape and are all-caps, the
+    43 body-prose openings are long and mixed-case, and the 12 short mixed-case
+    leading blocks are epigraphs and dedications ("My heart is not a home for
+    cowards.") that must NOT become chapter titles. Structural pages that lose out
+    (Copyright, Praise for …) are already covered by STRUCTURAL_LABELS_ZH_TW.
+
+    Two leading blocks are joined so a number line and its title read as one label:
+    CHAPTER 1 + HUMANITY HAS ENTERED THE CHAT -> "CHAPTER 1: HUMANITY HAS ENTERED
+    THE CHAT".
+    """
+    blocks: list[str] = []
+    for node in cb.walk_text_nodes(soup):
+        text = re.sub(r"\s+", " ", node.get_text(" ", strip=True)).strip()
+        if not text:
+            continue
+        if len(text) > TITLE_BLOCK_MAX_LEN or not text.isupper():
+            break
+        blocks.append(text)
+        if len(blocks) == 2:
+            break
+    if not blocks:
+        return None
+    return ": ".join(blocks)
 
 
 def _looks_like_body_prose_heading(text: str) -> bool:
