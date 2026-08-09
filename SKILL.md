@@ -62,19 +62,29 @@ The skill supports two providers:
   retry after `retry_at`/`retry_after_seconds`; if `extra_usage.state` is
   `disabled`/`exhausted`, reduce fan-out concurrency or switch to offline
   provider instead of waiting for reset.
-- **omlx** (**default for offline** — 2026-06-25 ship) — local omlx server at
-  `localhost:8090`, **sequential** MLX inference on Apple Silicon Metal.
-  **Default model: `Qwen3.6-35B-Heretic-4bit`** (Qwen3.6-35B-A3B, a 3B-active
-  MoE; 20 GB MLX safetensors, ~19.7 GB peak on M1 Max 32GB). Generates at
-  **~43 t/s — ~5x the prior dense `Qwopus3.6-27B-v2-MLX-4bit` default (~8 t/s)**
-  at parity register (Opus-tier) and lower Simplified leak (0.3% vs 0.9%),
-  taking a 23-chapter book from ~2h13m down to ~25-30min. `enable_thinking:False`
-  cleanly suppresses the model's thinking via the fixed chat template, so the
-  existing OmlxProvider needs no change. **`Qwopus3.6-27B-v2-MLX-4bit`** (Jackrong,
-  Claude Opus 4.6/4.7 TraceInversion distilled on Qwen3.5-27B, 14 GB) remains the
-  **fallback** — slower but a smaller RAM footprint. Engine auto-selected when
-  `--engine` omitted. See `2026-06-25-heretic-35b-a3b-local-translation-speedup.md`
-  (model-fit-scout spot check) and `2026-05-23-local-translation-acceleration-research.md`.
+- **omlx** (**default for offline**) — local omlx server at `localhost:8090`,
+  **sequential** MLX inference on Apple Silicon Metal.
+  **Default model: `Qwopus3.6-27B-v2-MLX-4bit`** (Jackrong, Claude Opus 4.6/4.7
+  TraceInversion distilled on Qwen3.5-27B; 14 GB, ~12 t/s, ~0.84 min per
+  3000-char chunk). Quality-first: on a full-chapter human read-through it was
+  judged clearly better than the 35B on prose rhythm and 台灣 usage, and it ran
+  the chapter with **0 retries / 0 dropped paragraphs** where the 35B needed
+  2 retries plus a single-paragraph fallback. A 470K-char book takes ~3.2 h.
+  **`Qwen3.6-35B-Heretic-4bit`** (Qwen3.6-35B-A3B, 3B-active MoE; 20 GB,
+  ~43 t/s) is the **speed alternate** at ~4x faster (~0.8 h for the same book)
+  — use it for drafts via `--omlx-model Qwen3.6-35B-Heretic-4bit`.
+  `enable_thinking:False` is required and OmlxProvider sets it for both.
+  Engine auto-selected when `--engine` omitted.
+
+  > **Default history — read before "optimising" this again.** 2026-06-25 promoted
+  > the 35B on a ~5x throughput win plus a machine register score from a
+  > single-chapter spot check. 2026-08-09 reverted it: a reader compared full
+  > chapters and called the 35B's output clearly worse. Throughput and automated
+  > register scores did not predict what a native reader caught in minutes.
+  > Do not re-promote on benchmark numbers alone.
+
+  See `2026-06-25-heretic-35b-a3b-local-translation-speedup.md` (the spot check
+  that oversold the 35B) and `2026-05-23-local-translation-acceleration-research.md`.
 - **Ollama** (alternate offline) — local Ollama server at `localhost:11434`,
   sequential (single GPU via llama.cpp). Useful for GGUF-only models (Hy-MT2,
   translategemma) when omlx is unavailable. Alternates: `translategemma:12b`
@@ -88,8 +98,8 @@ The skill supports two providers:
 Triggers (main session routes here when the user says):
 
 - 「離線翻 X.epub」「local translate X.epub」「translate offline X.epub」
-  → **omlx + Qwen3.6-35B-Heretic-4bit (default, ~5x faster)**
-- 「用 Qwopus 翻書 X.epub」 → omlx + Qwopus3.6-27B-v2-MLX-4bit (explicit fallback)
+  → **omlx + Qwopus3.6-27B-v2-MLX-4bit (default, quality-first)**
+- 「快一點」「先出草稿」「draft」 → `--omlx-model Qwen3.6-35B-Heretic-4bit` (~4x faster)
 - 「用 omlx 翻 X.epub」 → same default path
 - 「用 hy-mt2:7b 翻書 X.epub」「用 translategemma:27b 翻書 X.epub」「ollama 翻書 X.epub」
   → ollama path with specified model (alternate / legacy)
@@ -102,7 +112,7 @@ Driver — main session runs (omlx default, no engine/model flag needed):
 python3 ~/.claude/skills/book-translator/scripts/translate_book_ollama.py \
     --book /path/to/X.epub \
     --out /path/to/translations/
-# expands to: --engine omlx --omlx-model Qwen3.6-35B-Heretic-4bit
+# expands to: --engine omlx --omlx-model Qwopus3.6-27B-v2-MLX-4bit
 ```
 
 **Multi-book batch (2026-05-23 ship)** — 一次傳多本，driver 內序列翻譯，
@@ -141,28 +151,52 @@ glossary:
   transliteration variants (瑪德琳 vs 梅德琳); a conservative pass merges minority
   variants (length ≥ 3, free-standing, dominated ≥ 4×, never two real names) into
   the dominant form before assembly.
+- **Acronym collapse** — after the first 「人工智慧（AI）」, later 人工智慧 become bare
+  `AI`. Same cross-chunk cause as gloss dedupe: every chunk thinks it is the term's
+  first mention (measured: 人工智慧 x10 in one chapter, in two independent runs). The
+  Chinese rendering is learned from the surviving gloss, so a book that writes
+  「人工智能（AI）」 collapses that instead. Runs after gloss dedupe, which leaves
+  exactly one gloss to learn from.
+- **Inline-gloss dedupe** — `OFFLINE_STYLE_RULES` asks for 「中譯（English）」 on a
+  term's first mention, but the model sees one chunk at a time and has no memory
+  of earlier chunks, so it re-glosses the same term in every chunk that mentions
+  it (measured: 104 glosses for 78 unique terms in one chapter). A book-wide pass
+  keeps the first occurrence and strips the rest. Do not try to fix this in the
+  prompt — cross-chunk state is not something the model has.
 - **Bilingual ToC** — nav_overrides are populated from each heading-led chapter's
   translated title so the table of contents renders bilingual.
+
+The offline prompt also carries `dispatch.OFFLINE_STYLE_RULES` (structural rules
+only: relative-clause rewriting, no 「，這些X」 anaphora, 台灣 usage, inline glosses,
+meaning preservation). **Never add a sentence-length rule there** — see the
+comment block above that constant for the measurements showing why a 「超過 40 字
+就斷句」 rule wrecked the prose while scoring best on the length metric.
 
 Expected runtime for a 23-chapter / ~150K-char book on M1 Max 32GB
 (measured 2026-05-23 on *The Next Renaissance*):
 
 | Engine + Model | E2E duration | Marker align | Simp leak | Quality (5-dim) |
 |---|---|---|---|---|
-| **omlx + Qwen3.6-35B-Heretic-4bit (default, 2026-06-25)** | **~25-30min (est, ~5x)** | **100%** | **0.3%** | **★★★★★ Opus tier** |
-| omlx + Qwopus3.6-27B-v2-MLX-4bit (fallback) | 2h13m | 23/23 = 100% | 0.9% | ★★★★★ Opus tier |
+| **omlx + Qwopus3.6-27B-v2-MLX-4bit (default, 2026-08-09)** | 2h13m | 23/23 = 100% | 0.9% | **★★★★★ preferred on human read-through** |
+| omlx + Qwen3.6-35B-Heretic-4bit (speed alternate) | ~25-30min (est, ~5x) | 100% | 0.3% | ★★★☆☆ flatter prose, more 中國用語 |
 | ollama + translategemma:12b | 1h27m | high | needs new prompt enforcement | ★★★☆☆ |
 | ollama + hy-mt2:7b | 2h27m | moderate | ~100% Trad | ★★★☆☆ |
 | ollama + translategemma:27b | 3-4h | similar to 12b | similar | ★★★☆☆ (12b 全面超越) |
 
-> The 35B-A3B speedup measured on a model-fit-scout spot check (ch9 of *The Next
-> Renaissance*, 123 paras, same prompt): Heretic-35B **43.2 t/s** vs Qwopus-27B-v2
-> **8.0 t/s** (5.4x), both 100% marker-aligned, register parity. The full-book
-> E2E figure above is extrapolated from that per-chapter rate — re-measure on the
-> next real book run and replace the estimate. The Opus-distilled `stamsam/
-> Qwen3.6-35B-A3B-Claude-4.7-Opus-Reasoning-Distilled-MLX-oQ4-MTP` was also tested
-> (36.6 t/s — its MTP draft layer gave no speed gain on M1) and is an alternate
-> if register lineage with the old Qwopus default matters more than raw speed.
+> **The 5-dim "Opus tier" score was wrong about the 35B.** It came from a
+> model-fit-scout spot check (ch9 of *The Next Renaissance*, 123 paras): Heretic-35B
+> **43.2 t/s** vs Qwopus-27B-v2 **8.0 t/s** (5.4x), both 100% marker-aligned, scored
+> at register parity. On a full chapter of *Superagency* with a reader comparing
+> side by side, the 35B was rejected: flatter rhythm and noticeably more 中國用語.
+> Measured on that chapter (106 paras, rules held constant): the 27B produced 45
+> inline 中譯（English）glosses and 47 mainland usages without style rules, versus
+> the 35B baseline's 58 glosses and 0 mainland usages — but with the rules applied
+> the 27B lands at 104 glosses / 2 mainland usages and reads better. Both models
+> need the style rules; only the 27B rewards them.
+>
+> Lesson for whoever tunes this next: a single-chapter automated register score
+> plus a throughput number is not enough to move the default. Have someone read
+> a full chapter of both.
 
 Quality positioning:
 - omlx + Qwopus3.6 ≈ matches Opus 4.7 register tier (sample diffs in chunk-size
@@ -176,7 +210,7 @@ Single-chapter spot check (omlx default; no assemble, no audit):
 python3 ~/.claude/skills/book-translator/scripts/translate_chapter_cli.py \
     --book /path/to/X.epub --chapter N \
     --out runs/spot-check/ --validate-markers
-# expands to: --engine omlx --omlx-model Qwen3.6-35B-Heretic-4bit
+# expands to: --engine omlx --omlx-model Qwopus3.6-27B-v2-MLX-4bit
 ```
 
 Cross-model benchmark (multiple models, side-by-side first paragraphs):
@@ -200,7 +234,8 @@ brew services start jundot/omlx/omlx
 # verify: curl http://127.0.0.1:8090/v1/models | jq '.data[].id'
 ```
 
-Download the default Qwen3.6-35B-Heretic-4bit (~20 GB) into `~/.omlx/models/`
+Download the default Qwopus3.6-27B-v2-MLX-4bit (~14 GB) into `~/.omlx/models/`; the
+~20 GB Qwen3.6-35B-Heretic-4bit speed alternate is optional
 (use `HF_HUB_DISABLE_XET=1` — the xet transfer path stalls mid-download on large
 MLX repos):
 
@@ -218,14 +253,14 @@ hf download Jackrong/Qwopus3.6-27B-v2-MLX-4bit \
 ```
 
 `chat_template_kwargs.enable_thinking=false` is mandatory for translation; the
-`OmlxProvider` sets this by default, and it works on both the Heretic default
+`OmlxProvider` sets this by default, and it works on both the Qwopus default
 (via its fixed chat template) and the Qwopus fallback. Manual API call:
 
 ```bash
 curl -X POST http://127.0.0.1:8090/v1/chat/completions \
     -H "Content-Type: application/json" \
     -d '{
-        "model": "Qwen3.6-35B-Heretic-4bit",
+        "model": "Qwopus3.6-27B-v2-MLX-4bit",
         "messages": [{"role":"user","content":"翻譯：Hello"}],
         "chat_template_kwargs": {"enable_thinking": false}
     }'
@@ -795,6 +830,10 @@ This skill writes to:
 
 - `<out_dir>/<book_stem>/glossary.json` — extracted glossary (per book)
 - `<out_dir>/<book_stem>/state.json` — resume state
+- `<out_dir>/<book_stem>/spec_terms.json` — **optional, user-authored**: per-book
+  `{"terms": {source: 中譯}}` table agreed before translation starts. Loaded by
+  `dispatch.load_fixed_terms()` and appended to the offline system prompt as lookup
+  data (not as another rule). Absent file = previous behaviour.
 - `<out_dir>/<book_stem>/manifest.json` — full OPF spine manifest v2
 - `<out_dir>/<book_stem>/chapters/item_NNN.html` — extracted source spine items
 - `<out_dir>/<book_stem>/chapters/item_NNN_translation.txt` — per-item translation for `translate` items
@@ -823,4 +862,4 @@ Disclaimer: this skill is intended for **public-domain works or books you
 legally own**. Do not use it to translate copyrighted material you do not have
 the right to reproduce. Per-book overrides (custom dedication / acknowledgments
 paragraph translations, custom nav labels) live in
-`<book_dir>/translations_extra.json` — never in this repo.
+`<book_dir>/translations_extra.json` and `<book_dir>/spec_terms.json` — never in this repo.

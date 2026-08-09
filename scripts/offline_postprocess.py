@@ -191,6 +191,100 @@ def normalize_character_names(
     return applied
 
 
+# --- inline source-term glosses -----------------------------------------------
+
+# 中文（English）— a gloss only counts when Chinese text precedes the bracket, so
+# parenthesised English that is part of the sentence (（see Chapter 3）) is left
+# alone. The preceding character is often closing punctuation rather than a Han
+# character — 《麻省理工科技評論》（MIT Technology Review）、「大他者」（Big Other）
+# — and an earlier Han-only version silently missed a third of all glosses.
+_INLINE_GLOSS = re.compile(r"(?<=[一-鿿》」』〉〕】…])（([A-Za-z][^）]{0,60})）")
+
+
+def dedupe_inline_glosses(book_dir: Path) -> list[tuple[str, int]]:
+    """Keep only the first 「中譯（English）」 gloss per term across the whole book.
+
+    OFFLINE_STYLE_RULES asks for a gloss on first mention, but the model sees
+    one chunk at a time and has no memory of earlier chunks, so a term is
+    re-glossed in every chunk that mentions it (measured: 104 glosses for 78
+    unique terms in one chapter). Chapter files are processed in sorted order,
+    so "first" means first in reading order.
+
+    Returns (term, removals) for every term that was glossed more than once.
+    """
+    files = _translation_files(book_dir)
+    if not files:
+        return []
+    seen: set[str] = set()
+    dropped: collections.Counter = collections.Counter()
+
+    def _sub(match: re.Match) -> str:
+        term = match.group(1).strip()
+        key = term.casefold()
+        if key in seen:
+            dropped[term] += 1
+            return ""
+        seen.add(key)
+        return match.group(0)
+
+    for path in files:
+        original = path.read_text(encoding="utf-8")
+        updated = _INLINE_GLOSS.sub(_sub, original)
+        if updated != original:
+            path.write_text(updated, encoding="utf-8")
+    return sorted(dropped.items(), key=lambda kv: (-kv[1], kv[0]))
+
+
+# Acronyms that stay in Latin script after their first glossed mention. The spec
+# (§5.2) wants 「人工智慧（AI）」 once, then bare 「AI」 — writing 人工智慧 forty times
+# reads worse than the acronym, which is already idiomatic in Chinese tech prose.
+ACRONYM_KEEP = ("AI", "LLM", "GPT", "RLHF", "AGI", "API", "GDPR", "CEO", "GPS")
+
+
+def collapse_acronym_glosses(book_dir: Path) -> list[tuple[str, str, int]]:
+    """After the first 「中譯（ACRONYM）」, replace later 中譯 with the bare acronym.
+
+    Same cross-chunk problem as dedupe_inline_glosses: the model treats every
+    chunk as the term's first mention, so a book ends up with the Chinese
+    rendering repeated throughout (measured: 人工智慧 x10 in one chapter, in both
+    the shipped and the spec-run output). The Chinese rendering is learned from
+    the first gloss rather than hardcoded, so a book that glosses 「大型語言模型
+    （LLM）」 collapses to LLM without a table entry.
+
+    Runs AFTER dedupe_inline_glosses, which has already reduced each term to a
+    single gloss. Returns (chinese, acronym, replacements) per collapsed term.
+    """
+    files = _translation_files(book_dir)
+    if not files:
+        return []
+    # learn 中譯 for each acronym from its surviving gloss, in reading order
+    zh_for: dict[str, str] = {}
+    gloss_re = re.compile(
+        r"([一-鿿]{2,12})（(" + "|".join(ACRONYM_KEEP) + r")）")
+    for path in files:
+        for m in gloss_re.finditer(path.read_text(encoding="utf-8")):
+            zh_for.setdefault(m.group(2), m.group(1))
+    if not zh_for:
+        return []
+
+    counts: collections.Counter = collections.Counter()
+    for path in files:
+        original = text = path.read_text(encoding="utf-8")
+        for acro, zh in zh_for.items():
+            keep = f"{zh}（{acro}）"
+            placeholder = f"\x00{acro}\x00"
+            # protect the single surviving gloss, collapse the rest, restore
+            text = text.replace(keep, placeholder, 1)
+            if zh in text:
+                counts[acro] += text.count(zh)
+                text = text.replace(zh, acro)
+            text = text.replace(placeholder, keep, 1)
+        if text != original:
+            path.write_text(text, encoding="utf-8")
+    return sorted(((zh_for[a], a, n) for a, n in counts.items()),
+                  key=lambda t: -t[2])
+
+
 # --- bilingual nav labels -----------------------------------------------------
 
 def _segments(path: Path) -> list[str]:

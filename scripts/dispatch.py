@@ -9,6 +9,7 @@ the main session:
 
 from __future__ import annotations
 
+import functools
 import json
 import re
 
@@ -162,6 +163,87 @@ def chapter_text_for_prompt(html: str) -> str:
     return "\n\n".join(html_to_paragraphs(html))
 
 
+# Style rules for the offline path.
+#
+# NEVER add a sentence-LENGTH rule here. An earlier version opened with
+# 「中譯單句超過 40 字就用句號斷成兩句」 and it wrecked the prose. Full-chapter
+# measurements on Superagency ch.4 (106 paragraphs, 19 chunks, Qwopus3.6-27B-v2):
+#
+#   version                     >55char  mean  stdev   TTR  中譯（EN）  中國用語
+#   old baseline (35B, no rules)  29.2%  44.7   27.4  .602      58        0
+#   27B, no rules                 27.9%  44.0   27.3  .602      45       47
+#   27B, length-rule version      10.0%  32.9   18.4  .605      11        3
+#   27B, this version             31.2%  46.7   31.0  .604     104        2
+#
+# The length rule looked like a win on the >55-char metric (29% -> 10%) and was
+# a large regression in readability: sentence-length stdev collapsed 27.4 -> 18.4
+# (every sentence the same length reads flat) and inline source-term glosses were
+# crushed 58 -> 11, because 「中譯（English）」 makes a sentence longer and the
+# model dropped it to satisfy the length cap. The user rejected that output on
+# reading it, while the >55-char metric said it was the best version. Optimising
+# a length proxy optimises for monotony — target STRUCTURE (relative clauses,
+# 複指) not length.
+#
+# The rules ARE needed on this model: without them the 27B emits 47 mainland-
+# Chinese usages per chapter versus 0 for the 35B. Rules cut that to 2.
+#
+# Rules were originally stripped for hy-mt2:7b Q4_K_M (see
+# build_ollama_chunk_prompt's docstring); that constraint expired when the
+# default moved off 7B models on 2026-06-25.
+#
+# Known limits, do not overstate:
+#  - Adequacy is NOT improved. Century mistranslations ("twenty-first century"
+#    -> 二十世紀) occurred at 3/6 for BOTH the bare and the ruled prompt despite
+#    an explicit 世紀/數字 clause. Explicit rules do not guarantee compliance.
+#  - Style rules dilute the "keep English abbreviations verbatim" instruction
+#    above them (AI/LLM/GPT verbatim survival 80% -> 53% on the length-rule
+#    version; the model writes 人工智慧 instead). Content is not lost.
+#  - The 中譯（English）rule fires per chunk, so a term is re-glossed in every
+#    chunk that mentions it (104 glosses / 78 unique terms). Cross-chunk dedupe
+#    is deterministic work — offline_postprocess.dedupe_inline_glosses handles
+#    it. Do not try to fix that here; the model has no cross-chunk memory.
+#  - Single book, single chapter for the v2 numbers. Treat as a local finding.
+OFFLINE_STYLE_RULES = (
+    "\n\n翻譯風格（不影響 marker 規則）：專有名詞、機構名、技術術語首次出現時"
+    "寫成「中譯（English）」並列，之後只用中文。"
+    "AI、LLM、GPT、RLHF、AGI、API 這類縮寫首次寫成「人工智慧（AI）」形式，"
+    "之後直接用縮寫。"
+    "英文關係子句改寫成獨立短句，不要用「，這些X……」複指硬接。"
+    "台灣用語：網際網路、使用者、軟體、網路、資訊、品質、策略、反托拉斯；"
+    "年代寫「1990 年代」，不寫「二十世紀九十年代」。"
+    "長短句交錯，不要每句都短；拆句不可改動原意，"
+    "世紀/數字/邏輯關係必須與原文一致。"
+)
+
+FIXED_TERMS_FILENAME = "spec_terms.json"
+
+
+@functools.lru_cache(maxsize=8)
+def load_fixed_terms(book_dir) -> dict[str, str]:
+    """Per-book {source term: mandated translation} from <book_dir>/spec_terms.json.
+
+    Spec §5.3 requires a per-book term table agreed before translation starts.
+    Kept out of this repo — it is book-specific editorial data, not skill logic.
+    Returns {} when the file is absent, so books without a table behave as before.
+    Cached because the driver asks once per chunk (226 chunks on a 470K-char book).
+    """
+    from pathlib import Path
+
+    path = Path(book_dir) / FIXED_TERMS_FILENAME
+    if not path.is_file():
+        return {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    terms = data.get("terms", data) if isinstance(data, dict) else {}
+    return {str(k): str(v) for k, v in terms.items() if k and v}
+
+
+def format_fixed_terms(terms: dict[str, str]) -> str:
+    """Render the term table as a compact prompt suffix. Empty string when unset."""
+    if not terms:
+        return ""
+    pairs = "、".join(f"{k}＝{v}" for k, v in terms.items())
+    return f"固定譯法，全書一致：{pairs}。"
+
 OLLAMA_SYSTEM_PROMPT = (
     "You are a professional book translator. Translate every `[[PARA_N]]` "
     "block from English to {target_lang_long}. Echo each marker on its own "
@@ -172,6 +254,7 @@ OLLAMA_SYSTEM_PROMPT = (
     f"{TRADITIONAL_CHINESE_ENFORCEMENT} "
     "Keep English abbreviations (AI / LLM / GPT / RLHF / AGI / API) verbatim — "
     "do not translate them into Chinese."
+    f"{OFFLINE_STYLE_RULES}"
 )
 
 
@@ -180,6 +263,7 @@ def build_ollama_chunk_prompt(
     chunk_paragraphs: list[str] | tuple[str, ...],
     target_lang: str = "zh-tw",
     carryover: str = "",
+    fixed_terms: dict[str, str] | None = None,
 ) -> tuple[str, str]:
     """Compact (system, user) prompt pair for local Ollama models.
 
@@ -194,10 +278,17 @@ def build_ollama_chunk_prompt(
     The marker contract lives in the system message so it's stable across
     requests; the user message carries only the per-chunk paragraphs +
     optional carryover.
+
+    `fixed_terms` is the per-book term table (spec §5.3), appended to the system
+    message as lookup data rather than as another rule. Measured 2026-08-09 on
+    Superagency ch.4: prompt grew 756 -> 1071 chars with 10 terms, and the run
+    still had 0 retries and 0 dropped paragraphs, so the table does not repeat
+    the rule-count degradation documented above OFFLINE_STYLE_RULES.
     """
     paragraphs = list(chunk_paragraphs)
     target_lang_long = _target_long(target_lang)
     system = OLLAMA_SYSTEM_PROMPT.format(target_lang_long=target_lang_long)
+    system += format_fixed_terms(fixed_terms or {})
     parts: list[str] = []
     if carryover.strip():
         parts.append(

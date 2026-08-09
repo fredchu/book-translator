@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Offline default model: `Qwen3.6-35B-Heretic-4bit` → `Qwopus3.6-27B-v2-MLX-4bit`**
+  (2026-08-09). The 2026-06-25 promotion to the 35B rested on a ~5x throughput win
+  and an automated register score from a single-chapter spot check. A full-chapter
+  read-through of *Superagency* reversed it: the 35B's prose was judged clearly
+  flatter with more 中國用語, and it needed 2 retries plus a single-paragraph
+  fallback on the chapter the 27B translated with 0 retries and 0 dropped
+  paragraphs. The 35B stays available as a ~4x-faster draft option via
+  `--omlx-model`. A 470K-char book now takes ~3.2 h instead of ~0.8 h.
+
+### Added
+- **`OFFLINE_STYLE_RULES` in the offline prompt** (2026-08-09). The offline path
+  previously shipped a bare format contract; the style rules had been stripped in
+  the hy-mt2:7b era and never restored after the model got bigger. Without them the
+  27B emits 47 mainland-Chinese usages per chapter (the 35B: 0) and both models
+  produce 「A，這些A……」 anaphora and subject-predicate splits. The rules are
+  structural only — relative-clause rewriting, no 「，這些X」 anaphora, 台灣 usage,
+  inline 中譯（English）glosses, meaning preservation.
+  **A sentence-LENGTH rule was tried and reverted**: 「單句超過 40 字就斷句」 scored
+  best on the >55-char metric (29.2% → 10.0%) while collapsing sentence-length
+  stdev 27.4 → 18.4 and crushing inline glosses 58 → 11. The reader rejected that
+  output on sight. Optimising a length proxy optimises for monotony.
+- **`offline_postprocess.collapse_acronym_glosses`** (2026-08-09). After the first
+  「人工智慧（AI）」, later 人工智慧 become the bare acronym. Same cross-chunk cause as
+  gloss dedupe — every chunk treats itself as the term's first mention, measured at
+  人工智慧 x10 per chapter in two independent runs. The Chinese rendering is learned
+  from the surviving gloss rather than hardcoded, so a book glossing 「人工智能（AI）」
+  collapses that instead.
+- **Per-book term table `<book_dir>/spec_terms.json`** (2026-08-09).
+  `dispatch.load_fixed_terms()` reads `{"terms": {source: 中譯}}` and appends it to the
+  offline system prompt as lookup data. Book-specific editorial data, deliberately not
+  in this repo. Measured on Superagency ch.4: prompt 756 -> 1065 chars with 10 terms,
+  still 0 retries / 0 dropped paragraphs, so the table does not reproduce the
+  rule-count degradation that killed the length-rule version.
+- **`offline_postprocess.dedupe_inline_glosses`** (2026-08-09). Keeps only the
+  first 「中譯（English）」 per term book-wide. The gloss rule fires per chunk and the
+  model has no cross-chunk memory, so terms get re-glossed repeatedly (104 glosses
+  / 78 unique terms in one chapter). Deterministic dedupe, not a prompt fix.
+
 ### Fixed
 - **Offline bilingual ToC: chapter titles in a `<header>` now get translated**
   (2026-06-25, systematic-debugging). Root cause: chapter titles live in

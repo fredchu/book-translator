@@ -1,10 +1,16 @@
-"""Lock in the offline-default contract — `--engine omlx` + Qwen3.6-35B-A3B MLX.
+"""Lock in the offline-default contract — `--engine omlx` + Qwopus3.6-27B-v2 MLX.
 
 2026-05-23 promoted omlx + Qwopus3.6-27B-v2-MLX-4bit to the default offline
 backend (replacing the prior ollama + hy-mt2:7b default).
 2026-06-25 promoted omlx + Qwen3.6-35B-Heretic-4bit (Qwen3.6-35B-A3B, 3B-active
-MoE; ~5x faster than the dense Qwopus-27B-v2 at parity register on a model-fit
-spot check) as the new default; Qwopus3.6-27B-v2-MLX-4bit remains a fallback.
+MoE) on a ~5x speed win measured in a single-chapter spot check.
+2026-08-09 reverted the default to Qwopus3.6-27B-v2-MLX-4bit after a
+full-chapter human read-through: the 35B's prose rhythm and 台灣 usage were
+judged clearly worse, and the 27B ran the chapter with 0 retries / 0 dropped
+paragraphs where the 35B needed 2 retries and a single-paragraph fallback.
+The 2026-06-25 promotion rested on throughput plus a machine register score;
+neither caught what a reader caught immediately. Speed stays available via
+`--omlx-model Qwen3.6-35B-Heretic-4bit` (~4x faster) for drafts.
 These tests fail-loud if someone reverts either default without intent.
 """
 
@@ -32,10 +38,10 @@ def test_book_driver_default_engine_is_omlx() -> None:
     )
 
 
-def test_book_driver_default_omlx_model_is_heretic_35b() -> None:
+def test_book_driver_default_omlx_model_is_qwopus_27b() -> None:
     source = _module_source("translate_book_ollama")
-    assert 'default="Qwen3.6-35B-Heretic-4bit"' in source, (
-        "translate_book_ollama.py --omlx-model default must be Qwen3.6-35B-Heretic-4bit"
+    assert 'default="Qwopus3.6-27B-v2-MLX-4bit"' in source, (
+        "translate_book_ollama.py --omlx-model default must be Qwopus3.6-27B-v2-MLX-4bit"
     )
 
 
@@ -46,8 +52,8 @@ def test_chapter_cli_default_engine_is_omlx() -> None:
     )
 
 
-def test_chapter_cli_default_omlx_model_is_heretic_35b() -> None:
+def test_chapter_cli_default_omlx_model_is_qwopus_27b() -> None:
     source = _module_source("translate_chapter_cli")
-    assert 'default="Qwen3.6-35B-Heretic-4bit"' in source, (
-        "translate_chapter_cli.py --omlx-model default must be Qwen3.6-35B-Heretic-4bit"
+    assert 'default="Qwopus3.6-27B-v2-MLX-4bit"' in source, (
+        "translate_chapter_cli.py --omlx-model default must be Qwopus3.6-27B-v2-MLX-4bit"
     )

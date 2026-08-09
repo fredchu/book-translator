@@ -98,10 +98,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="path(s) to .epub",
     )
     parser.add_argument("--engine", choices=["ollama", "omlx"], default="omlx",
-                        help="default omlx (Qwen3.6-35B-Heretic-4bit) — fastest offline path on M1 Max; Qwopus3.6-27B-v2-MLX-4bit / ollama+hy-mt2:7b/translategemma:12b are alternates")
+                        help="default omlx (Qwopus3.6-27B-v2-MLX-4bit) — quality-first offline path; Qwen3.6-35B-Heretic-4bit is the ~4x faster alternate")
     parser.add_argument("--ollama-model", default=None, help="e.g. hy-mt2:7b / translategemma:27b")
-    parser.add_argument("--omlx-model", default="Qwen3.6-35B-Heretic-4bit",
-                        help="default Qwen3.6-35B-Heretic-4bit (Qwen3.6-35B-A3B 3B-active, ~5x faster than the dense Qwopus-27B-v2 fallback at parity quality; ~25-30min for a 23-chapter book on M1 Max 32GB)")
+    parser.add_argument("--omlx-model", default="Qwopus3.6-27B-v2-MLX-4bit",
+                        help="default Qwopus3.6-27B-v2-MLX-4bit (Opus-distilled dense 27B; better prose rhythm and 台灣 usage on human read-through, ~0.84 min/chunk). Use Qwen3.6-35B-Heretic-4bit for ~4x speed when draft quality suffices")
     parser.add_argument("--out", required=False, type=Path, default=None,
                         help="output parent dir; per-book dir created inside (default: book's parent dir)")
     parser.add_argument("--ollama-host", default="http://localhost:11434")
@@ -148,6 +148,7 @@ def _translate_chunk(
         chunk_paragraphs=chunk_paragraphs,
         target_lang=target_lang,
         carryover=carryover,
+        fixed_terms=dispatch.load_fixed_terms(book_dir),
     )
     expected_count = len(chunk_paragraphs)
     log_dir = book_dir / "_ollama_logs"
@@ -588,6 +589,20 @@ def translate_single_book(book_path: Path, args: argparse.Namespace) -> dict[str
     if name_merges:
         preview = ", ".join(f"{v}->{c}" for v, c, _ in name_merges[:8])
         print(f"[postprocess] normalized {len(name_merges)} name variant(s): {preview}", file=sys.stderr)
+    # The 中譯（English）rule fires per chunk, so terms get re-glossed in every
+    # chunk that mentions them; keep only the first mention book-wide.
+    gloss_dupes = offline_postprocess.dedupe_inline_glosses(book_dir)
+    if gloss_dupes:
+        preview = ", ".join(f"{t} x{n}" for t, n in gloss_dupes[:8])
+        print(f"[postprocess] removed {sum(n for _, n in gloss_dupes)} repeat "
+              f"gloss(es) across {len(gloss_dupes)} term(s): {preview}", file=sys.stderr)
+    # Spec §5.2: after the first 中譯（AI）, later 人工智慧 become bare AI.
+    # Must run after dedupe, which leaves exactly one gloss per term to learn from.
+    collapsed = offline_postprocess.collapse_acronym_glosses(book_dir)
+    if collapsed:
+        preview = ", ".join(f"{zh}→{a} x{n}" for zh, a, n in collapsed[:6])
+        print(f"[postprocess] collapsed {sum(n for _, _, n in collapsed)} "
+              f"acronym mention(s): {preview}", file=sys.stderr)
     try:
         manifest_data = json.loads((book_dir / "manifest.json").read_text(encoding="utf-8"))
         nav_added = offline_postprocess.build_nav_overrides(book_dir, manifest_data)
