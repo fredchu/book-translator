@@ -126,15 +126,28 @@ def extract(
         src_href = str(opf_item.get("href") or item.get_name())
         original_path = src_href
         _copy_original_xhtml(epub_path, book_out, original_path, opf_path)
-        heading = _first_heading(soup)
-        fallback_heading = heading or _first_text(text) or "(untitled)"
+        heading = _first_heading_tag(soup)
+        styled_heading = styled_paragraph_title(soup)
+        fallback_heading = heading or styled_heading or _first_text(text) or "(untitled)"
         role = infer_role(
             src_idref=src_idref,
             src_href=src_href,
             first_heading=fallback_heading,
             properties=str(opf_item.get("properties") or ""),
         )
-        first_heading = heading or _ROLE_TO_HEADING.get(role) or fallback_heading
+        # Order matters. A real heading tag wins, then the canonical structural
+        # label (Contents / Notes / …) because STRUCTURAL_LABELS_ZH_TW is keyed on
+        # those exact strings — letting the styled title through first turned
+        # "Contents" into "CONTENTS" and "Notes" into "NOTES: INTRODUCTION",
+        # breaking the zh lookup for pages that used to work.
+        first_heading = (
+            heading or _ROLE_TO_HEADING.get(role) or styled_heading or fallback_heading
+        )
+        # Applied AFTER infer_role on purpose: this only renames the ToC label.
+        # Feeding it into role inference would reclassify these pages as "notes",
+        # which flips output_strategy to source_only and silently stops
+        # translating them.
+        first_heading = _footnote_page_heading(src_idref, src_href) or first_heading
         strategy = default_output_strategy(role, char_count=len(text))
         if strategy == "translate" and role == "body" and len(text) == 0:
             strategy = "source_only"
@@ -402,7 +415,8 @@ def _extract_cover(epub_path: Path, book_out: Path) -> str | None:
         return out_name
 
 
-def _first_heading(soup: BeautifulSoup) -> str | None:
+def _first_heading_tag(soup: BeautifulSoup) -> str | None:
+    """Text of the first real heading tag, or None. Does not consider styled `<p>`."""
     for tag in ("h1", "h2", "h3", "h4"):
         node = soup.find(tag)
         if node:
@@ -410,11 +424,37 @@ def _first_heading(soup: BeautifulSoup) -> str | None:
             text = re.sub(r"\s+", " ", text).strip()
             if 0 < len(text) <= _HEADING_MAX_LEN and not _looks_like_body_prose_heading(text):
                 return text
-    return styled_paragraph_title(soup)
+    return None
+
+
+def _first_heading(soup: BeautifulSoup) -> str | None:
+    """Heading tag if present, else a styled-`<p>` title. Kept for callers/tests."""
+    return _first_heading_tag(soup) or styled_paragraph_title(soup)
 
 
 # Longest leading all-caps block still treated as a title rather than prose.
 TITLE_BLOCK_MAX_LEN = 60
+
+# Per-chapter footnote pages (Superagency_FN001.xhtml and friends). Their first
+# block is the footnote text itself, so there is no title to extract and the ToC
+# would otherwise show a sentence fragment. Requires a boundary before "fn" so
+# ordinary words containing those letters do not match.
+_FOOTNOTE_PAGE_RE = re.compile(
+    r"(?:^|[_\-/])(?:fn|footnote[_\-]?)0*(\d+)(?=[._\-]|$)", re.IGNORECASE)
+
+
+def _footnote_page_heading(src_idref: str, src_href: str) -> str | None:
+    """"Footnote 3" for a per-chapter footnote page, else None.
+
+    Label only — deliberately not wired into infer_role, because classifying these
+    as "notes" would switch them to source_only and stop them being translated.
+    """
+    for candidate in (src_idref, src_href):
+        stem = str(candidate or "").rsplit("/", 1)[-1]
+        match = _FOOTNOTE_PAGE_RE.search(stem)
+        if match:
+            return f"Footnote {int(match.group(1))}"
+    return None
 
 
 def styled_paragraph_title(soup: BeautifulSoup) -> str | None:

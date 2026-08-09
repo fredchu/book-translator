@@ -185,10 +185,34 @@ def _nav_display_label(entry: dict, missing_zh_collector: list[dict] | None = No
     return first
 
 
+# "Footnote 3" -> 註腳 3. The English side is set by
+# extract_epub._footnote_page_heading; these pages carry no title of their own, so
+# without this pair the ToC shows a fragment of the first footnote in both columns.
+_FOOTNOTE_HEADING_RE = re.compile(r"^Footnote\s+(\d+)$")
+
+# Pages whose first block runs straight into content, so the label has to be
+# recognised from a prefix rather than matched exactly. Praise pages open
+# "Praise for <Title>" and then quote a blurb, giving a first_heading dozens of
+# words long that no exact-match table can catch. Label only — output_strategy is
+# untouched, so these pages keep being translated.
+_PREFIX_LABELS_ZH_TW = (
+    ("praise for ", "各界讚譽"),
+    ("advance praise for ", "各界讚譽"),
+    ("also by ", "作者其他著作"),
+)
+
+
 def _nav_zh_label(first: str, entry: dict) -> str:
     override = _translations_extra_nav_overrides(entry).get(str(entry.get("original_idref") or ""))
     if override:
         return str(override)
+    footnote = _FOOTNOTE_HEADING_RE.match(first.strip())
+    if footnote:
+        return f"註腳 {int(footnote.group(1))}"
+    lowered = first.strip().lower()
+    for prefix, label in _PREFIX_LABELS_ZH_TW:
+        if lowered.startswith(prefix):
+            return label
     exact = STRUCTURAL_LABELS_ZH_TW.get(first)
     if exact:
         return exact

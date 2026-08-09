@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Footnote pages and run-on front matter get bilingual ToC labels** (2026-08-10).
+  Per-chapter footnote pages (`Superagency_FN001.xhtml`) open with the footnote text
+  itself, so there is no title to extract and the ToC showed a sentence fragment in
+  both columns. The label is now derived from the filename
+  (`extract_epub._footnote_page_heading` -> "Footnote 3", paired with 註腳 3 in
+  `nav_builder`). **Deliberately applied after `infer_role` and never fed into it**:
+  classifying these pages as `notes` would flip `output_strategy` to `source_only`
+  and silently stop translating twelve pages of real content — a test locks that
+  down. Praise / "Also by" pages, whose first block runs the title straight into a
+  blurb, are matched by prefix instead of exact string. Superagency now assembles
+  with 0 English-only nav warnings, down from 31; no per-book repair script needed.
 - **Chapter titles styled as `<p>` instead of `<h1>`-`<h6>` now reach the ToC**
   (2026-08-10). Publishers mark titles with CSS classes — `<p class="CN">CHAPTER 4</p>`
   + `<p class="CT">THE TRIUMPH…</p>` — which neither `extract_epub._first_heading`'s
@@ -18,7 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the fifth book to hit it. New `extract_epub.styled_paragraph_title` and
   `offline_postprocess._leading_title_block_count` share one definition of a title
   block so both sides of a bilingual label agree; a chapter-number line and its
-  title are joined into one label.
+  title are joined into one label. Precedence is heading tag > canonical structural
+  label > styled title: an earlier ordering let the styled title through first and
+  turned "Contents" into "CONTENTS" and "Notes" into "NOTES: INTRODUCTION", breaking
+  the zh lookup for pages that had previously worked.
   **ALL CAPS is the discriminator, and it is load-bearing.** Measured over the local
   corpus: 52 chapters use the styled-`<p>` shape and are all-caps, the 43 body-prose
   openings are long and mixed-case, and the 12 short mixed-case leading blocks are
