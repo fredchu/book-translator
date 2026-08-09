@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] — 2026-08-09
+
 ### Changed
 - **Offline default model: `Qwen3.6-35B-Heretic-4bit` → `Qwopus3.6-27B-v2-MLX-4bit`**
   (2026-08-09). The 2026-06-25 promotion to the 35B rested on a ~5x throughput win

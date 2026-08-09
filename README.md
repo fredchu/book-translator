@@ -42,7 +42,7 @@ bilingual.epub
   - bilingual_coverage_audit.py    every English paragraph has Han sibling
   - href_resolve_audit.py          every internal href points to a real entry
   - translation_quality_audit.py   tgt ≥ 30% of src length, no placeholder strings
-  - (plus pytest with 69 cases)
+  - (plus pytest with 338 cases)
 ```
 
 Output strategies (per-spine-item):
@@ -61,7 +61,7 @@ Output strategies (per-spine-item):
 Five orthogonal audits. The first four are deterministic scripts; the fifth is the pytest suite. Any failure stops the run; the bad EPUB is not shipped.
 
 ```
-$ pytest -q                                          # 69 passed
+$ pytest -q                                          # 338 passed
 $ python scripts/structural_audit.py    --source ... --output ... --book-dir ...
 $ python scripts/bilingual_coverage_audit.py  --source ... --output ...
 $ python scripts/href_resolve_audit.py        --output ...
@@ -97,6 +97,38 @@ The skill walks you through glossary confirmation, prints a chapter 1 preview, a
 
 ---
 
+## Offline path (local models, no API cost)
+
+Besides the Claude-subagent path above, the whole book can be translated by a
+local model on Apple Silicon via [omlx](https://github.com/jundot/omlx):
+
+```bash
+python3 scripts/translate_book_ollama.py --book /path/to/X.epub --out /path/to/out/
+# defaults to: --engine omlx --omlx-model Qwopus3.6-27B-v2-MLX-4bit
+```
+
+The default is quality-first, not throughput-first. A faster 35B-A3B MoE was the
+default for six weeks on the strength of a 5x speed win and an automated register
+score; a full-chapter human read-through found its prose clearly flatter, and the
+default reverted. Use `--omlx-model Qwen3.6-35B-Heretic-4bit` when a draft is
+enough (~4x faster).
+
+Because the offline path has no glossary pass, `offline_postprocess.py` recovers
+what the glossary would have provided — Simplified→Traditional via opencc `s2twp`,
+character-name coherence, bilingual ToC labels, book-wide gloss dedupe, and
+acronym collapse. The last two exist because the model sees one chunk at a time
+and treats every chunk as a term's first mention; cross-chunk consistency is
+deterministic work, not something a prompt can fix.
+
+**Style rules carry a hard-won warning.** `dispatch.OFFLINE_STYLE_RULES` must
+never contain a sentence-length rule. One did, briefly: it scored best of every
+candidate on a "share of sentences over 55 characters" metric while collapsing
+sentence-length variance and destroying inline source-term glosses. Optimising a
+length proxy optimises for monotony. The comment above that constant carries the
+measurement table.
+
+---
+
 ## Customizing for a specific book
 
 The pipeline itself is book-agnostic. Per-book overrides — extra dedication / copyright / acknowledgments paragraph translations, or custom nav labels for a specific edition — live in `<book_dir>/translations_extra.json`, never in this repo. Schema:
@@ -113,6 +145,17 @@ The pipeline itself is book-agnostic. Per-book overrides — extra dedication / 
 ```
 
 The assembler reads this file if present. `by_exact_text` entries win over the generic `STRUCTURAL_LABELS_ZH_TW` dict during paragraph fallback translation; `nav_overrides` entries win during nav label rendering.
+
+A second optional per-book file, `<book_dir>/spec_terms.json`, pins terminology
+agreed before translation starts. It is appended to the offline system prompt as
+lookup data:
+
+```json
+{ "terms": { "private commons": "私人公地", "superagency": "超級能動性" } }
+```
+
+Both files are book-specific editorial data and are deliberately not tracked in
+this repo.
 
 ---
 
@@ -173,7 +216,7 @@ bilingual.epub
   - bilingual_coverage_audit.py    每段英文都有相鄰漢字段落
   - href_resolve_audit.py          每個內部 href 都對得到實際檔案
   - translation_quality_audit.py   tgt 長度 ≥ src 30%、無 placeholder 字串
-  - （加上 pytest 69 個 case）
+  - （加上 pytest 338 個 case）
 ```
 
 每個 spine item 的 output strategy：
