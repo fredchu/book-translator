@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1] — 2026-08-10
+
 ### Fixed
 - **Footnote pages and run-on front matter get bilingual ToC labels** (2026-08-10).
   Per-chapter footnote pages (`Superagency_FN001.xhtml`) open with the footnote text
