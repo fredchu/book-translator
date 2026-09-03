@@ -94,6 +94,38 @@ The skill supports two providers:
   See `2026-05-23-five-way-quality-comparison.md` for the full matrix that
   motivated the move off Ollama defaults.
 
+- **Cloud vLLM（Vast.ai／RunPod，2026-09-04 起）** — 沒有 Apple Silicon、或想比本機快 3–5 倍時，
+  `scripts/cloud_llm.sh` 在雲端 GPU 上用官方 vLLM 映像開伺服器，翻譯器照走 omlx 引擎，只是
+  `--omlx-host` 指到雲端、`--omlx-api-key` 帶金鑰。**不上傳程式、不走 SSH**：只開 8000 埠，
+  用 vLLM 的 `--api-key` 擋公開埠。翻完砍機（trap 保證、回查確認）。
+  預設 `--profile int4`＝`XReyRobert/Qwopus3.6-27B-v2-GPTQ-Pro-v1`（18.7 GB，跟本機 MLX 4bit 同級）
+  配 RTX 5090（Vast 約 0.40 美元／小時）；「這本要更好」用 `--profile fp8`＝作者的
+  `Jackrong/Qwopus3.6-27B-v2-FP8`（30.9 GB，要 ≥40 GB 卡，預設 L40S 約 0.80）。
+  機器挑選、IP 排除、停滯偵測都沿用 srt-skill 的 `vast_instance_lib.sh`／`runpod_pod_lib.sh`。
+
+### Cloud mode — triggers + workflow
+
+Triggers: 「用 vast 翻 X.epub」「上雲翻」「用 runpod 翻書」「cloud translate」→
+
+```bash
+scripts/cloud_llm.sh --provider vast -- --book /path/X.epub --out /path/translations/
+scripts/cloud_llm.sh --provider runpod -- --book /path/X.epub
+scripts/cloud_llm.sh --profile fp8 -- --book /path/X.epub          # 這本要更好
+scripts/cloud_llm.sh --keep -- --book A.epub                        # 翻完不砍；下一本用 runs/<id>/endpoint.env
+scripts/cloud_llm.sh --stop runs/cloud-llm-<id>                     # 砍掉 --keep 的那台
+```
+
+- `--` 後面就是 `translate_book_ollama.py` 的參數（多本一次給多個 `--book` 也行）。
+- 憑證：`VAST_API_KEY`／`~/.config/vastai/vast_api_key`；`RUNPOD_API_KEY`／`~/.config/runpod/api_key`。
+- 錢的守衛：`CLOUD_LLM_BOOT_WAIT_MIN`（25，拉映像＋下載模型）、`CLOUD_LLM_BOOT_STALL_MIN`（6）、
+  `CLOUD_LLM_MAX_HOURS`（6，看門狗送 TERM 讓 trap 砍機）。收屍：`bash ~/dev/srt-skill/scripts/vast_reap.sh`／`runpod_reap.sh`。
+- 為什麼是 vLLM 不是 SGLang／llama.cpp：Vast 主機常快取 vLLM 官方映像、int4 模型頁面明寫測過 vLLM；
+  llama.cpp 在單張 NVIDIA 上吞吐低（租卡按時計費）。映像與參數都是環境變數（`CLOUD_LLM_IMAGE`、
+  `CLOUD_LLM_EXTRA_VLLM_ARGS`），要換 SGLang 改那兩個即可。
+- 在 Claude Code 裡跑長書請放背景並掛監看；Ctrl-C 會砍機（那是刻意的）。
+- 09-04 真機：台灣 5090（0.356 美元／小時）從開機到 vLLM 就緒 19 分鐘（拉 10 GB 映像＋下載 18.7 GB 模型＋初始化），
+  固定開銷約 0.12 美元；之後翻譯 5 章結構測試檔 0.3 分鐘。RunPod 路徑只有替身測試，還沒真機跑過。
+
 ### Offline mode — triggers + workflow
 
 Triggers (main session routes here when the user says):

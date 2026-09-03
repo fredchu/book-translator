@@ -37,7 +37,11 @@ class OmlxProvider(TranslationProvider):
         temperature: float = 0.3,
         max_tokens: int = 8192,
         chat_template_kwargs: dict[str, Any] | None = None,
+        api_key: str | None = None,
     ) -> None:
+        # api_key：雲端 vLLM（book-translator cloud_llm.sh）用 --api-key 保護公開埠，這裡帶 Bearer。
+        # 本機 omlx 不需要，留 None 就完全不送標頭。
+        self.api_key = api_key
         self.model = model
         self.host = host.rstrip("/")
         self.timeout = timeout
@@ -77,7 +81,7 @@ class OmlxProvider(TranslationProvider):
         for attempt in range(self.max_retries):
             attempt_start = time.monotonic()
             try:
-                response = requests.post(url, json=payload, timeout=self.timeout)
+                response = requests.post(url, json=payload, timeout=self.timeout, **self._req_kwargs())
                 response.raise_for_status()
                 data = response.json()
                 raw_text = self._extract_content(data)
@@ -140,10 +144,14 @@ class OmlxProvider(TranslationProvider):
             f"OmlxProvider({self.model}) failed after {self.max_retries} attempts: {last_err!r}"
         )
 
+    def _req_kwargs(self) -> dict[str, Any]:
+        # 沒金鑰就完全不加 headers 參數，讓本機 omlx 的呼叫形狀跟以前一模一樣
+        return {"headers": {"Authorization": f"Bearer {self.api_key}"}} if self.api_key else {}
+
     def ping(self) -> bool:
         """Quick health-check against the omlx server."""
         try:
-            r = requests.get(f"{self.host}/v1/models", timeout=5)
+            r = requests.get(f"{self.host}/v1/models", timeout=5, **self._req_kwargs())
             r.raise_for_status()
             return True
         except requests.RequestException:

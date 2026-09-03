@@ -6,6 +6,10 @@ A Claude Code skill that turns literary EPUBs into **full-fidelity bilingual EPU
 
 ---
 
+## Cloud GPU (Vast.ai / RunPod)
+
+`scripts/cloud_llm.sh -- --book X.epub` rents a GPU, serves the Qwopus model with vLLM, translates through the omlx engine and destroys the instance. See SKILL.md "Cloud mode".
+
 ## Why this exists
 
 Generic AI book translators tend to do two things badly:

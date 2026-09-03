@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -106,6 +107,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="output parent dir; per-book dir created inside (default: book's parent dir)")
     parser.add_argument("--ollama-host", default="http://localhost:11434")
     parser.add_argument("--omlx-host", default="http://localhost:8090")
+    parser.add_argument("--omlx-api-key", default=os.environ.get("OMLX_API_KEY"),
+                        help="Bearer token for the omlx-compatible endpoint (cloud vLLM via cloud_llm.sh sets OMLX_API_KEY); local omlx needs none")
     parser.add_argument("--book-title", default=None, help="title injected into prompt (default: book stem)")
     parser.add_argument("--target-lang", default="zh-tw")
     parser.add_argument("--timeout", type=int, default=1800)
@@ -445,6 +448,7 @@ def translate_single_book(book_path: Path, args: argparse.Namespace) -> dict[str
             timeout=args.timeout,
             max_tokens=args.num_predict,
             temperature=args.temperature,
+            api_key=args.omlx_api_key,
         )
     if not provider.ping():
         error_summary = f"{args.engine} unreachable at {selected_host}"

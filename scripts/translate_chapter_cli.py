@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -90,6 +91,8 @@ def main() -> int:
     parser.add_argument("--omlx-model", default="Qwopus3.6-27B-v2-MLX-4bit",
                         help="default Qwopus3.6-27B-v2-MLX-4bit (Opus-distilled dense 27B, ~12 t/s; better prose rhythm and 台灣 usage than the faster 35B-A3B)")
     parser.add_argument("--omlx-host", default="http://localhost:8090")
+    parser.add_argument("--omlx-api-key", default=os.environ.get("OMLX_API_KEY"),
+                        help="Bearer token for the omlx-compatible endpoint (cloud vLLM via cloud_llm.sh sets OMLX_API_KEY); local omlx needs none")
     parser.add_argument("--out", required=True, type=Path, help="output dir")
     parser.add_argument("--book-title", default=None, help="title to inject into prompt")
     parser.add_argument("--timeout", type=int, default=1200)
@@ -131,6 +134,7 @@ def main() -> int:
             args.engine,
             model=args.omlx_model,
             host=args.omlx_host,
+            api_key=args.omlx_api_key,
             timeout=args.timeout,
             max_tokens=args.num_predict,
             temperature=args.temperature,

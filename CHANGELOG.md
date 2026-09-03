@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `scripts/cloud_llm.sh`: run the omlx engine against a vLLM server on a rented GPU (Vast.ai or RunPod).
+  No code upload, no SSH — the instance runs the official `vllm/vllm-openai:v0.28.0` image in args mode
+  with port 8000 exposed and `--api-key` protection; the script waits for `/v1/models` to list the model,
+  runs `translate_book_ollama.py --engine omlx --omlx-host <endpoint>`, then destroys the instance
+  (trap on every exit path, list re-checked). `--profile int4` (default,
+  `XReyRobert/Qwopus3.6-27B-v2-GPTQ-Pro-v1` on RTX 5090) / `--profile fp8`
+  (`Jackrong/Qwopus3.6-27B-v2-FP8` on L40S). `--keep`/`--stop` reuse one server across books.
+  Boot budget, pull-stall detection and a translation watchdog (`CLOUD_LLM_MAX_HOURS`) bound the spend.
+  Instance lifecycle comes from srt-skill's `vast_instance_lib.sh` / `runpod_pod_lib.sh`.
+- `OmlxProvider(api_key=...)` and `--omlx-api-key` (env `OMLX_API_KEY`) on both CLIs: Bearer header for
+  key-protected OpenAI-compatible endpoints; without a key the request shape is unchanged.
+- Tests: `test/test_cloud_llm.py` (fake `vastai`, fake RunPod transport, local fake vLLM) covers
+  no-key stop, readiness gate (200 + model id; 401 is not ready), boot-budget teardown, keep/stop,
+  RunPod v2 payload (`args`, `ports`, `startSsh:false`), fp8 profile, unparsed-create adoption by label.
+- Live run (2026-09-04, Vast.ai, Taiwan RTX 5090 at 0.356 USD/h): image pull + 18.7 GB model download +
+  engine init took 19 min to `/v1/models`; the structural fixture (5 chapters) translated in 0.3 min;
+  instance destroyed and confirmed absent. Two earlier attempts were aborted by bugs now fixed and
+  tested: the shared Vast CLI wrapper appended `--raw` after `--args` (it became a vLLM argument and the
+  container crash-looped while `actual_status` stayed `running`), and args-mode create responses are a
+  Python-dict string, not JSON, so an unparsed-but-successful create leaked three instances before the
+  adopt-by-label guard existed. RunPod path is unit-tested but not yet run live.
+
 ## [1.0.1] — 2026-08-10
 
 ### Fixed

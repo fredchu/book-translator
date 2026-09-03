@@ -138,3 +138,24 @@ def test_omlx_ping_returns_false_on_connection_error(mock_get: MagicMock) -> Non
     mock_get.side_effect = requests.ConnectionError("down")
 
     assert OmlxProvider("model-a").ping() is False
+
+
+def test_omlx_api_key_adds_bearer_header_on_ping_and_translate(monkeypatch, tmp_path):
+    """雲端 vLLM 用 --api-key 保護公開埠；有金鑰時 ping 與 translate 都要帶 Bearer，沒金鑰時不加 headers。"""
+    from unittest.mock import MagicMock, patch
+    from providers.omlx_provider import OmlxProvider
+
+    ok = MagicMock(status_code=200)
+    ok.json.return_value = {"choices": [{"message": {"content": "譯文"}}], "usage": {}}
+    ok.raise_for_status.return_value = None
+    with patch("providers.omlx_provider.requests.get", return_value=ok) as g, \
+         patch("providers.omlx_provider.requests.post", return_value=ok) as p:
+        prov = OmlxProvider(model="m", host="http://127.0.0.1:8099", api_key="sekret")
+        assert prov.ping()
+        g.assert_called_once_with("http://127.0.0.1:8099/v1/models", timeout=5,
+                                  headers={"Authorization": "Bearer sekret"})
+        prov.translate("hi", request_id="r1")
+        assert p.call_args.kwargs["headers"] == {"Authorization": "Bearer sekret"}
+    with patch("providers.omlx_provider.requests.get", return_value=ok) as g:
+        OmlxProvider(model="m", host="http://127.0.0.1:8099").ping()
+        assert "headers" not in g.call_args.kwargs
