@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `cloud_llm.sh` exports bandwidth-aware cost estimates to the Vast offer ranking (srt-skill 1.12.4):
+  int4 29 GB / fp8 41 GB download (image + model), 1.5 GPU hours. Vast bills bandwidth, and for this
+  flow the download often costs more than the GPU time; hosts with free bandwidth now rank first.
+
 ### Fixed
 - `translation_quality_audit.py` / `bilingual_coverage_audit.py`: pass `from_encoding="utf-8"` when
   parsing spine XHTML bytes. beautifulsoup4 4.15 (with lxml 6.1, what CI installs since 2026-09) guesses a

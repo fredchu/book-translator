@@ -77,6 +77,11 @@ case "$PROFILE" in
     *) die "--profile 只能是 int4 或 fp8：$PROFILE" ;;
 esac
 IMAGE="${CLOUD_LLM_IMAGE:-vllm/vllm-openai:v0.28.0}"
+# 挑報價用預估總費用排序：這條流程流量最重——每次拉 10 GB 映像＋ int4 19 GB／fp8 31 GB 模型，
+# 流量費常高過 GPU 費（Vast 單價 0 到 0.039 美元／GB）。時數預設 1.5 小時（一本 47 萬字約 1 小時），可用環境變數改。
+export VAST_LIB_EST_HOURS="${VAST_LIB_EST_HOURS:-1.5}"
+export VAST_LIB_EST_DOWN_GB="${VAST_LIB_EST_DOWN_GB:-$([[ "$PROFILE" == fp8 ]] && echo 41 || echo 29)}"
+export VAST_LIB_EST_UP_GB="${VAST_LIB_EST_UP_GB:-0.1}"
 DISK_GB="${CLOUD_LLM_DISK_GB:-80}"
 PORT=8000
 MAX_MODEL_LEN="${CLOUD_LLM_MAX_MODEL_LEN:-16384}"
