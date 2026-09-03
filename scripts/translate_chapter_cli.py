@@ -134,7 +134,8 @@ def main() -> int:
             args.engine,
             model=args.omlx_model,
             host=args.omlx_host,
-            api_key=args.omlx_api_key,
+            # 只在有金鑰時才傳：本機 omlx 的建構參數要跟以前一模一樣（既有測試比對完整 kwargs）
+            **({"api_key": args.omlx_api_key} if args.omlx_api_key else {}),
             timeout=args.timeout,
             max_tokens=args.num_predict,
             temperature=args.temperature,

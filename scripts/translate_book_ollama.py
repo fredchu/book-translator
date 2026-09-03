@@ -448,7 +448,7 @@ def translate_single_book(book_path: Path, args: argparse.Namespace) -> dict[str
             timeout=args.timeout,
             max_tokens=args.num_predict,
             temperature=args.temperature,
-            api_key=args.omlx_api_key,
+            **({"api_key": args.omlx_api_key} if args.omlx_api_key else {}),
         )
     if not provider.ping():
         error_summary = f"{args.engine} unreachable at {selected_host}"
