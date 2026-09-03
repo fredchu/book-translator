@@ -40,7 +40,7 @@ def audit(
             return False, [f"{output}: missing OPF package"]
         exceptions = _source_only_exceptions(reader)
         for path in reader.spine_xhtml_paths():
-            soup = BeautifulSoup(reader.read(path), "html.parser")
+            soup = BeautifulSoup(reader.read(path), "html.parser", from_encoding="utf-8")
             if soup.find("div", class_="aup-refused-note"):
                 # AUP-refused chapter — source is intentionally preserved; skip
                 continue

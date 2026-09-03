@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `translation_quality_audit.py` / `bilingual_coverage_audit.py`: pass `from_encoding="utf-8"` when
+  parsing spine XHTML bytes. beautifulsoup4 4.15 (with lxml 6.1, what CI installs since 2026-09) guesses a
+  different encoding for XHTML without a charset meta, turning the Chinese target text into mojibake so the
+  banned-pattern check silently passed (CI red on every platform; local 4.14 was fine). EPUB XHTML is UTF-8 by spec.
+
 ### Changed
 - `extract_epub.py`: text contents (TOC) pages are now translated instead of kept source-only —
   a TOC is a list of chapter titles, cheap to translate and otherwise the one all-English page in
