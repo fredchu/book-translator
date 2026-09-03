@@ -58,14 +58,22 @@ except ImportError:  # pragma: no cover
     from manifest import SpineEntry, chapters_from_spine, save
 
 
-TRANSLATE_ROLES = {"body", "epilogue", "acknowledgments", "about_author", "dedication"}
+TRANSLATE_ROLES = {
+    "body",
+    "epilogue",
+    "acknowledgments",
+    "about_author",
+    "dedication",
+    # 目錄頁就是章名列表，翻它幾乎沒有成本，不翻則讀者在書內目錄看到整頁英文。
+    # 圖片式／空白目錄頁由下方 len(text)==0 的保護退回 source_only。
+    "contents",
+}
 PART_CHILD_ROLES = {"body", "epilogue", "acknowledgments", "about_author", "notes"}
 PART_CHAIN_BREAK_ROLES = {"cover", "title_page", "copyright", "dedication", "contents", "promo"}
 SOURCE_ONLY_ROLES = {
     "cover",
     "title_page",
     "copyright",
-    "contents",
     "part_divider",
     "promo",
     "notes",
@@ -149,7 +157,7 @@ def extract(
         # translating them.
         first_heading = _footnote_page_heading(src_idref, src_href) or first_heading
         strategy = default_output_strategy(role, char_count=len(text))
-        if strategy == "translate" and role == "body" and len(text) == 0:
+        if strategy == "translate" and role in {"body", "contents"} and len(text) == 0:
             strategy = "source_only"
         translation_id = None
         if strategy == "translate":

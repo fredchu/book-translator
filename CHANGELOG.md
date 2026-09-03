@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `extract_epub.py`: text contents (TOC) pages are now translated instead of kept source-only —
+  a TOC is a list of chapter titles, cheap to translate and otherwise the one all-English page in
+  the bilingual book. Image-only / empty contents pages fall back to `source_only` (same guard as
+  empty body chapters). `bilingual_rewriter.py` only injects the built-in contents-link labels when
+  the page has no translation of its own, so a translated TOC no longer shows two Chinese renderings.
+  Tests: `test_text_contents_page_is_translated`, `test_image_only_contents_page_falls_back_to_source_only`.
+
 ### Added
 - `scripts/cloud_llm.sh`: run the omlx engine against a vLLM server on a rented GPU (Vast.ai or RunPod).
   No code upload, no SSH — the instance runs the official `vllm/vllm-openai:v0.28.0` image in args mode

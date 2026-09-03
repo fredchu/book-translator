@@ -73,7 +73,9 @@ def insert_bilingual(
     promoted_ids = {id(h) for h in _promote_header_headings(soup)}
     for tag in soup(["script", "style", "nav", "footer"]):
         tag.decompose()
-    if entry.get("role") == "contents":
+    # 內建 contents 連結標籤只在該頁沒有自己的譯文時才補；否則會和逐段譯文
+    # 疊成「Dedication ｜ 獻辭」+「獻詞」兩份中文。
+    if entry.get("role") == "contents" and entry.get("output_strategy") != "translate":
         _bilingualize_contents_links(soup)
     nodes = _text_nodes_for_bilingual(soup)
     # Promoted header headings (chapter numbers / part names) were stripped by

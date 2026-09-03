@@ -108,6 +108,7 @@ def test_extract_preserves_full_spine(tmp_path: Path):
     assert strategies["part_divider"] == "source_only"
     assert strategies["body"] == "translate"
     assert strategies["notes"] == "source_only"
+    assert strategies["contents"] == "translate"
     assert all((out / entry["href"]).is_file() for entry in manifest["spine"])
     assert all(entry["original_path"] for entry in manifest["spine"])
     assert all(entry["original_idref"] for entry in manifest["spine"])
@@ -340,3 +341,63 @@ def _write_part_divider_epub(tmp_path: Path, *, part_text: str) -> Path:
             "<html><body><h1>Chapter 1</h1><p>Body text.</p></body></html>",
         )
     return epub_path
+
+
+def _build_epub(path: Path, toc_body: str) -> Path:
+    """Minimal 2-item spine: a contents page + one body chapter."""
+    opf = (
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id">'
+        '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+        '<dc:identifier id="id">t1</dc:identifier><dc:title>T</dc:title>'
+        "<dc:language>en</dc:language></metadata>"
+        "<manifest>"
+        '<item id="toc" href="toc.xhtml" media-type="application/xhtml+xml"/>'
+        '<item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/>'
+        '<item id="tocimg" href="toc.png" media-type="image/png"/>'
+        "</manifest>"
+        '<spine><itemref idref="toc"/><itemref idref="ch1"/></spine></package>'
+    )
+    page = (
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>{t}</title></head>'
+        "<body>{b}</body></html>"
+    )
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("mimetype", "application/epub+zip")
+        z.writestr(
+            "META-INF/container.xml",
+            '<?xml version="1.0"?><container version="1.0" '
+            'xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles>'
+            '<rootfile full-path="OEBPS/book.opf" '
+            'media-type="application/oebps-package+xml"/></rootfiles></container>',
+        )
+        z.writestr("OEBPS/book.opf", opf)
+        z.writestr("OEBPS/toc.xhtml", page.format(t="Contents", b=toc_body))
+        z.writestr(
+            "OEBPS/ch1.xhtml",
+            page.format(t="Chapter 1", b="<h1>Chapter 1</h1><p>Body text here.</p>"),
+        )
+        z.writestr("OEBPS/toc.png", b"x")
+    return path
+
+
+def _contents_strategy(book: Path, out: Path) -> str:
+    extracted_dir = extract_epub.extract(book, out)
+    manifest = json.loads((extracted_dir / "manifest.json").read_text("utf-8"))
+    entries = [e for e in manifest["spine"] if e.get("role") == "contents"]
+    assert entries, "no contents page in spine"
+    return entries[0]["output_strategy"]
+
+
+def test_text_contents_page_is_translated(tmp_path: Path):
+    book = _build_epub(
+        tmp_path / "text_toc.epub",
+        '<h1>Contents</h1><p><a href="ch1.xhtml">Chapter 1</a></p>',
+    )
+    assert _contents_strategy(book, tmp_path / "out") == "translate"
+
+
+def test_image_only_contents_page_falls_back_to_source_only(tmp_path: Path):
+    book = _build_epub(tmp_path / "img_toc.epub", '<div><img src="toc.png" alt=""/></div>')
+    assert _contents_strategy(book, tmp_path / "out") == "source_only"
