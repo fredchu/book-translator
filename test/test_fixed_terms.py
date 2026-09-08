@@ -26,11 +26,12 @@ def test_absent_file_yields_no_terms_and_unchanged_prompt(tmp_path: Path) -> Non
 
 
 def test_terms_reach_the_system_prompt(tmp_path: Path) -> None:
+    """Injection is selective, so the chunk must actually contain the term."""
     dispatch.load_fixed_terms.cache_clear()
     book = _write(tmp_path / "b1", {"terms": {"private commons": "私人公地"}})
     terms = dispatch.load_fixed_terms(book)
     system, _ = dispatch.build_ollama_chunk_prompt(
-        chunk_paragraphs=["Hi."], fixed_terms=terms)
+        chunk_paragraphs=["A private commons is not a market."], fixed_terms=terms)
     assert "private commons＝私人公地" in system
     assert "固定譯法，全書一致" in system
 
@@ -42,11 +43,20 @@ def test_bare_mapping_without_terms_key_is_accepted(tmp_path: Path) -> None:
 
 
 def test_marker_contract_survives_term_injection(tmp_path: Path) -> None:
-    """Terms are lookup data; they must not displace the format contract."""
+    """Terms are lookup data; they must not displace the format contract.
+
+    The paragraphs must contain the terms, otherwise selective injection drops
+    them all and this stops testing injection at all.
+    """
     dispatch.load_fixed_terms.cache_clear()
     book = _write(tmp_path / "b3", {"terms": {f"term{i}": f"詞{i}" for i in range(20)}})
+    paragraphs = [" ".join(f"term{i}" for i in range(10)),
+                  " ".join(f"term{i}" for i in range(10, 20))]
     system, user = dispatch.build_ollama_chunk_prompt(
-        chunk_paragraphs=["A.", "B."], fixed_terms=dispatch.load_fixed_terms(book))
+        chunk_paragraphs=paragraphs, fixed_terms=dispatch.load_fixed_terms(book))
+    assert "詞0＝" not in system  # sanity: rendering is "term0＝詞0"
+    assert "term0＝詞0" in system, "terms present in the text must be injected"
+    assert "term19＝詞19" in system
     assert "[[PARA_1]]" in system
     assert "禁止使用任何簡體字" in system
     assert "[[PARA_2]]" in user

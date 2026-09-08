@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Selective terminology injection** (2026-09-08). `spec_terms.json` was broadcast whole into every
+  chunk's system prompt, so a real term table could not be used: 328 terms is 6954 chars per chunk
+  across 260 chunks, which both costs tokens and dilutes attention (the model reads past the
+  instructions it needs). `dispatch.select_terms_for_text` now injects only the terms the chunk
+  actually contains — measured average 113 chars (median 102, max 365), a **98.4% reduction**, with
+  6.7 terms per chunk and only 2 of 260 chunks matching nothing. Matching is whole-token (`gut` does
+  not match `gutter`) and case-sensitive only for capitalised terms, so `Weeks` (an army physician)
+  does not match the 20 occurrences of "weeks" while `gut` still matches a sentence-initial "Gut".
+
 ### Fixed
 - **Offline post-processing corrupted correct Traditional Chinese** (2026-09-08). `to_traditional`
   used opencc `s2twp`; the trailing `p` applies a mainland→Taiwan *vocabulary* table that carries

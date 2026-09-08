@@ -576,3 +576,71 @@ And output was sometimes too broad.</pre>
     # dt + dd extracted
     assert "LLM" in paras
     assert "Large Language Model" in paras
+
+
+# --- selective terminology injection ------------------------------------------
+# Broadcasting the whole term table into all 260 chunks costs ~7000 chars each and
+# dilutes attention. Only inject what the chunk actually contains.
+
+TERMS = {
+    "vagus nerve": "迷走神經",
+    "microbiota": "菌相",
+    "Weeks": "威克斯",
+    "gut": "腸道",
+    "Parkinson's disease": "帕金森氏症",
+}
+
+
+def test_select_terms_keeps_only_terms_present_in_the_chunk() -> None:
+    text = "The vagus nerve carries signals from the gut."
+
+    picked = dispatch.select_terms_for_text(TERMS, text)
+
+    assert set(picked) == {"vagus nerve", "gut"}
+    assert picked["vagus nerve"] == "迷走神經"
+
+
+def test_select_terms_requires_whole_token_not_substring() -> None:
+    """`gut` must not match inside `gutter`."""
+    assert dispatch.select_terms_for_text(TERMS, "Water ran down the gutter.") == {}
+
+
+def test_select_terms_capitalised_term_is_case_sensitive() -> None:
+    """`Weeks` (a physician) must not match the common word `weeks`."""
+    assert dispatch.select_terms_for_text(TERMS, "It took three weeks to recover.") == {}
+    assert "Weeks" in dispatch.select_terms_for_text(TERMS, "As reported by Weeks in 1946.")
+
+
+def test_select_terms_lowercase_term_still_matches_sentence_initial_caps() -> None:
+    """`gut` must match `Gut` when the sentence starts with it."""
+    assert "gut" in dispatch.select_terms_for_text(TERMS, "Gut bacteria matter.")
+
+
+def test_select_terms_handles_punctuation_inside_the_term() -> None:
+    picked = dispatch.select_terms_for_text(TERMS, "Patients with Parkinson's disease often report...")
+    assert "Parkinson's disease" in picked
+
+
+def test_select_terms_empty_table_or_text_returns_empty() -> None:
+    assert dispatch.select_terms_for_text({}, "anything") == {}
+    assert dispatch.select_terms_for_text(TERMS, "") == {}
+
+
+def test_chunk_prompt_injects_only_matching_terms() -> None:
+    system, _ = dispatch.build_ollama_chunk_prompt(
+        chunk_paragraphs=["The vagus nerve is a highway."],
+        fixed_terms=TERMS,
+    )
+
+    assert "迷走神經" in system
+    assert "帕金森氏症" not in system, "unrelated terms must not be broadcast"
+    assert "菌相" not in system
+
+
+def test_chunk_prompt_omits_term_block_when_nothing_matches() -> None:
+    system, _ = dispatch.build_ollama_chunk_prompt(
+        chunk_paragraphs=["Nothing relevant here at all."],
+        fixed_terms=TERMS,
+    )
+
+    assert "固定譯法" not in system

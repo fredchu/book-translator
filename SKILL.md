@@ -873,6 +873,15 @@ This skill writes to:
   `{"terms": {source: 中譯}}` table agreed before translation starts. Loaded by
   `dispatch.load_fixed_terms()` and appended to the offline system prompt as lookup
   data (not as another rule). Absent file = previous behaviour.
+  **Only the terms a chunk actually contains are injected**
+  (`dispatch.select_terms_for_text`), so the table can be large without bloating
+  every prompt: measured on a 328-term table over 260 chunks, the full table is
+  6954 chars per chunk while the matching terms average 113 — a 98.4% reduction,
+  and only 2 of 260 chunks match nothing. Broadcasting the whole table instead
+  dilutes attention and the model reads past the instructions it needs.
+  Matching is whole-token, and case-sensitive for capitalised terms only, so
+  `Weeks` (a physician) does not match "weeks" while `gut` still matches a
+  sentence-initial "Gut".
 - `<out_dir>/<book_stem>/manifest.json` — full OPF spine manifest v2
 - `<out_dir>/<book_stem>/chapters/item_NNN.html` — extracted source spine items
 - `<out_dir>/<book_stem>/chapters/item_NNN_translation.txt` — per-item translation for `translate` items

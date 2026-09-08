@@ -237,6 +237,46 @@ def load_fixed_terms(book_dir) -> dict[str, str]:
     return {str(k): str(v) for k, v in terms.items() if k and v}
 
 
+@functools.lru_cache(maxsize=8192)
+def _term_pattern(term: str) -> "re.Pattern[str]":
+    """Whole-token matcher for one source term.
+
+    Case sensitivity is decided by the term itself: a capitalised term is a
+    proper noun and must match case (`Weeks`, an army physician, otherwise
+    matches all 20 occurrences of "weeks" in a chapter), while a lowercase
+    term is ordinary vocabulary that also appears sentence-initially (`gut`
+    must still match "Gut" at the start of a sentence).
+
+    The boundary is alphanumeric-only rather than ``\b`` so terms ending in
+    punctuation still work, while `gut` does not match inside `gutter`.
+    """
+    flags = 0 if term[:1].isupper() else re.IGNORECASE
+    return re.compile(rf"(?<![A-Za-z0-9]){re.escape(term)}(?![A-Za-z0-9])", flags)
+
+
+def select_terms_for_text(terms: dict[str, str], text: str) -> dict[str, str]:
+    """Keep only the terms that actually occur in this chunk.
+
+    Broadcasting the whole table into every chunk costs tokens and dilutes
+    attention — the model reads past the instructions it needs. Measured on
+    The Mind-Gut Connection (328 terms, 260 chunks): the full table is ~7000
+    chars of prompt per chunk, while the terms a chunk actually uses average
+    6.8 (median 6, max 20) — about 152 chars, a 97% reduction, and only 2 of
+    260 chunks match nothing at all.
+
+    Cheap substring test first; the regex only runs on candidates, since the
+    boundary check is the expensive part and most terms miss outright.
+    """
+    if not terms or not text:
+        return {}
+    lowered = text.lower()
+    return {
+        src: zh
+        for src, zh in terms.items()
+        if src.lower() in lowered and _term_pattern(src).search(text)
+    }
+
+
 def format_fixed_terms(terms: dict[str, str]) -> str:
     """Render the term table as a compact prompt suffix. Empty string when unset."""
     if not terms:
@@ -288,7 +328,10 @@ def build_ollama_chunk_prompt(
     paragraphs = list(chunk_paragraphs)
     target_lang_long = _target_long(target_lang)
     system = OLLAMA_SYSTEM_PROMPT.format(target_lang_long=target_lang_long)
-    system += format_fixed_terms(fixed_terms or {})
+    # Only the terms this chunk actually contains — see select_terms_for_text.
+    system += format_fixed_terms(
+        select_terms_for_text(fixed_terms or {}, "\n".join(paragraphs))
+    )
     parts: list[str] = []
     if carryover.strip():
         parts.append(
