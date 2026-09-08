@@ -497,9 +497,74 @@ def styled_paragraph_title(soup: BeautifulSoup) -> str | None:
         blocks.append(text)
         if len(blocks) == 2:
             break
-    if not blocks:
+    if blocks:
+        return ": ".join(blocks)
+    return _chapter_marker_title(soup)
+
+
+# "Chapter"/"Part"/"Section"/"Book", optionally already carrying its number.
+_CHAPTER_MARKER_RE = re.compile(
+    r"^(chapter|part|section|book)(\s+[\divxlcIVXLC]+)?[.:]?$", re.IGNORECASE
+)
+_TITLE_NUMBER_RE = re.compile(r"^[\divxlcIVXLC]+[.:]?$", re.IGNORECASE)
+# The title block itself may run long; only the marker/number blocks are short.
+_TITLE_TEXT_MAX_LEN = 150
+
+
+def _chapter_marker_title(soup: BeautifulSoup) -> str | None:
+    """Recover a mixed-case title split across blocks led by a chapter marker.
+
+    The all-caps rule above is what keeps `styled_paragraph_title` safe, and it
+    must stay: on the local corpus the 12 short mixed-case leading blocks are
+    epigraphs and dedications that must not become chapter titles. But it misses
+    publishers who split a Title Case heading across three blocks:
+
+        <p class="h2-c">Chapter</p>
+        <p class="h2-c1">1</p>
+        <p class="h2-c2">The Mind-Body Connection Is Real</p>
+
+    The Mind-Gut Connection is shaped exactly like that, and every one of its 20
+    ToC entries fell back to "first 80 characters of body text" — producing
+    "Chapter 1 The Mind-Body Connection Is Real W hen I started medical school in
+    197", where the stray "W hen" is the source's drop-cap span.
+
+    Requiring the FIRST block to be a bare chapter marker is what makes relaxing
+    the case rule safe here: an epigraph never opens with the word "Chapter".
+    """
+    blocks: list[str] = []
+    for node in cb.walk_text_nodes(soup):
+        text = re.sub(r"\s+", " ", node.get_text(" ", strip=True)).strip()
+        if not text:
+            continue
+        # The marker and number fragments are short; the title itself is not.
+        # Capping every block at TITLE_BLOCK_MAX_LEN truncated two real chapters
+        # ("Unhealthy Memories: The Effects of Early Life Experiences on the
+        # Gut-Brain Dialogue" is 82 chars) down to a bare "Chapter: 5".
+        #
+        # Length alone cannot separate a long title from a short opening
+        # sentence, so the title block is bounded by punctuation instead: a
+        # heading does not end in a full stop, a sentence of prose does. "?" and
+        # "!" stay allowed — a chapter may be titled "What Is Consciousness?".
+        if len(blocks) < 2:
+            if len(text) > TITLE_BLOCK_MAX_LEN:
+                break
+        elif len(text) > _TITLE_TEXT_MAX_LEN or text.endswith((".", "。", "…")):
+            break
+        blocks.append(text)
+        if len(blocks) == 3:
+            break
+    if len(blocks) < 2 or not _CHAPTER_MARKER_RE.match(blocks[0]):
+        return _lone_heading_before_prose(soup)
+    marker = blocks[0].rstrip(".:")
+    # "Chapter" + "1" + title -> "Chapter 1: title"
+    if len(blocks) == 3 and _TITLE_NUMBER_RE.match(blocks[1]):
+        return f"{marker} {blocks[1].rstrip('.:')}: {blocks[2]}"
+    # A trailing bare number means the title block was dropped (too long, or the
+    # page really has none). "Chapter: 5" is worse than falling through.
+    if _TITLE_NUMBER_RE.match(blocks[1]):
         return None
-    return ": ".join(blocks)
+    # "Part 1" + title -> "Part 1: title" (marker already carries its number)
+    return f"{marker}: {blocks[1]}"
 
 
 def _looks_like_body_prose_heading(text: str) -> bool:
@@ -526,6 +591,40 @@ def main(argv: list[str] | None = None) -> int:
     book_out = extract(args.epub_path, args.out_dir, args.min_chars)
     print(book_out)
     return 0
+
+def _lone_heading_before_prose(soup: BeautifulSoup) -> str | None:
+    """Recover a single short heading block that sits directly on top of prose.
+
+    Preface / Bibliography / Index / "Praise for <Title>" carry no heading tag,
+    are Title Case (so the all-caps rule rejects them), and are not led by a
+    chapter marker — yet each is a real title with body prose immediately after.
+    Without this they fall through to "first 80 characters", which is how
+    "Index The pagination of this digital edition does not match the print
+    edition fr" reached a shipped table of contents.
+
+    The discriminator is the SECOND block, not the first: a heading is followed
+    by prose, and prose ends in a full stop. That is what separates
+
+        "Preface" + "Since the initial publication…"           -> a title
+        "My heart is not a home for cowards." + "D. A. FOY"    -> an epigraph
+
+    since the epigraph's own first block ends in a full stop and its second
+    block is a short attribution, not prose.
+    """
+    blocks: list[str] = []
+    for node in cb.walk_text_nodes(soup):
+        text = re.sub(r"\s+", " ", node.get_text(" ", strip=True)).strip()
+        if text:
+            blocks.append(text)
+        if len(blocks) == 2:
+            break
+    if len(blocks) < 2:
+        return None
+    head, following = blocks
+    if len(head) > TITLE_BLOCK_MAX_LEN or head.endswith((".", "。", "…")):
+        return None
+    is_prose = following.endswith((".", "。", "”", "\u201d")) or len(following) > _TITLE_TEXT_MAX_LEN
+    return head if is_prose else None
 
 
 if __name__ == "__main__":

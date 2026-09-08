@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Chapter titles split across three blocks were not recognised, wrecking the whole ToC**
+  (2026-09-09). `styled_paragraph_title` required ALL CAPS — deliberately, since on the local
+  corpus the short mixed-case leading blocks are epigraphs that must not become titles. But
+  The Mind-Gut Connection splits every heading into `<p>Chapter</p>` + `<p>1</p>` +
+  `<p>The Mind-Body Connection Is Real</p>` in Title Case, so all 20 entries fell back to
+  "first 80 characters of body text" and shipped as *"Chapter 1 The Mind-Body Connection Is
+  Real W hen I started medical school in 197"* — the stray `W hen` being the source's drop-cap
+  span. Two new paths run only after the all-caps path returns nothing, so existing behaviour
+  is untouched: one keyed on a leading chapter marker (`Chapter`/`Part`/`Section`/`Book`), one
+  for a lone Title Case heading sitting on prose (Preface / Bibliography / Index / "Praise
+  for …", which `infer_role` classifies as plain `body` and `_ROLE_TO_HEADING` therefore
+  misses). **Measured end to end on the book: 17 broken headings out of 26 → 0.**
+  Two guards learned the hard way while writing this: the marker and number blocks are short
+  but the title is not (a flat cap truncated two real chapters to a bare `"Chapter: 5"`), and
+  length alone cannot separate a long title from a short opening sentence — a title does not
+  end in a full stop, prose does. Regression tests assert both directions.
+
 ### Added
 - **Selective terminology injection** (2026-09-08). `spec_terms.json` was broadcast whole into every
   chunk's system prompt, so a real term table could not be used: 328 terms is 6954 chars per chunk
