@@ -176,10 +176,16 @@ is per-chapter, so a killed/interrupted run resumes on the next invocation.
 Offline post-processing (`scripts/offline_postprocess.py`) recovers the quality
 the skipped glossary/nav build would have provided, since the offline path has no
 glossary:
-- **Simplified→Traditional** — every chapter is run through opencc `s2twp` at
+- **Simplified→Traditional** — every chapter is run through opencc `s2tw` at
   write time, fixing the local model's residual Simplified leak and normalising
   to Taiwan character forms (soft dependency: a no-op with one warning if opencc
-  is absent).
+  is absent). **`s2tw`, never `s2twp`** — the `p` adds a mainland→Taiwan
+  *vocabulary* table that includes computing terms (循环→迴圈, 调用→呼叫,
+  窗口→視窗), and since the model already emits Traditional Chinese, that table
+  fires on correct prose: ch.7 of a gut-microbiome book came back with 血液迴圈,
+  隨時呼叫 and 易感視窗. A short `_PROTECTED_TERMS` list additionally shields
+  words whose Simplified form maps to several Traditional ones (干擾 would
+  otherwise become 幹擾, 排泄 → 排洩).
 - **Character-name coherence** — without a glossary the model drifts between
   transliteration variants (瑪德琳 vs 梅德琳); a conservative pass merges minority
   variants (length ≥ 3, free-standing, dominated ≥ 4×, never two real names) into

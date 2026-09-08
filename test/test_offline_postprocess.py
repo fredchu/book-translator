@@ -56,6 +56,60 @@ def test_to_traditional_converts_simplified_and_is_idempotent() -> None:
     assert offline_postprocess.to_traditional(out) == out
 
 
+# --- regression: s2twp corrupted already-Traditional prose (2026-09-08) --------
+# Ch.7 of The Mind-Gut Connection went through s2twp and came back with 血液迴圈,
+# 隨時呼叫, 易感視窗, 排洩 and 幹擾. The model had translated all five correctly;
+# the "p" vocabulary table rewrote them. A reader caught 幹擾 on first read.
+
+CORRECT_TRADITIONAL_PROSE = [
+    ("另一些則進入血液循環，參與長距離訊號傳遞", "迴圈"),   # not a program loop
+    ("在日後做決策時可以隨時調用", "呼叫"),                # not a function call
+    ("神經發展障礙的易感窗口", "視窗"),                    # a time window, not a GUI
+    ("2014 年國家健康訪視的最新數據顯示", "資料"),
+    ("透過重建與優化大腦與腸道的溝通", "最佳化"),
+    ("大腸則透過排泄處理剩餘物質", "排洩"),
+    ("當這些器官之間的交談受到干擾時", "幹擾"),
+]
+
+
+@pytest.mark.parametrize("prose,must_not_appear", CORRECT_TRADITIONAL_PROSE)
+def test_to_traditional_leaves_correct_traditional_prose_alone(
+    prose: str, must_not_appear: str
+) -> None:
+    pytest.importorskip("opencc")
+
+    out = offline_postprocess.to_traditional(prose)
+
+    assert must_not_appear not in out, f"{prose!r} was corrupted into {out!r}"
+    assert out == prose, f"expected no change, got {out!r}"
+
+
+@pytest.mark.parametrize(
+    "simplified,expected",
+    [
+        ("血液循环系统", "血液循環系統"),   # s2twp gives 血液迴圈系統
+        ("干扰素治疗", "干擾素治療"),       # protected term reached via Simplified
+        ("肠道菌群失调", "腸道菌群失調"),
+    ],
+)
+def test_to_traditional_still_converts_real_simplified(
+    simplified: str, expected: str
+) -> None:
+    pytest.importorskip("opencc")
+
+    assert offline_postprocess.to_traditional(simplified) == expected
+
+
+def test_to_traditional_leaves_no_placeholder_residue() -> None:
+    pytest.importorskip("opencc")
+
+    text = "干擾、干預與若干污染問題，以及排泄功能"
+    out = offline_postprocess.to_traditional(text)
+
+    assert out == text
+    assert not any(chr(0xE000 + i) in out for i in range(len(offline_postprocess._PROTECTED_TERMS)))
+
+
 def test_normalize_character_names_merges_dominant_hamming_variant(tmp_path: Path) -> None:
     chapters = _chapters(tmp_path)
     canonical_mentions = "。".join(["瑪德琳"] * 8)

@@ -5,7 +5,7 @@ The offline driver (translate_book_ollama.py) skips the main-session glossary /
 nav-override build for speed, so these deterministic passes recover the quality
 those steps would have provided:
 
-1. ``to_traditional`` — opencc s2twp; fixes the model's residual Simplified leak
+1. ``to_traditional`` — opencc s2tw; fixes the model's residual Simplified leak
    and normalises to Taiwan character forms. Soft dependency: a no-op (with one
    warning) when opencc is unavailable.
 2. ``normalize_character_names`` — without a glossary the model drifts between
@@ -39,6 +39,29 @@ TITLE_BLOCK_MAX_LEN = 60
 _CC = None  # cached opencc converter; False once we know it is unavailable
 
 
+# s2tw, NOT s2twp. The trailing "p" adds mainland->Taiwan *vocabulary*
+# substitution, which carries a computing-term table (调用->呼叫, 循环->迴圈,
+# 窗口->視窗, 数据->資料). The model already emits Traditional Chinese, so that
+# table fires on correct prose and corrupts it. Measured 2026-09-08 on ch.7 of
+# The Mind-Gut Connection (51,774 chars): s2twp made 10 edits, 5 of them wrong —
+# 血液循環 -> 血液迴圈 (x3), 隨時調用 -> 隨時呼叫, 易感窗口 -> 易感視窗,
+# 排泄 -> 排洩, 受到干擾 -> 受到幹擾. A reader caught 幹擾 on the first read.
+# s2tw leaves all of those alone and still converts real Simplified correctly
+# (血液循环 -> 血液循環, where s2twp gives 血液迴圈).
+_OPENCC_CONFIG = "s2tw"
+
+# s2tw still mis-resolves one-Simplified-to-many-Traditional characters when the
+# input is ALREADY Traditional: 干 has three Traditional forms (干/乾/幹) and
+# opencc guesses 幹. These words are correct Traditional as written, so shield
+# them from conversion entirely rather than converting and patching afterwards.
+_PROTECTED_TERMS = (
+    "干擾", "干預", "干涉", "干旱", "干戈", "若干", "干支",
+    "排泄", "污染", "污水", "污垢",
+)
+# Private Use Area placeholders; one per protected term, never in real prose.
+_PROTECT_MAP = {t: chr(0xE000 + i) for i, t in enumerate(_PROTECTED_TERMS)}
+
+
 def _converter():
     global _CC
     if _CC is False:
@@ -47,7 +70,7 @@ def _converter():
         try:
             from opencc import OpenCC
 
-            _CC = OpenCC("s2twp")
+            _CC = OpenCC(_OPENCC_CONFIG)
         except Exception:
             _CC = False
             print(
@@ -60,11 +83,22 @@ def _converter():
 
 
 def to_traditional(text: str) -> str:
-    """Convert Simplified Chinese to Taiwan Traditional (s2twp). No-op without opencc."""
+    """Convert Simplified Chinese to Taiwan Traditional. No-op without opencc.
+
+    Uses s2tw and shields `_PROTECTED_TERMS`; see the comments above for the
+    measured corruption that s2twp caused on already-Traditional model output.
+    """
     if not text:
         return text
     cc = _converter()
-    return cc.convert(text) if cc else text
+    if not cc:
+        return text
+    for term, ph in _PROTECT_MAP.items():
+        text = text.replace(term, ph)
+    text = cc.convert(text)
+    for term, ph in _PROTECT_MAP.items():
+        text = text.replace(ph, term)
+    return text
 
 
 # --- character-name coherence -------------------------------------------------

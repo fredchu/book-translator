@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Offline post-processing corrupted correct Traditional Chinese** (2026-09-08). `to_traditional`
+  used opencc `s2twp`; the trailing `p` applies a mainland→Taiwan *vocabulary* table that carries
+  computing terms. The local model already emits Traditional Chinese, so the table fired on correct
+  prose. Measured on ch.7 of *The Mind-Gut Connection* (51,774 chars): 10 edits, **5 of them wrong** —
+  血液循環 → 血液迴圈 (x3), 隨時調用 → 隨時呼叫, 易感窗口 → 易感視窗, 排泄 → 排洩, 受到干擾 →
+  受到幹擾. A reader caught 幹擾 on the first read of the chapter. Now uses `s2tw`, plus a
+  `_PROTECTED_TERMS` shield for words whose Simplified form maps to several Traditional forms
+  (干 → 干/乾/幹). Same chapter now takes **1 edit instead of 10**, and real Simplified still converts
+  correctly (血液循环 → 血液循環, where `s2twp` gave 血液迴圈). Regression tests assert both
+  directions: reverting the config fails 6 tests, emptying the shield fails 3.
+
 ### Changed
 - `cloud_llm.sh` exports bandwidth-aware cost estimates to the Vast offer ranking (srt-skill 1.12.4):
   int4 29 GB / fp8 41 GB download (image + model), 1.5 GPU hours. Vast bills bandwidth, and for this
