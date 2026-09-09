@@ -5,9 +5,10 @@ The offline driver (translate_book_ollama.py) skips the main-session glossary /
 nav-override build for speed, so these deterministic passes recover the quality
 those steps would have provided:
 
-1. ``to_traditional`` — opencc s2tw; fixes the model's residual Simplified leak
-   and normalises to Taiwan character forms. Soft dependency: a no-op (with one
-   warning) when opencc is unavailable.
+1. ``to_traditional`` — sentence-gated opencc s2tw; fixes the model's residual
+   Simplified leak without running already-Traditional sentences through an
+   unsafe converter. Soft dependency: a no-op (with one warning) when opencc is
+   unavailable.
 2. ``normalize_character_names`` — without a glossary the model drifts between
    transliteration variants of the same name (瑪德琳 vs 梅德琳). Conservatively
    merges minority variants into the dominant form.
@@ -37,23 +38,32 @@ _HEADING_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
 TITLE_BLOCK_MAX_LEN = 60
 
 _CC = None  # cached opencc converter; False once we know it is unavailable
+_SIMPLIFIED_TRIGGERS = None  # cached frozenset; False when dictionary unavailable
+_SENTENCE_BOUNDARY = re.compile(r"(?<=[。！？；：\n])|(?<=[.!?] )")
 
 
 # s2tw, NOT s2twp. The trailing "p" adds mainland->Taiwan *vocabulary*
 # substitution, which carries a computing-term table (调用->呼叫, 循环->迴圈,
-# 窗口->視窗, 数据->資料). The model already emits Traditional Chinese, so that
-# table fires on correct prose and corrupts it. Measured 2026-09-08 on ch.7 of
-# The Mind-Gut Connection (51,774 chars): s2twp made 10 edits, 5 of them wrong —
-# 血液循環 -> 血液迴圈 (x3), 隨時調用 -> 隨時呼叫, 易感窗口 -> 易感視窗,
-# 排泄 -> 排洩, 受到干擾 -> 受到幹擾. A reader caught 幹擾 on the first read.
-# s2tw leaves all of those alone and still converts real Simplified correctly
-# (血液循环 -> 血液循環, where s2twp gives 血液迴圈).
+# 窗口->視窗, 数据->資料). Both configs are unsafe on already-Traditional input:
+# besides multi-mapping guesses such as 范->範, s2tw can produce 肥皂剧 from
+# correct 肥皂劇 and 最多隻能 from 最多只能. Therefore s2tw is applied only to
+# sentences containing an unambiguous Simplified trigger character.
 _OPENCC_CONFIG = "s2tw"
 
-# s2tw still mis-resolves one-Simplified-to-many-Traditional characters when the
-# input is ALREADY Traditional: 干 has three Traditional forms (干/乾/幹) and
-# opencc guesses 幹. These words are correct Traditional as written, so shield
-# them from conversion entirely rather than converting and patching afterwards.
+# STCharacters alone calls these valid Taiwan forms Simplified. 疱 is accepted in
+# 教育部's「疱疹」entry; 雇、霉、晒 are in its 4,808 common-character list;
+# 苧（苧麻）and 洼（窪地／姓氏）have independent dictionary senses. Keep these
+# forms from triggering conversion when they occur in otherwise-Traditional text.
+# We deliberately do not exclude the whole 4,808∩trigger-set intersection: it
+# includes highly diagnostic Simplified forms such as 么 (什么) and 坏.
+_TRIGGER_EXCLUSIONS = frozenset("疱雇霉晒苧洼")
+# 着 is absent from STCharacters (it lives in TWVariants), but in this model's
+# output it is a known mainland-form residual (穿着/挽着). Do not import the whole
+# TWVariants table: it also contains valid Traditional variants such as 羣 and 祕.
+_EXTRA_SIMPLIFIED_TRIGGERS = frozenset("着")
+
+# Even in a triggered sentence, s2tw may mis-resolve one-to-many characters such
+# as 干. Keep the existing narrow term shields to reduce collateral damage.
 _PROTECTED_TERMS = (
     "干擾", "干預", "干涉", "干旱", "干戈", "若干", "干支",
     "排泄", "污染", "污水", "污垢",
@@ -82,23 +92,72 @@ def _converter():
     return _CC
 
 
-def to_traditional(text: str) -> str:
-    """Convert Simplified Chinese to Taiwan Traditional. No-op without opencc.
+def _simplified_triggers(cc) -> frozenset[str] | None:
+    """Load unambiguous Simplified characters from opencc's STCharacters.
 
-    Uses s2tw and shields `_PROTECTED_TERMS`; see the comments above for the
-    measured corruption that s2twp caused on already-Traditional model output.
+    A key only triggers when it is not one of its own Traditional candidates and
+    s2tw actually changes it. This rejects ambiguous, valid Traditional forms
+    such as 范 (``范 -> 範 范``), unlike the unsafe ``s2t(text) != text`` test.
+    """
+    global _SIMPLIFIED_TRIGGERS
+    if _SIMPLIFIED_TRIGGERS is False:
+        return None
+    if _SIMPLIFIED_TRIGGERS is None:
+        try:
+            import opencc
+
+            dictionary = Path(opencc.__file__).resolve().parent / "dictionary" / "STCharacters.txt"
+            triggers: set[str] = set()
+            for line in dictionary.read_text(encoding="utf-8").splitlines():
+                key, candidates = line.split("\t", 1)
+                if key not in candidates.split() and cc.convert(key) != key:
+                    triggers.add(key)
+            triggers.difference_update(_TRIGGER_EXCLUSIONS)
+            triggers.update(_EXTRA_SIMPLIFIED_TRIGGERS)
+            _SIMPLIFIED_TRIGGERS = frozenset(triggers)
+        except Exception:
+            _SIMPLIFIED_TRIGGERS = False
+            print(
+                "[warn] opencc STCharacters.txt unavailable; skipping unsafe "
+                "Simplified->Traditional conversion",
+                file=sys.stderr,
+            )
+            return None
+    return _SIMPLIFIED_TRIGGERS
+
+
+def _convert_triggered_sentence(sentence: str, cc, triggers: frozenset[str]) -> str:
+    if not any(ch in triggers for ch in sentence):
+        return sentence
+    for term, ph in _PROTECT_MAP.items():
+        sentence = sentence.replace(term, ph)
+    sentence = cc.convert(sentence)
+    for term, ph in _PROTECT_MAP.items():
+        sentence = sentence.replace(ph, term)
+    return sentence
+
+
+def to_traditional(text: str) -> str:
+    """Convert sentences containing clear Simplified Chinese to Taiwan forms.
+
+    Sentences are delimited by ``。！？；：``, newlines, and an ASCII ``.!?``
+    followed by a space. Already-Traditional sentences are returned byte-for-byte
+    unchanged; triggered sentences use s2tw with the
+    existing term shields. No-op if opencc or its STCharacters dictionary is
+    unavailable.
     """
     if not text:
         return text
     cc = _converter()
     if not cc:
         return text
-    for term, ph in _PROTECT_MAP.items():
-        text = text.replace(term, ph)
-    text = cc.convert(text)
-    for term, ph in _PROTECT_MAP.items():
-        text = text.replace(ph, term)
-    return text
+    triggers = _simplified_triggers(cc)
+    if not triggers:
+        return text
+    return "".join(
+        _convert_triggered_sentence(sentence, cc, triggers)
+        for sentence in _SENTENCE_BOUNDARY.split(text)
+    )
 
 
 # --- character-name coherence -------------------------------------------------

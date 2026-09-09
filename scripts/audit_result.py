@@ -15,15 +15,18 @@ class AuditResult:
     name: str
     status: AuditStatus
     failures: list[str]
+    warnings: list[str] = field(default_factory=list)
     details: dict = field(default_factory=dict)
 
     @property
     def passed(self) -> bool:
-        return self.status == "pass"
+        """Warnings remain visible but do not block the audit gate."""
+        return self.status in {"pass", "warn"}
 
     def format_lines(self) -> list[str]:
-        verdict = "PASS" if self.passed else "FAIL"
-        lines = [f"{self.name}: {verdict}"]
+        lines = [f"{self.name}: {self.status.upper()}"]
         for failure in self.failures:
             lines.append(f"  - {failure}")
+        for warning in self.warnings:
+            lines.append(f"  - warning: {warning}")
         return lines

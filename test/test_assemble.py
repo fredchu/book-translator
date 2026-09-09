@@ -291,19 +291,17 @@ def test_source_only_json_auto_bundled_into_epub(tmp_path: Path):
         assert source_only_paths, f"source_only.json missing from EPUB; have: {names[:20]}"
         data = json.loads(z.read(source_only_paths[0]).decode("utf-8"))
     assert isinstance(data, list)
-    # Should contain at least the "Tiny Book" orphan paragraph
-    assert any("Tiny Book" in entry for entry in data)
+    # Every exception is structured and explains why it is source-only.
+    tiny = next(entry for entry in data if entry.get("src_text") == "Tiny Book")
+    assert tiny["reason"] == "manifest_source_only:title_page"
 
 
-def test_assemble_includes_orphan_src_from_translate_strategy_in_source_only_json(tmp_path: Path):
-    """When a translate-strategy chapter ends with one English paragraph that
-    has no Chinese sibling (e.g. translator produced N-1 paragraphs for an N-
-    paragraph source), assemble should still add that orphan to
-    OEBPS/translations/source_only.json so the audit accepts it."""
+def test_assemble_does_not_exempt_unexplained_translate_orphan(tmp_path: Path):
+    """A missing target sibling is evidence of failure, never an exception reason."""
     book_dir = _make_book_dir(tmp_path)
     (book_dir / "chapters" / "item_002.html").write_text(
         "<html><body><p>Paired source paragraph.</p>"
-        "<p>Orphan translate paragraph.</p></body></html>",
+        "<p>This unexplained orphan paragraph is long enough that coverage must report its missing Chinese translation.</p></body></html>",
         encoding="utf-8",
     )
     (book_dir / "chapters" / "ch_01_translation.txt").write_text(
@@ -316,7 +314,10 @@ def test_assemble_includes_orphan_src_from_translate_strategy_in_source_only_jso
     translations = book_dir / "translations"
     translations.mkdir()
     (translations / "source_only.json").write_text(
-        json.dumps(["User-authored exception"], ensure_ascii=False),
+        json.dumps(
+            [{"src_text": "User-authored exception", "reason": "user_approved"}],
+            ensure_ascii=False,
+        ),
         encoding="utf-8",
     )
 
@@ -328,9 +329,15 @@ def test_assemble_includes_orphan_src_from_translate_strategy_in_source_only_jso
         assert source_only_paths, "source_only.json missing from EPUB"
         data = json.loads(z.read(source_only_paths[0]).decode("utf-8"))
 
-    assert "User-authored exception" in data
-    assert "Orphan translate paragraph." in data
-    assert "Paired source paragraph." not in data
+    assert {"src_text": "User-authored exception", "reason": "user_approved"} in data
+    assert not any("unexplained orphan" in entry["src_text"] for entry in data)
+    assert not any(entry["src_text"] == "Paired source paragraph." for entry in data)
+
+    from bilingual_coverage_audit import audit
+
+    passed, failures = audit(out, out)
+    assert not passed
+    assert any("unexplained orphan" in failure for failure in failures)
 
 
 def test_translations_dir_payload_bundled(tmp_path: Path):

@@ -15,8 +15,19 @@ from scripts import href_resolve_audit
 from scripts import state
 from scripts import structural_audit
 from scripts import translation_quality_audit
+from scripts.audit_result import AuditResult
 
 FIXTURE = Path.home() / "ghkb/interested/bilingual_book_maker/test_books/animal_farm.epub"
+
+
+def test_warning_results_do_not_block_suite_gate():
+    results = [
+        AuditResult(name="translation_quality", status="warn", failures=[], warnings=["review me"]),
+        AuditResult(name="href_resolve", status="pass", failures=[]),
+    ]
+
+    assert audit_suite.all_passed(results)
+    assert audit_suite.format_summary(results).splitlines()[0] == "1 PASS / 1 WARN / 0 FAIL"
 
 
 def _fake_translate(chapter_html: str) -> str:
@@ -63,7 +74,7 @@ def test_run_all_orders_and_aggregates_animal_farm(tmp_path: Path):
         "href_resolve",
     ]
     assert audit_suite.all_passed(results) is True
-    assert audit_suite.format_summary(results).splitlines()[0] == "4 PASS / 0 FAIL"
+    assert audit_suite.format_summary(results).splitlines()[0] == "4 PASS / 0 WARN / 0 FAIL"
 
 
 @pytest.mark.skipif(not FIXTURE.is_file(), reason=f"fixture missing: {FIXTURE}")

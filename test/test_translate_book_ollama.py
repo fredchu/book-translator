@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -11,6 +12,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 
 # Import the driver after sys.path setup
 import translate_book_ollama as drv  # type: ignore  # noqa: E402
+from audit_result import AuditResult  # noqa: E402
 from providers.base import ProviderResult  # noqa: E402
 
 
@@ -32,6 +34,72 @@ def _mock_provider_returning(*aligned_per_call_returns: str | None) -> MagicMock
 
     mock.translate.side_effect = _translate
     return mock
+
+
+def test_main_refuses_to_start_without_safe_opencc_dictionary(monkeypatch, capsys):
+    monkeypatch.setattr(drv.offline_postprocess, "_converter", lambda: object())
+    monkeypatch.setattr(drv.offline_postprocess, "_simplified_triggers", lambda _cc: None)
+    translate = MagicMock()
+    monkeypatch.setattr(drv, "translate_single_book", translate)
+
+    assert drv.main(["--book", "test.epub"]) == 2
+    assert "safe Simplified->Traditional conversion unavailable" in capsys.readouterr().err
+    translate.assert_not_called()
+
+
+def test_main_logs_simplified_trigger_count(monkeypatch, capsys):
+    monkeypatch.setattr(drv.offline_postprocess, "_converter", lambda: object())
+    monkeypatch.setattr(drv.offline_postprocess, "_simplified_triggers", lambda _cc: frozenset("这着"))
+    monkeypatch.setattr(
+        drv,
+        "translate_single_book",
+        lambda path, _args: {
+            "path": path,
+            "status": "success",
+            "duration_sec": 0.0,
+            "error_summary": "",
+            "return_code": 0,
+        },
+    )
+
+    assert drv.main(["--book", "test.epub"]) == 0
+    assert "[opencc] simplified_triggers=2" in capsys.readouterr().err
+
+
+def test_record_audit_warnings_persists_actionable_findings(tmp_path):
+    state = {"chapters": {}}
+    state_path = tmp_path / "state.json"
+    results = [
+        AuditResult(
+            name="translation_quality",
+            status="warn",
+            failures=[],
+            warnings=["chapter.xhtml: target too short"],
+        )
+    ]
+
+    records = drv._record_audit_warnings(state, state_path, results)
+
+    assert records == [
+        {"audit": "translation_quality", "warning": "chapter.xhtml: target too short"}
+    ]
+    saved = json.loads(state_path.read_text("utf-8"))
+    assert saved["audit_warnings"] == {"count": 1, "findings": records}
+
+
+def test_summary_surfaces_audit_warning_count(capsys):
+    drv._print_summary(
+        [{
+            "path": Path("book.epub"),
+            "status": "success",
+            "duration_sec": 1.0,
+            "error_summary": "",
+            "return_code": 0,
+            "audit_warnings": 3,
+        }]
+    )
+
+    assert "audit_warnings=3" in capsys.readouterr().err
 
 
 def test_recursion_splits_failed_chunk_into_halves(tmp_path):

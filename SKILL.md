@@ -176,16 +176,20 @@ is per-chapter, so a killed/interrupted run resumes on the next invocation.
 Offline post-processing (`scripts/offline_postprocess.py`) recovers the quality
 the skipped glossary/nav build would have provided, since the offline path has no
 glossary:
-- **Simplified→Traditional** — every chapter is run through opencc `s2tw` at
-  write time, fixing the local model's residual Simplified leak and normalising
-  to Taiwan character forms (soft dependency: a no-op with one warning if opencc
-  is absent). **`s2tw`, never `s2twp`** — the `p` adds a mainland→Taiwan
-  *vocabulary* table that includes computing terms (循环→迴圈, 调用→呼叫,
-  窗口→視窗), and since the model already emits Traditional Chinese, that table
-  fires on correct prose: ch.7 of a gut-microbiome book came back with 血液迴圈,
-  隨時呼叫 and 易感視窗. A short `_PROTECTED_TERMS` list additionally shields
-  words whose Simplified form maps to several Traditional ones (干擾 would
-  otherwise become 幹擾, 排泄 → 排洩).
+- **Simplified→Traditional** — at write time, sentences delimited by `。！？；：`,
+  newlines, and ASCII `.!? ` are run through opencc `s2tw` only when they contain an unambiguous Simplified
+  character from opencc's `STCharacters.txt` (plus the known mainland form `着`).
+  A character does not trigger when it is one of its own Traditional candidates,
+  so valid Taiwan forms such as `范` are left alone. This sentence gate matters
+  because even `s2tw` can corrupt correct Traditional prose (`肥皂劇→肥皂剧`,
+  `只能→隻能`); `s2twp` is still forbidden because its additional vocabulary
+  table is more aggressive (`循环→迴圈`, `调用→呼叫`, `窗口→視窗`). A small
+  Taiwan-form trigger exclusion set and the existing `_PROTECTED_TERMS` shields
+  reduce collateral conversions. Ambiguous mainland forms such as `某种` can be
+  missed by design (measured near 3% of residual conversion hunks). The driver
+  validates and logs the trigger-set size before extraction/GPU work, refusing to
+  start if opencc or `STCharacters.txt` is unavailable; the helper itself remains
+  a warning-only no-op so a late chapter write is not destroyed.
 - **Character-name coherence** — without a glossary the model drifts between
   transliteration variants (瑪德琳 vs 梅德琳); a conservative pass merges minority
   variants (length ≥ 3, free-standing, dominated ≥ 4×, never two real names) into
@@ -708,14 +712,40 @@ algorithm through `scripts/content_blocks.py`. A missing or malformed
 EPUB package is reported as an audit failure rather than raising — this is
 the canonical tolerant behavior.
 
+**Backward incompatibility (2026-09-09).** `source_only.json` entries now carry an
+explicit `{src_text, reason}` and bare strings are ignored (with one stderr
+warning). The old bare-string format encoded the rule "no zh sibling means
+exempt", which is what let 506 echoed or misaligned paragraphs through the gate
+in earlier books. Consequence: **re-running the audits against an EPUB assembled
+by an older version reports many failures** — those EPUBs carry the old list
+format. Assemble and audit run together in the normal pipeline, so this only
+bites when auditing a previously shipped file; re-assemble it first.
+
 `bilingual_coverage_audit.py` fails when a long English content paragraph lacks
 an adjacent Han-character sibling, **except** when the paragraph's text is
 listed in `OEBPS/translations/source_only.json` inside the EPUB (same exception
 contract as `translation_quality_audit.py`). `href_resolve_audit.py` fails when
 any internal XHTML link target is missing from the EPUB zip.
 `translation_quality_audit.py` fails on Round-2-style placeholders,
-span-concatenated headings, too-short target paragraphs, or unlisted
-source-only paragraphs.
+model-control-token leaks, the synthetic `譯文：` prefix, span-concatenated
+headings, clearly truncated target paragraphs, Simplified residue, or unlisted
+source-only paragraphs. Borderline short targets that look like titles or compact
+complete sentences are reported as `WARN` for human review without blocking the
+gate; index-like entries remain `FAIL` because the corpus shows frequent alignment
+errors there. This grading has an inherent ambiguity: a 50–150-character,
+single-sentence source truncated to about 21% can still look like a legitimate
+compact translation and become WARN (266-paragraph corpus exposure, about 2% of
+body prose). It never becomes PASS, so unattended runs must inspect the persisted
+`state.json.audit_warnings`; the driver also returns/logs the warning count.
+
+The bilingual rewriter never prepends Han text merely to satisfy coverage. If a
+model returns English/reference text, it is preserved honestly. Assembly emits a
+`source_only.json` exception only with `src_text` plus a non-empty reason derived
+from paragraph location (bibliography/index/notes/publication metadata) or an
+explicit manifest source-only strategy. A missing target sibling alone is not an
+exception reason. Long unexplained English output therefore fails
+`bilingual_coverage_audit.py`; short identifiers and non-Latin notes may remain
+unchanged without being sent through page-role inference.
 
 ### Step 9: Translation spot-check
 

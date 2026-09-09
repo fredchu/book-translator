@@ -129,6 +129,12 @@ _MODEL_TOKEN_RE = re.compile(r"[<\[]\/?[｜|ｯ][^\s<>\[\]|｜ｯ]*[｜|ｯ]>")
 # default UNICODE flag and would eat real translation content.
 _PARTIAL_HY_TOKEN_RE = re.compile(r"[<\[]\/?[｜|ｯ]?hy[-_]?A[A-Za-z0-9_]*")
 
+
+def contains_model_token_leak(text: str) -> bool:
+    """Return whether generated text still contains a Hy-MT2 control token."""
+    return bool(_MODEL_TOKEN_RE.search(text) or _PARTIAL_HY_TOKEN_RE.search(text))
+
+
 _AUP_PHRASES = [
     "I cannot help with",
     "I'm unable to",

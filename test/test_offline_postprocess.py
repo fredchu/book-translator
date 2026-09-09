@@ -110,6 +110,55 @@ def test_to_traditional_leaves_no_placeholder_residue() -> None:
     assert not any(chr(0xE000 + i) in out for i in range(len(offline_postprocess._PROTECTED_TERMS)))
 
 
+# Regression corpus from review-01 §5. These deliberately mix valid Taiwan
+# characters with Simplified residuals and punctuation-delimited sentences.
+@pytest.mark.parametrize(
+    "source,expected",
+    [
+        ("范·雷文霍克說：这很重要", "范·雷文霍克說：這很重要"),
+        ("盧卡斯·范·歐登霍夫", "盧卡斯·范·歐登霍夫"),
+        ("受到干擾的血液循環", "受到干擾的血液循環"),
+        ("肥皂劇明星", "肥皂劇明星"),
+        ("最多只能撥打三次", "最多只能撥打三次"),
+        ("疱疹發作次數減少了", "疱疹發作次數減少了"),
+        ("雇主們對這個平台", "雇主們對這個平台"),
+        ("我们在公司里工作", "我們在公司裡工作"),
+        ("她穿着礼服", "她穿著禮服"),
+        ("第七章", "第七章"),
+        ("什么是腸道直覺", "什麼是腸道直覺"),
+        ("范·雷文霍克的發現\n\n这很重要。", "范·雷文霍克的發現\n\n這很重要。"),
+        ("Mayer, E. A. 2011. 范·雷文霍克. 这是引文", "Mayer, E. A. 2011. 范·雷文霍克. 這是引文"),
+    ],
+)
+def test_to_traditional_sentence_gated_fixtures(source: str, expected: str) -> None:
+    pytest.importorskip("opencc")
+
+    assert offline_postprocess.to_traditional(source) == expected
+
+
+def test_to_traditional_known_ambiguous_character_miss() -> None:
+    """种 is also a Traditional surname, so the accepted ~3% miss stays visible."""
+    pytest.importorskip("opencc")
+
+    assert offline_postprocess.to_traditional("某种程度上") == "某种程度上"
+
+
+def test_simplified_trigger_definition_rejects_ambiguous_traditional() -> None:
+    pytest.importorskip("opencc")
+
+    cc = offline_postprocess._converter()
+    triggers = offline_postprocess._simplified_triggers(cc)
+
+    assert triggers is not None
+    assert "这" in triggers
+    assert "着" in triggers
+    assert "范" not in triggers
+    assert "疱" not in triggers
+    assert "雇" not in triggers
+    assert "苧" not in triggers
+    assert "洼" not in triggers
+
+
 def test_normalize_character_names_merges_dominant_hamming_variant(tmp_path: Path) -> None:
     chapters = _chapters(tmp_path)
     canonical_mentions = "。".join(["瑪德琳"] * 8)

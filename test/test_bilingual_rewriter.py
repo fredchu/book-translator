@@ -86,6 +86,23 @@ def test_promoted_heading_does_not_duplicate_nav_title():
     assert out.index("THE TITLE") < out.index("標題譯文")
 
 
+def test_insert_bilingual_never_manufactures_han_prefix_for_non_han_results():
+    html = "<html><body><p>1</p><p>* ἀπορία .</p><p>Aagaard, Kjersti, Jun Ma, et al.</p></body></html>"
+    entry = {"id": "refs", "output_strategy": "translate"}
+
+    out, warnings = insert_bilingual(
+        html,
+        entry,
+        ["1", "* ἀπορία .", "Aagaard, Kjersti, Jun Ma, et al."],
+    )
+
+    assert warnings == []
+    assert "譯文：" not in out
+    assert out.count("1") >= 2
+    assert out.count("ἀπορία") == 2
+    assert out.count("Aagaard") == 2
+
+
 def test_insert_bilingual_warns_on_paragraph_mismatch():
     html = "<html><body><p>One.</p><p>Two.</p></body></html>"
     entry = {"id": "item_001", "translation_id": "ch_01", "output_strategy": "translate"}

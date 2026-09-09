@@ -16,6 +16,7 @@ from dispatch import html_to_paragraphs  # type: ignore  # noqa: E402
 import manifest as manifest_module  # type: ignore  # noqa: E402
 import nav_builder  # type: ignore  # noqa: E402
 import opf_builder  # type: ignore  # noqa: E402
+import paragraph_classification as paragraph_classification_module  # type: ignore  # noqa: E402
 import translations_extra as translations_extra_module  # type: ignore  # noqa: E402
 
 VALID_STRATEGIES = {"translate", "source_only", "nav_generated", "drop_explicit"}
@@ -258,12 +259,12 @@ def _emit_translations_payload(
     opf_dir: str,
     represented_entries: list[dict],
 ) -> None:
-    """Bundle <book_dir>/translations/*.json into the EPUB and auto-fill source_only.json.
+    """Bundle translations metadata and reasoned source-only exceptions.
 
-    The audits (translation_quality, bilingual_coverage) expect EPUB-internal
-    `<opf_dir>/translations/source_only.json` listing every src_text that
-    intentionally has no zh sibling. We derive missing entries from the
-    already-rewritten source_only pages and translate pages in `replacements`.
+    Missing/non-Han targets on translate pages are exceptions only when the
+    paragraph classifier can explain why from location plus content. A missing
+    sibling by itself is never a reason: unexplained omissions must stay visible
+    to the audits.
     """
     import json as _json
     import re as _re
@@ -281,41 +282,61 @@ def _emit_translations_payload(
     def _clean(text: str) -> str:
         return _re.sub(r"\s+", " ", text).strip()
 
-    orphan_texts: list = []
+    exceptions: list[dict[str, str]] = []
     seen: set[str] = set()
     if source_only_key in payload:
         data = _json.loads(payload[source_only_key].decode("utf-8"))
-        if isinstance(data, list):
-            orphan_texts.extend(data)
-            for item in data:
-                if isinstance(item, str):
-                    seen.add(_clean(item))
-                elif isinstance(item, dict) and isinstance(item.get("src_text"), str):
-                    seen.add(_clean(item["src_text"]))
-    strategy_by_basename = {
-        posixpath.basename(entry.get("original_path") or entry.get("href") or ""): entry.get("output_strategy")
+        for src_text, reason in paragraph_classification_module.reasoned_source_only_entries(data).items():
+            clean_text = _clean(src_text)
+            if clean_text and clean_text not in seen:
+                seen.add(clean_text)
+                exceptions.append({"src_text": clean_text, "reason": reason})
+
+    entry_by_basename = {
+        posixpath.basename(entry.get("original_path") or entry.get("href") or ""): entry
         for entry in represented_entries
         if entry.get("output_strategy") in {"source_only", "translate"}
     }
-    strategy_by_basename.pop("", None)
+    entry_by_basename.pop("", None)
     for key, body in replacements.items():
-        strategy = strategy_by_basename.get(posixpath.basename(key))
-        if strategy is None:
+        entry = entry_by_basename.get(posixpath.basename(key))
+        if entry is None:
             continue
+        strategy = entry.get("output_strategy")
         soup = BeautifulSoup(body, "html.parser")
         for src_node in soup.find_all(
             class_=lambda v: bool(v) and "src" in (v if isinstance(v, list) else str(v).split())
         ):
-            next_tag = src_node.find_next_sibling()
-            if strategy == "translate" and next_tag is not None and "tgt" in set(next_tag.get("class", [])):
-                continue
             txt = _clean(src_node.get_text(" ", strip=True))
             if not txt or han.search(txt) or txt in seen:
                 continue
+            next_tag = src_node.find_next_sibling()
+            has_han_target = bool(
+                next_tag is not None
+                and "tgt" in set(next_tag.get("class", []))
+                and han.search(next_tag.get_text(" ", strip=True))
+            )
+            if has_han_target:
+                continue
+
+            reason: str | None = None
+            if strategy == "source_only":
+                detail = str(entry.get("reason") or entry.get("role") or "declared")
+                reason = f"manifest_source_only:{detail}"
+            elif paragraph_classification_module.is_english_content(txt):
+                reason = paragraph_classification_module.untranslated_reason(
+                    key, src_node, txt
+                )
+            if reason is None:
+                continue
             seen.add(txt)
-            orphan_texts.append(txt)
-    if orphan_texts:
-        payload[source_only_key] = _json.dumps(orphan_texts, ensure_ascii=False, indent=2).encode("utf-8")
+            exceptions.append({"src_text": txt, "reason": reason})
+    if exceptions:
+        payload[source_only_key] = _json.dumps(
+            exceptions, ensure_ascii=False, indent=2
+        ).encode("utf-8")
+    else:
+        payload.pop(source_only_key, None)
 
     # Use compatibility_items so the payload is written by BOTH archive
     # writers (write_from_source_archive overlays missing items; write_standalone_archive

@@ -250,13 +250,14 @@ def _translations_extra_by_exact_text(entry: dict) -> dict:
 
 
 def _ensure_han_translation(translated: str, source_text: str) -> str:
-    if not translated:
-        return translated
-    if re.search(r"[\u4e00-\u9fff]", translated):
-        return translated
-    if _looks_like_identifier(source_text):
-        return translated
-    return f"譯文：{translated}"
+    """Preserve the model result; never manufacture Han to satisfy an audit.
+
+    Whether an already non-Han result is legitimate is decided later from its
+    paragraph location and recorded with a reason in source_only.json.
+    ``source_text`` remains in the signature for compatibility with callers.
+    """
+    del source_text
+    return translated
 
 
 def _looks_like_identifier(text: str) -> bool:

@@ -644,10 +644,12 @@ def translate_single_book(book_path: Path, args: argparse.Namespace) -> dict[str
             "return_code": return_code,
         }
 
+    audit_warning_records: list[dict[str, str]] = []
     if not args.no_audit:
         print("[audit] running 4 deterministic gates", file=sys.stderr)
         results = run_audits(source=book_path, output=out_epub, book_dir=book_dir)
         print(format_summary(results), file=sys.stderr)
+        audit_warning_records = _record_audit_warnings(state, state_path, results)
         if not all_passed(results):
             print("[audit] one or more gates failed; review report above", file=sys.stderr)
             return_code = 4
@@ -659,9 +661,11 @@ def translate_single_book(book_path: Path, args: argparse.Namespace) -> dict[str
                 "duration_sec": duration_sec,
                 "error_summary": error_summary,
                 "return_code": return_code,
+                "audit_warnings": len(audit_warning_records),
             }
 
-    print(f"[OK] {out_epub}", file=sys.stderr)
+    warning_suffix = f" (audit: {len(audit_warning_records)} WARN)"
+    print(f"[OK] {out_epub}{warning_suffix}", file=sys.stderr)
     duration_sec = time.monotonic() - started
     return {
         "path": book_path,
@@ -669,7 +673,23 @@ def translate_single_book(book_path: Path, args: argparse.Namespace) -> dict[str
         "duration_sec": duration_sec,
         "error_summary": "",
         "return_code": return_code,
+        "audit_warnings": len(audit_warning_records),
     }
+
+
+def _record_audit_warnings(
+    state: dict,
+    state_path: Path,
+    results: list,
+) -> list[dict[str, str]]:
+    records = [
+        {"audit": result.name, "warning": warning}
+        for result in results
+        for warning in result.warnings
+    ]
+    state["audit_warnings"] = {"count": len(records), "findings": records}
+    state_mod.save(state_path, state)
+    return records
 
 
 def _print_summary(results: list[dict[str, object]]) -> None:
@@ -683,6 +703,9 @@ def _print_summary(results: list[dict[str, object]]) -> None:
         duration_sec = float(result["duration_sec"])
         error_summary = result["error_summary"]
         suffix = f" error={error_summary}" if error_summary else ""
+        warning_count = int(result.get("audit_warnings", 0))
+        if warning_count:
+            suffix += f" audit_warnings={warning_count}"
         print(f"- {path.name}: {status} {duration_sec:.1f}s{suffix}", file=sys.stderr)
 
 
@@ -694,6 +717,24 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--ollama-model is required when --engine=ollama")
     if args.engine == "omlx" and not args.omlx_model:
         parser.error("--omlx-model is required when --engine=omlx")
+
+    # Validate the text dictionary before extraction, provider startup, or GPU
+    # work. Some OpenCC distributions can construct s2tw from binary .ocd2 files
+    # but do not ship the STCharacters.txt needed by the safe sentence gate.
+    converter = offline_postprocess._converter()
+    triggers = (
+        offline_postprocess._simplified_triggers(converter)
+        if converter is not None
+        else None
+    )
+    if triggers is None:
+        print(
+            "ERROR: safe Simplified->Traditional conversion unavailable; "
+            "install opencc-python-reimplemented with STCharacters.txt",
+            file=sys.stderr,
+        )
+        return 2
+    print(f"[opencc] simplified_triggers={len(triggers)}", file=sys.stderr)
 
     results: list[dict[str, object]] = []
     total_books = len(args.book)

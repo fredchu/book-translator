@@ -24,8 +24,8 @@ def test_translation_quality_audit_passes_good_pair(tmp_path: Path):
 def test_translation_quality_audit_uses_configurable_min_length_ratio(tmp_path: Path):
     epub = _write_epub(
         tmp_path,
-        f'<p class="src">{"A" * 100}</p>'
-        f'<p class="tgt tgt-zh">{"中" * 25}</p>',
+        f'<p class="src">{"A" * 200}</p>'
+        f'<p class="tgt tgt-zh">{"中" * 50}</p>',
     )
 
     passed, failures = translation_quality_audit.audit(epub, min_length_ratio=0.22)
@@ -66,6 +66,62 @@ def test_translation_quality_audit_skips_length_ratio_for_headings(tmp_path: Pat
 
     assert passed
     assert failures == []
+
+
+def test_translation_quality_audit_grades_reviewable_short_targets_as_warnings(tmp_path: Path):
+    body = "".join(
+        [
+            '<p class="src h3">How Stress Effects Can Be Transmitted from One Generation to the Next</p>'
+            '<p class="tgt tgt-zh">壓力效應如何從一代傳遞到下一代</p>',
+            '<p class="src con">Chapter 7: Understanding Intuitive Decision Making</p>'
+            '<p class="tgt tgt-zh">第七章：理解直覺決策</p>',
+            '<p class="src">Before we automate an action, we should ask five questions:</p>'
+            '<p class="tgt tgt-zh">採取行動前先問五個問題：</p>',
+            '<p class="src">—Michael D. Gershon, MD, author of The Second Brain and leading researcher</p>'
+            '<p class="tgt tgt-zh">——《第二大腦》作者麥可·葛森</p>',
+            '<p class="src p">Can you even imagine what that must have felt like?</p>'
+            '<p class="tgt tgt-zh">你能想像那樣的感覺嗎？</p>',
+        ]
+    )
+    epub = _write_epub(tmp_path, body)
+
+    result = translation_quality_audit.run(epub, min_length_ratio=0.22)
+    passed, red_failures = translation_quality_audit.audit(epub, min_length_ratio=0.22)
+
+    assert result.status == "warn"
+    assert result.passed
+    assert result.failures == []
+    assert len(result.warnings) == 5
+    assert passed and red_failures == []
+
+
+def test_translation_quality_audit_keeps_index_misalignment_red(tmp_path: Path):
+    epub = _write_epub(
+        tmp_path,
+        '<li class="src">extreme ultraviolet lithography (EUV) machines, 42</li>'
+        '<li class="tgt tgt-zh">譯文：F</li>',
+    )
+
+    result = translation_quality_audit.run(epub)
+
+    assert result.status == "fail"
+    assert any("target too short" in failure for failure in result.failures)
+    assert any("banned pattern '譯文：'" in failure for failure in result.failures)
+    assert result.warnings == []
+
+
+def test_translation_quality_audit_keeps_model_token_leak_red(tmp_path: Path):
+    epub = _write_epub(
+        tmp_path,
+        '<p class="src">This source looks like a short sentence that would otherwise need human review.</p>'
+        '<p class="tgt tgt-zh">這是短句。&lt;｜hy-Assistant｜&gt;</p>',
+    )
+
+    result = translation_quality_audit.run(epub)
+
+    assert result.status == "fail"
+    assert any("model control token leaked" in failure for failure in result.failures)
+    assert result.warnings == []
 
 
 def test_translation_quality_audit_still_checks_banned_patterns_in_headings(tmp_path: Path):

@@ -12,6 +12,21 @@ def test_audit_result_passed_property_and_format_lines():
     assert result.format_lines() == ["href_resolve: PASS"]
 
 
+def test_audit_result_warning_is_visible_but_non_blocking():
+    result = AuditResult(
+        name="translation_quality",
+        status="warn",
+        failures=[],
+        warnings=["chapter.xhtml: review short target"],
+    )
+
+    assert result.passed is True
+    assert result.format_lines() == [
+        "translation_quality: WARN",
+        "  - warning: chapter.xhtml: review short target",
+    ]
+
+
 def test_audit_result_formats_failures():
     result = AuditResult(
         name="translation_quality",

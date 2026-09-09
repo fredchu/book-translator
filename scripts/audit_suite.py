@@ -36,9 +36,10 @@ def all_passed(results: list[AuditResult]) -> bool:
 
 
 def format_summary(results: list[AuditResult]) -> str:
-    passed = sum(1 for result in results if result.passed)
-    failed = len(results) - passed
-    lines = [f"{passed} PASS / {failed} FAIL"]
+    passed = sum(1 for result in results if result.status == "pass")
+    warned = sum(1 for result in results if result.status == "warn")
+    failed = sum(1 for result in results if result.status == "fail")
+    lines = [f"{passed} PASS / {warned} WARN / {failed} FAIL"]
     for result in results:
         lines.extend(result.format_lines())
     return "\n".join(lines)

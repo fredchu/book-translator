@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Simplified→Traditional conversion is now sentence-scoped, not whole-chapter** (2026-09-09).
+  `s2tw` alone was still unsafe on already-Traditional prose: it emits Simplified on some input
+  (肥皂劇 → 肥皂**剧**), guesses phrases wrong (只能 → **隻**能), and rewrites characters the Ministry
+  of Education lists as correct (疱疹 → **皰**疹). Measured across three books (5,190 paragraphs,
+  369K Han characters): real Simplified residue was 227 characters (0.06%), present in 1.5% of
+  paragraphs — while opencc *changed* 8.1% of paragraphs, wrongly rewriting about **50 correct
+  characters per book** (里→裡 in transliterated names, 干預→幹預, 手表示抗議→手**錶**示).
+  `to_traditional` now splits on sentence boundaries and converts only sentences that contain an
+  unambiguously Simplified character. The trigger set is read from opencc's own `STCharacters.txt`
+  under the rule "the character is a key, is **not** in its own candidate list, and `s2tw` changes
+  it" — `s2t(x) != x` cannot be used, since it fires on 77% of pure-Traditional paragraphs.
+  `着` is added (it lives in `TWVariants`, not `STCharacters`); the rest of `TWVariants` is not,
+  because it also normalises Traditional variants. A six-character exclusion list (疱雇霉晒苧洼)
+  comes from the Ministry of Education dictionary — each has its own meaning, and 洼 is a surname.
+  **Result: 0 wrong rewrites on a 195K-character finished book, down from 24; about 3% of real
+  Simplified residue is knowingly missed** (某种, 面粉, 老板 — characters that are legal Traditional
+  on their own), a trade the user accepted explicitly. `translate_book_ollama` now loads the
+  trigger set before spending any GPU time and refuses to start without it, rather than silently
+  translating a whole book unconverted.
+
+### Added
+- **Audits report three levels, not two** (2026-09-09). `translation_quality_audit` failed a whole
+  run over three correct chapter titles ("Chapter 7: Understanding Intuitive Decision Making" →
+  「第七章：理解直覺決策」, ratio 0.20), because Chinese titles are far more compact than English
+  ones (0.15–0.22 versus 0.30 for body prose) and the audit only recognised `<h1>`–`<h6>`, not the
+  `<p class="h3">` many publishers use. Across the whole local corpus (27 bilingual EPUBs, 20,916
+  src/tgt pairs) that rule holds **1,398 genuine failures** — misaligned pairs, truncated output,
+  leaked model tokens — against **7 false alarms**. The gate was never noise; the problem was that
+  a human seeing red had to decide which kind it was, and then shipped anyway. `AuditResult` now
+  carries `warnings` alongside `failures`: alignment breaks, truncation, model-token leaks and
+  Simplified residue stay red; title-shaped and short-sentence length ratios go amber and no longer
+  block. Verified by conservation — 1,398 red + 7 amber = the original 1,405 — so nothing was
+  released. Amber is surfaced through `state.json`, the result dict and the run log, because a
+  warning nobody can see in an unattended run is not a warning.
+
+### Fixed
+- **Assembly no longer fakes bilingual coverage** (2026-09-09). `bilingual_rewriter` stamped a
+  「譯文：」 prefix onto any translation with no Han characters, purely so that
+  `bilingual_coverage_audit` — which checks for an adjacent Han sibling — would pass. Readers got
+  「譯文：Aagaard, Kjersti, Jun Ma, Kathleen M. Antony…」; the finished Mind-Gut Connection carried
+  85 of them, and across the corpus the prefix covered **1,257 paragraphs**, of which 506 were
+  echoed English or misaligned notes that cleared both gates because of it. The prefix is gone.
+  Exemptions now require a *reason*: `assemble` writes `{src_text, reason}` and only when a
+  classifier can name one (`bibliography`, `index`, `notes`, `publication_metadata`, `identifier`),
+  and the audit accepts only reasoned entries. The old "no zh sibling means exempt" rule was the
+  same mistake in a different place — it justified an exemption by absence rather than by cause.
+  Page-role matching is whole-token: substring matching exempted `preferences` (contains
+  "reference"), a book's opening `index.xhtml`, and `notes_on_contributors`, and one book's
+  filename (`b05`) was hardcoded into a classifier every book shares — all four in the direction
+  of weakening the gate. Short untranslated English newly in scope (`—Reid Hoffman`,
+  `Begin Reading`) reports amber rather than red, since promoting it would flip already-shipped
+  books from green to red. Nodes that already carry their own Chinese — the bilingual ToC renders
+  「Title Page ｜ 書名頁」 inside one node — are excluded from the coverage universe; without that,
+  Superagency's contents page produced 6 failures and The Meaning of Your Life's 3.
+  **Four books re-assembled and re-audited: zero red.**
+  Backward incompatible: `source_only.json` bare-string entries are ignored (with one warning), so
+  auditing an EPUB built by an older version reports failures until it is re-assembled.
+
 ### Fixed
 - **Chapter titles split across three blocks were not recognised, wrecking the whole ToC**
   (2026-09-09). `styled_paragraph_title` required ALL CAPS — deliberately, since on the local
