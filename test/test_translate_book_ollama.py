@@ -323,6 +323,110 @@ def test_translate_single_book_concurrent_cross_chapter_carry_is_translation(tmp
     assert "第一章譯文" in chapter2_call["prompt"]
 
 
+@pytest.mark.parametrize("request_limit", [1, 2])
+def test_translate_single_book_cross_chapter_flag_is_independent_bounded_and_state_safe(
+    tmp_path, monkeypatch, request_limit
+):
+    """Opt-in chapters overlap without cross-chapter carry, while one shared
+    request budget bounds nested chapter/chunk pools and state has one writer."""
+    book_path = tmp_path / "book.epub"
+    book_path.write_bytes(b"fake epub")
+    out_dir = tmp_path / "out"
+
+    def fake_extract(_book_path: Path, out_parent: Path) -> None:
+        book_dir = out_parent / book_path.stem
+        chapters_dir = book_dir / "chapters"
+        chapters_dir.mkdir(parents=True)
+        spine = []
+        for i in range(1, 4):
+            cid = f"item_{i:03d}"
+            (chapters_dir / f"{cid}.html").write_text(
+                f"<p>Chapter {i} source A.</p><p>Chapter {i} source B.</p>", encoding="utf-8"
+            )
+            spine.append({"id": cid, "output_strategy": "translate", "char_count": 10})
+        (book_dir / "manifest.json").write_text(
+            json.dumps({"spine": spine}), encoding="utf-8"
+        )
+
+    class TrackingProvider(_FakeConcurrentProvider):
+        def __init__(self) -> None:
+            super().__init__(response_for={}, max_concurrent_requests=request_limit)
+            self.inflight = 0
+            self.max_inflight = 0
+            self.active_by_chapter: dict[str, int] = {}
+            self.max_active_chapters = 0
+
+        def translate(self, prompt, *, request_id, log_dir=None, system=None, temperature=None):
+            chapter = request_id.split("_", 1)[0]
+            with self._lock:
+                self.inflight += 1
+                self.max_inflight = max(self.max_inflight, self.inflight)
+                self.active_by_chapter[chapter] = self.active_by_chapter.get(chapter, 0) + 1
+                self.max_active_chapters = max(
+                    self.max_active_chapters, len(self.active_by_chapter)
+                )
+            try:
+                time_module.sleep(0.04)
+                with self._lock:
+                    self.calls.append({"request_id": request_id, "prompt": prompt,
+                                       "system": system, "temperature": temperature})
+                chapter_number = next(n for n in ("1", "2", "3") if f"Chapter {n} source " in prompt)
+                return ProviderResult(raw_text=f"[[PARA_1]]\n第{chapter_number}章譯文",
+                                      model="fake", latency_ms=1, retries=0, metadata={})
+            finally:
+                with self._lock:
+                    self.inflight -= 1
+                    self.active_by_chapter[chapter] -= 1
+                    if self.active_by_chapter[chapter] == 0:
+                        del self.active_by_chapter[chapter]
+
+    provider = TrackingProvider()
+    main_thread = threading.get_ident()
+    save_threads: list[int] = []
+    real_save = drv.state_mod.save
+
+    def tracked_save(path, state):
+        save_threads.append(threading.get_ident())
+        return real_save(path, state)
+
+    monkeypatch.setattr(drv, "extract_epub", MagicMock(extract=fake_extract))
+    monkeypatch.setattr(drv, "OmlxProvider", lambda **_kwargs: provider)
+    monkeypatch.setattr(drv.offline_postprocess, "to_traditional", lambda text: text)
+    monkeypatch.setattr(drv.state_mod, "save", tracked_save)
+
+    args = drv.build_parser().parse_args(
+        ["--book", str(book_path), "--out", str(out_dir), "--engine", "omlx",
+         "--max-concurrent-requests", str(request_limit), "--concurrent-chapters",
+         "--chunk-max-chars", "5", "--no-seam-repair"]
+    )
+    drv.translate_single_book(book_path, args)
+
+    if request_limit > 1:
+        assert provider.max_active_chapters >= 2  # another chapter starts before the first finishes
+    else:
+        assert provider.max_inflight == 1  # flag is valid even with no intra-chapter fan-out
+    assert provider.max_inflight <= request_limit  # one global budget, not chapters × chunks
+    chapter2_call = next(c for c in provider.calls if c["request_id"].startswith("2_ck01"))
+    assert "第1章譯文" not in chapter2_call["prompt"]
+    assert "Chapter 1 source A." not in chapter2_call["prompt"]
+    assert "Chapter 1 source B." not in chapter2_call["prompt"]
+    saved = json.loads((out_dir / "book" / "state.json").read_text(encoding="utf-8"))
+    assert all(saved["chapters"][f"item_{i:03d}"]["status"] == drv.state_mod.DONE
+               for i in range(1, 4))
+    assert save_threads and set(save_threads) == {main_thread}
+
+
+def test_chapter_provider_namespaces_fallback_ids_without_double_prefixing():
+    provider = MagicMock()
+    wrapped = drv._ChapterNamespacedProvider(provider, "2")
+    wrapped.translate("p", request_id="ck01_fallback")
+    wrapped.translate("p", request_id="2_ck01_attempt_0")
+    assert [call.kwargs["request_id"] for call in provider.translate.call_args_list] == [
+        "2_ck01_fallback",
+        "2_ck01_attempt_0",
+    ]
+
+
 def test_resolve_max_workers_defaults_to_one_without_attribute():
     """review-15: a provider with supports_concurrency=True but no
     max_concurrent_requests attribute (e.g. AnthropicProvider) must not

@@ -95,7 +95,9 @@ def _setup(tmp_path: Path, *, port: int, offers=None) -> dict[str, str]:
 
 
 def _run(env: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(["bash", str(SCRIPT), *args], capture_output=True, text=True, errors="replace", env=env, timeout=180, cwd=REPO)
+    # Use macOS's system Bash 3.2 rather than a Homebrew Bash found via PATH;
+    # cloud_llm.sh must keep working with set -u when optional arrays are empty.
+    return subprocess.run(["/bin/bash", str(SCRIPT), *args], capture_output=True, text=True, errors="replace", env=env, timeout=180, cwd=REPO)
 
 
 def _calls(env) -> list[str]:
@@ -116,15 +118,43 @@ def test_vast_happy_path_waits_for_models_then_translates_then_destroys(tmp_path
         r = _run(env, "--provider", "vast", "--", "--book", "x.epub", "--out", "o")
         assert r.returncode == 0, r.stderr[-1500:]
         out = Path(env["FAKE_TRANSLATE_OUT"]).read_text(encoding="utf-8")
-        assert f"--engine omlx --omlx-host http://127.0.0.1:{port} --omlx-model {MODEL} --book x.epub --out o" in out
+        assert f"--engine omlx --omlx-host http://127.0.0.1:{port} --omlx-model {MODEL}" in out
+        assert "--concurrent-chapters --max-concurrent-requests 4" in out
+        assert "--book x.epub --out o" in out
         key = out.split("KEY: ")[1].strip(); assert len(key) >= 20
         calls = _calls(env)
         create = next(c for c in calls if "create instance" in c)
         assert "--image vllm/vllm-openai:v0.28.0" in create and "--env -p 8000:8000" in create
         assert f"--raw --args {MODEL} --served-model-name {MODEL} --port 8000" in create and f"--api-key {key}" in create
+        assert "--max-num-seqs 4" in create
         assert "--ssh" not in create and "--disable-log-requests" not in create and not create.endswith("--raw")
         assert "destroyed" in calls and calls.index("destroyed") > calls.index(create)
         assert "已確認 7001 不在清單中" in r.stderr
+    finally:
+        srv.shutdown()
+
+
+def test_cloud_concurrency_one_knob_and_escape_hatch(tmp_path: Path) -> None:
+    srv, port = _serve_models()
+    try:
+        env = _setup(tmp_path, port=port)
+        env["CLOUD_LLM_CONCURRENCY"] = "12"
+        r = _run(env, "--", "--book", "x.epub")
+        assert r.returncode == 0, r.stderr[-1500:]
+        out = Path(env["FAKE_TRANSLATE_OUT"]).read_text(encoding="utf-8")
+        assert "--concurrent-chapters --max-concurrent-requests 12" in out
+        create = next(c for c in _calls(env) if "create instance" in c)
+        assert "--max-num-seqs 12" in create
+
+        off_dir = tmp_path / "off"
+        off_dir.mkdir()
+        env2 = _setup(off_dir, port=port)
+        env2["CLOUD_LLM_CONCURRENT_CHAPTERS"] = "0"
+        r2 = _run(env2, "--", "--book", "x.epub")
+        assert r2.returncode == 0, r2.stderr[-1500:]
+        out2 = Path(env2["FAKE_TRANSLATE_OUT"]).read_text(encoding="utf-8")
+        assert "--concurrent-chapters" not in out2
+        assert "--max-concurrent-requests" not in out2
     finally:
         srv.shutdown()
 

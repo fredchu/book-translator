@@ -21,6 +21,8 @@
 #   --model HF_ID            CLOUD_LLM_MODEL（蓋掉 profile 的模型）
 #   --gpu NAME               CLOUD_LLM_GPU（蓋掉 profile 的卡；Vast 寫法 "RTX 5090"，RunPod 寫法 "NVIDIA GeForce RTX 5090"）
 #   --max-dph X              CLOUD_LLM_MAX_DPH（Vast 價格上限，預設 int4 0.6 / fp8 1.2）
+#   CLOUD_LLM_CONCURRENCY     client/server 共用併發寬度（預設 4；量批次曲線可設 8/12/16）
+#   CLOUD_LLM_CONCURRENT_CHAPTERS=0  關掉雲端預設的跨章併發，退回舊行為
 #   --keep / --stop DIR      見上
 #
 # 憑證：Vast → VAST_API_KEY 或 ~/.config/vastai/vast_api_key；RunPod → RUNPOD_API_KEY 或 ~/.config/runpod/api_key。
@@ -43,6 +45,8 @@ PROFILE="${CLOUD_LLM_PROFILE:-int4}"
 MODEL="${CLOUD_LLM_MODEL:-}"
 GPU="${CLOUD_LLM_GPU:-}"
 MAX_DPH="${CLOUD_LLM_MAX_DPH:-}"
+CONCURRENCY="${CLOUD_LLM_CONCURRENCY:-4}"
+CONCURRENT_CHAPTERS="${CLOUD_LLM_CONCURRENT_CHAPTERS:-1}"
 KEEP=false
 STOP_DIR=""
 TRANSLATE_ARGS=()
@@ -65,6 +69,8 @@ log()  { printf '[cloud-llm] %s\n' "$*" >&2; }
 die()  { printf '[cloud-llm] 失敗：%s\n' "$*" >&2; exit 1; }
 
 case "$PROVIDER" in vast|runpod) ;; *) die "--provider 只能是 vast 或 runpod：$PROVIDER" ;; esac
+[[ "$CONCURRENCY" =~ ^[1-9][0-9]*$ ]] || die "CLOUD_LLM_CONCURRENCY 必須是正整數：$CONCURRENCY"
+case "$CONCURRENT_CHAPTERS" in 0|1) ;; *) die "CLOUD_LLM_CONCURRENT_CHAPTERS 只能是 0 或 1：$CONCURRENT_CHAPTERS" ;; esac
 case "$PROFILE" in
     int4)
         MODEL="${MODEL:-XReyRobert/Qwopus3.6-27B-v2-GPTQ-Pro-v1}"
@@ -180,7 +186,7 @@ log "平台 $PROVIDER / 卡 $GPU / 模型 $MODEL / 映像 $IMAGE / run $RUN_DIR"
 # 模型是位置參數（v0.28 對 --model 印警告）；--disable-log-requests 在 v0.28 已移除，不能帶。
 VLLM_ARGS=("$MODEL" --served-model-name "$MODEL" --port "$PORT" --host 0.0.0.0
            --api-key "$API_KEY" --max-model-len "$MAX_MODEL_LEN" --gpu-memory-utilization "$GPU_MEM_UTIL"
-           --max-num-seqs 4)
+           --max-num-seqs "$CONCURRENCY")
 [[ -n "${CLOUD_LLM_EXTRA_VLLM_ARGS:-}" ]] && read -r -a _extra <<<"$CLOUD_LLM_EXTRA_VLLM_ARGS" && VLLM_ARGS+=("${_extra[@]}")
 
 # ---------- 開機 ----------
@@ -278,9 +284,15 @@ if [[ -n "${CLOUD_LLM_TEST_TRANSLATE_CMD:-}" ]]; then
 else
     TRANSLATE_CMD=(python3 "$REPO_ROOT/scripts/translate_book_ollama.py")
 fi
-log "開始翻譯：${TRANSLATE_CMD[*]} --engine omlx --omlx-host $ENDPOINT --omlx-model $MODEL ${TRANSLATE_ARGS[*]}"
+CONCURRENCY_ARGS=()
+if [[ "$CONCURRENT_CHAPTERS" == 1 ]]; then
+    CONCURRENCY_ARGS=(--concurrent-chapters --max-concurrent-requests "$CONCURRENCY")
+fi
+# Bash 3.2 + set -u 不能直接展開空陣列；${A[@]+"${A[@]}"} 在空陣列時給 0 個參數，
+# 非空時仍保留每個參數的邊界。macOS 沒 Homebrew bash 或 launchd PATH 常會走 /bin/bash 3.2。
+log "開始翻譯：${TRANSLATE_CMD[*]} --engine omlx --omlx-host $ENDPOINT --omlx-model $MODEL ${CONCURRENCY_ARGS[@]+"${CONCURRENCY_ARGS[@]}"} ${TRANSLATE_ARGS[*]}"
 set +e
-OMLX_API_KEY="$API_KEY" "${TRANSLATE_CMD[@]}" --engine omlx --omlx-host "$ENDPOINT" --omlx-model "$MODEL" "${TRANSLATE_ARGS[@]}" &
+OMLX_API_KEY="$API_KEY" "${TRANSLATE_CMD[@]}" --engine omlx --omlx-host "$ENDPOINT" --omlx-model "$MODEL" ${CONCURRENCY_ARGS[@]+"${CONCURRENCY_ARGS[@]}"} "${TRANSLATE_ARGS[@]}" &
 TPID=$!
 # 看門狗的輸出一定要導掉：它那個 sleep 若成了孤兒還握著 stdout/stderr，呼叫端（含測試的 subprocess）
 # 會等不到 EOF 一直掛著。收工時連 sleep 一起殺（pkill -P）。

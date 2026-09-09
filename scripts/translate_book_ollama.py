@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """End-to-end book translation driver using a local Ollama or omlx model.
 
-Sequential per-chapter loop (single GPU). Phase 1 marker alignment is enforced
+Sequential per-chapter loop by default (single GPU), with opt-in cross-chapter
+concurrency for remote batched servers. Phase 1 marker alignment is enforced
 on every chunk; misalignment triggers one retry with a higher temperature,
 then recursive split-on-fail down to a single-paragraph minimal fallback.
 State.json drives resume; re-running on the same --out picks up where the
@@ -38,6 +39,7 @@ import concurrent.futures
 import json
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -125,6 +127,11 @@ def build_parser() -> argparse.ArgumentParser:
                         help="omlx engine only; >1 targets a cloud vLLM/SGLang endpoint doing continuous "
                              "batching and dispatches a chapter's chunks concurrently. Local single-GPU "
                              "omlx should stay at the default (1 = sequential, unchanged behavior)")
+    parser.add_argument(
+        "--concurrent-chapters",
+        action="store_true",
+        help="opt in to cross-chapter concurrency for remote vLLM/SGLang; every chapter starts with empty cross-chapter carryover. Default off preserves local/resume behavior",
+    )
     parser.add_argument("--no-seam-repair", action="store_true",
                          help="skip the post-hoc seam-repair pass (only relevant when "
                               "--max-concurrent-requests > 1); repair re-translates each chunk "
@@ -673,6 +680,226 @@ def _record_partial_paragraphs(
     log_path.write_text(json.dumps(entry, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+class _ChapterNamespacedProvider:
+    """Make request-log IDs unique across independently running chapters."""
+
+    def __init__(self, provider: LocalSequentialProvider, chapter_label: str) -> None:
+        self._provider = provider
+        self._prefix = f"{chapter_label}_"
+
+    def __getattr__(self, name: str):
+        return getattr(self._provider, name)
+
+    def translate(self, prompt: str, *, request_id: str, **kwargs):
+        if not request_id.startswith(self._prefix):
+            request_id = f"{self._prefix}{request_id}"
+        return self._provider.translate(prompt, request_id=request_id, **kwargs)
+
+
+class _RequestLimitedProvider:
+    """Share one global request budget across nested chapter/chunk pools."""
+
+    def __init__(self, provider: LocalSequentialProvider, limit: int) -> None:
+        self._provider = provider
+        self._slots = threading.BoundedSemaphore(max(1, limit))
+        self.max_concurrent_requests = max(1, limit)
+        self.supports_concurrency = getattr(provider, "supports_concurrency", False)
+
+    def __getattr__(self, name: str):
+        return getattr(self._provider, name)
+
+    def translate(self, *args, **kwargs):
+        with self._slots:
+            return self._provider.translate(*args, **kwargs)
+
+
+def _translate_independent_chapter(
+    provider: LocalSequentialProvider,
+    *,
+    cid: str,
+    index: int,
+    total: int,
+    chapters_dir: Path,
+    book_dir: Path,
+    book_title: str,
+    target_lang: str,
+    default_temperature: float,
+    chunk_max_chars: int,
+    seam_repair: bool,
+) -> dict[str, object]:
+    """Translate one chapter without reading another chapter's result."""
+    html_path = chapters_dir / f"{cid}.html"
+    if not html_path.exists():
+        return {"cid": cid, "index": index, "error": "extracted html missing"}
+    html = html_path.read_text(encoding="utf-8")
+    source_paragraphs = dispatch.html_to_paragraphs(html)
+    chapter_label = cid.replace("item_", "").lstrip("0") or "0"
+    started = time.monotonic()
+    chapter_provider = _ChapterNamespacedProvider(provider, chapter_label)
+    if getattr(chapter_provider, "supports_concurrency", False):
+        aligned, warnings, partial_count = _translate_chapter_chunked_concurrent(
+            chapter_provider,
+            html=html,
+            chapter_id=cid,
+            chapter_label=chapter_label,
+            book_title=book_title,
+            target_lang=target_lang,
+            carryover="",
+            book_dir=book_dir,
+            default_temperature=default_temperature,
+            chunk_max_chars=chunk_max_chars,
+            seam_repair=seam_repair,
+        )
+    else:
+        aligned, warnings, partial_count = _translate_chapter_chunked(
+            chapter_provider,
+            html=html,
+            chapter_id=cid,
+            chapter_label=chapter_label,
+            book_title=book_title,
+            target_lang=target_lang,
+            carryover="",
+            book_dir=book_dir,
+            default_temperature=default_temperature,
+            chunk_max_chars=chunk_max_chars,
+        )
+    return {
+        "cid": cid,
+        "index": index,
+        "total": total,
+        "aligned": aligned,
+        "warnings": warnings,
+        "partial_count": partial_count,
+        "source_count": len(source_paragraphs),
+        "elapsed": time.monotonic() - started,
+        "chapter_label": chapter_label,
+    }
+
+
+def _translate_chapters_concurrently(
+    provider: LocalSequentialProvider,
+    *,
+    translate_ids: list[str],
+    chapters: dict,
+    book_dir: Path,
+    state: dict,
+    state_path: Path,
+    args: argparse.Namespace,
+    book_title: str,
+    selected_model: str,
+) -> tuple[int, int, int]:
+    """Fan out independent chapters; the calling thread alone commits state.
+
+    Worker threads only read chapter HTML and call the provider. Translation
+    files, logs, state mutation and state.json writes happen here, serially, as
+    futures finish. That makes resume state merge-safe without a shared-file
+    lock while still allowing requests from different chapters to overlap.
+    """
+    chapters_dir = book_dir / "chapters"
+    pending: list[tuple[int, str]] = []
+    skipped_count = 0
+    attempted = 0
+    failed_count = 0
+    for index, cid in enumerate(translate_ids, 1):
+        translation_path = chapters_dir / f"{cid}_translation.txt"
+        if chapters[cid].get("status") == state_mod.DONE and translation_path.exists() and not args.no_resume:
+            skipped_count += 1
+            continue
+        if args.limit is not None and attempted >= args.limit:
+            break
+        attempted += 1
+        pending.append((index, cid))
+
+    if not pending:
+        return 0, 0, skipped_count
+
+    request_limit = _resolve_max_workers(provider)
+    limited_provider = _RequestLimitedProvider(provider, request_limit)
+    done_count = 0
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=min(request_limit, len(pending))
+    ) as pool:
+        future_to_cid = {
+            pool.submit(
+                _translate_independent_chapter,
+                limited_provider,
+                cid=cid,
+                index=index,
+                total=len(translate_ids),
+                chapters_dir=chapters_dir,
+                book_dir=book_dir,
+                book_title=book_title,
+                target_lang=args.target_lang,
+                default_temperature=args.temperature,
+                chunk_max_chars=args.chunk_max_chars,
+                seam_repair=not args.no_seam_repair,
+            ): cid
+            for index, cid in pending
+        }
+        for future in concurrent.futures.as_completed(future_to_cid):
+            cid = future_to_cid[future]
+            try:
+                result = future.result()
+            except Exception as exc:
+                state_mod.mark_failed(state, cid, f"chapter worker failed: {exc}")
+                failed_count += 1
+                state_mod.save(state_path, state)
+                print(f"[{cid}] FAILED chapter worker: {exc}", file=sys.stderr)
+                continue
+
+            index = int(result["index"])
+            if result.get("error"):
+                state_mod.mark_failed(state, cid, str(result["error"]))
+                failed_count += 1
+                state_mod.save(state_path, state)
+                print(f"[{index}/{len(translate_ids)}] {cid} ERR {result['error']}", file=sys.stderr)
+                continue
+
+            aligned = result["aligned"]
+            warnings = result["warnings"]
+            partial_count = int(result["partial_count"])
+            source_count = int(result["source_count"])
+            log_path = translation_log.write_log_entry(
+                book_dir=book_dir,
+                chapter_id=cid,
+                prompt=f"(see _ollama_logs/{result['chapter_label']}_ck*.json)",
+                raw_response="(chunked — see _ollama_logs for raw chunks)",
+                parsed_translation=aligned or "",
+                validation_warnings=warnings,
+                model=selected_model,
+                source_paragraph_count=source_count,
+            )
+            _record_partial_paragraphs(
+                log_path=log_path, partial_paragraph_count=partial_count
+            )
+
+            if aligned is not None and (source_count == 0 or partial_count < source_count):
+                aligned = offline_postprocess.to_traditional(aligned)
+                (chapters_dir / f"{cid}_translation.txt").write_text(aligned, encoding="utf-8")
+                state_mod.mark_done(state, cid, aligned)
+                if partial_count > 0:
+                    state["chapters"][cid]["partial_paragraphs"] = partial_count
+                done_count += 1
+                status = "done_partial" if partial_count > 0 else "done"
+                print(
+                    f"[{index}/{len(translate_ids)}] {cid} {status} {float(result['elapsed']):.1f}s "
+                    f"chars={len(aligned)} partial_paragraphs={partial_count}",
+                    file=sys.stderr,
+                )
+            else:
+                state_mod.mark_failed(state, cid, "all paragraphs failed after recursive fallback")
+                failed_count += 1
+                print(
+                    f"[{index}/{len(translate_ids)}] {cid} FAILED "
+                    f"{float(result['elapsed']):.1f}s warns={warnings[:2]}",
+                    file=sys.stderr,
+                )
+            # Single-writer state commit: no worker thread writes state.json.
+            state_mod.save(state_path, state)
+
+    return done_count, failed_count, skipped_count
+
+
 def translate_single_book(book_path: Path, args: argparse.Namespace) -> dict[str, object]:
     started = time.monotonic()
     out_parent = args.out or book_path.parent
@@ -748,14 +975,14 @@ def translate_single_book(book_path: Path, args: argparse.Namespace) -> dict[str
         file=sys.stderr,
     )
 
-    # Chapters are translated one at a time regardless of provider concurrency
-    # (only a chapter's OWN chunks are dispatched concurrently — see
-    # _translate_chapter_chunked_concurrent) — so removing the cross-chapter
-    # data dependency here would buy nothing (chapters never run out of
-    # order) while losing the real translated tail at all 19 chapter
-    # boundaries. Cross-chapter carryover stays target-text-based on BOTH
-    # paths; only the intra-chapter carry (the actual concurrency win) is
-    # source-text-based.
+    # These are independent gates. Provider concurrency controls chunk fan-out
+    # WITHIN a chapter. By default chapters still run in order and retain the
+    # previous chapter's real translated tail (review-15); that path is kept
+    # byte-for-byte compatible. --concurrent-chapters changes the premise:
+    # chapters may overlap, so each starts with empty cross-chapter carryover.
+    # The 2026-09-10 carryover experiment found no effect beyond rerun noise on
+    # its one-book/one-boundary sample; it does not prove carryover universally
+    # useless, only supports this explicit throughput trade.
     use_concurrent = getattr(provider, "supports_concurrency", False)
 
     carryover = ""
@@ -764,7 +991,22 @@ def translate_single_book(book_path: Path, args: argparse.Namespace) -> dict[str
     skipped_count = 0
     translate_started = time.monotonic()
 
-    for i, cid in enumerate(translate_ids, 1):
+    chapter_loop_ids = translate_ids
+    if args.concurrent_chapters:
+        done_count, failed_count, skipped_count = _translate_chapters_concurrently(
+            provider,
+            translate_ids=translate_ids,
+            chapters=chapters,
+            book_dir=book_dir,
+            state=state,
+            state_path=state_path,
+            args=args,
+            book_title=book_title,
+            selected_model=selected_model,
+        )
+        chapter_loop_ids = []
+
+    for i, cid in enumerate(chapter_loop_ids, 1):
         if args.limit is not None and (done_count + failed_count) >= args.limit:
             print(f"[run] --limit={args.limit} reached; stopping", file=sys.stderr)
             break
