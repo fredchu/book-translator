@@ -45,6 +45,23 @@ def test_provider_factory_unknown_engine_raises() -> None:
 
 
 @patch("providers.ollama_provider.requests.post")
+def test_ollama_translate_temperature_override_does_not_mutate_self(mock_post: MagicMock) -> None:
+    """Symmetric with OmlxProvider: _translate_chunk in translate_book_ollama.py
+    calls both provider types the same way, so both must accept a per-call
+    temperature override without mutating shared instance state."""
+    response = MagicMock()
+    response.json.return_value = {"message": {"content": "abc"}}
+    response.raise_for_status.return_value = None
+    mock_post.return_value = response
+
+    provider = OllamaProvider("translategemma:4b", temperature=0.3)
+    provider.translate("prompt", request_id="req", temperature=0.9)
+
+    assert mock_post.call_args.kwargs["json"]["options"]["temperature"] == 0.9
+    assert provider.temperature == 0.3  # unchanged
+
+
+@patch("providers.ollama_provider.requests.post")
 def test_ollama_translate_happy_path(mock_post: MagicMock) -> None:
     response = MagicMock()
     response.json.return_value = {"message": {"content": "abc"}, "eval_count": 42}

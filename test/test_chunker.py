@@ -107,3 +107,17 @@ def test_max_paragraphs_default_is_twenty():
     assert len(plan.chunks) == 2
     assert len(plan.chunks[0].paragraphs) == 20
     assert len(plan.chunks[1].paragraphs) == 5
+
+
+def test_source_tail_joins_paragraphs_like_stitch():
+    assert chk.source_tail(("alpha", "beta")) == "alpha\n\nbeta"
+
+
+def test_source_tail_truncates_to_width():
+    long_para = "x" * 300
+    assert chk.source_tail((long_para,), width=200) == long_para[-200:]
+    assert len(chk.source_tail((long_para,), width=200)) == 200
+
+
+def test_source_tail_empty_paragraphs_is_empty():
+    assert chk.source_tail(()) == ""

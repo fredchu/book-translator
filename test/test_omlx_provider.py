@@ -39,6 +39,43 @@ def test_provider_factory_omlx_requires_model() -> None:
         provider_factory("omlx")
 
 
+def test_omlx_default_does_not_support_concurrency() -> None:
+    """Local single-GPU omlx stays sequential unless opted in."""
+    provider = OmlxProvider("model-a")
+    assert provider.max_concurrent_requests == 1
+    assert provider.supports_concurrency is False
+
+
+def test_omlx_max_concurrent_requests_enables_supports_concurrency() -> None:
+    provider = OmlxProvider("model-a", max_concurrent_requests=8)
+    assert provider.max_concurrent_requests == 8
+    assert provider.supports_concurrency is True
+
+
+@patch("providers.omlx_provider.requests.post")
+def test_omlx_translate_temperature_override_does_not_mutate_self(mock_post: MagicMock) -> None:
+    """A per-call `temperature` must be used for that request only — mutating
+    self.temperature would race when multiple chunks run concurrently on
+    separate threads (see translate_book_ollama._translate_chunk)."""
+    mock_post.return_value = _response({"choices": [{"message": {"content": "譯文"}}]})
+
+    provider = OmlxProvider("model-a", temperature=0.3)
+    provider.translate("prompt", request_id="req", temperature=0.9)
+
+    assert mock_post.call_args.kwargs["json"]["temperature"] == 0.9
+    assert provider.temperature == 0.3  # unchanged
+
+
+@patch("providers.omlx_provider.requests.post")
+def test_omlx_translate_without_temperature_override_uses_self(mock_post: MagicMock) -> None:
+    mock_post.return_value = _response({"choices": [{"message": {"content": "譯文"}}]})
+
+    provider = OmlxProvider("model-a", temperature=0.3)
+    provider.translate("prompt", request_id="req")
+
+    assert mock_post.call_args.kwargs["json"]["temperature"] == 0.3
+
+
 @patch("providers.omlx_provider.requests.post")
 def test_omlx_translate_request_shape_defaults_disable_thinking(mock_post: MagicMock) -> None:
     mock_post.return_value = _response(

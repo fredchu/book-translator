@@ -103,6 +103,18 @@ The skill supports two providers:
   `Jackrong/Qwopus3.6-27B-v2-FP8`（30.9 GB，要 ≥40 GB 卡，預設 L40S 約 0.80）。
   機器挑選、IP 排除、停滯偵測都沿用 srt-skill 的 `vast_instance_lib.sh`／`runpod_pod_lib.sh`。
 
+  **併發（2026-09-09 起，選用）**：本機 omlx 單一 GPU，維持預設循序（不用管這段）。
+  雲端 vLLM／SGLang 才有意義：加 `--max-concurrent-requests N`，同一章的塊會一次送出，
+  不再排成一條長龍等前一塊翻完。**N 不要超過雲端伺服器自己接受的上限**（vLLM/SGLang
+  的併發設定，跟這裡的 CLI 旗標是兩回事，要分別確認）；本機 `~/.omlx/settings.json` 目前是 `scheduler.max_concurrent_requests: 8`，但那是本機的值，不代表雲端那台也是 8。**而且那 8 是設定檔寫的數字，沒有人送過併發請求驗證伺服器真的同時處理 8 條**；mlx-lm 的 BatchGenerator 在 27B 上會不會線性擴展，也還不知道。
+  加速比不是「那一章有幾塊」，是**伺服器併發上限**——本機 8 的話，Mind-Gut 260 塊按每章
+  分批（有些章塊數除不盡 8）總共要跑 44 批，理論加速 260/44 ≈ **5.9 倍**，這是算出來的
+  天花板不是實測值。跨章之間仍是循序跑，交界的上下文照舊用前一章**真正的譯文**
+  （不是原文——拿掉這層資料相依沒有意義，因為章本來就是一次跑一章，等於白白損失接縫品質）。
+  預設連 seam-repair 一起做（重翻每個章內接縫的第一段，找回真正的譯文上下文），
+  不想要就加 `--no-seam-repair`。細節與已知限制見 `CHANGELOG.md`
+  「Optional within-chapter concurrent translation」那條。
+
 ### Cloud mode — triggers + workflow
 
 Triggers: 「用 vast 翻 X.epub」「上雲翻」「用 runpod 翻書」「cloud translate」→

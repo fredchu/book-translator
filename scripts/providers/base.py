@@ -32,5 +32,12 @@ class TranslationProvider(ABC):
         *,
         request_id: str,
         log_dir: Path | None = None,
+        temperature: float | None = None,
     ) -> ProviderResult:
-        """Run a single translation request. Sub-classes raise ProviderError on hard failure."""
+        """Run a single translation request. Sub-classes raise ProviderError on hard failure.
+
+        `temperature`, when given, overrides the instance's default for this
+        call only — it must NOT mutate `self.temperature`. Callers that dispatch
+        concurrent requests (see `supports_concurrency`) share one provider
+        instance across threads; mutating shared state would race.
+        """

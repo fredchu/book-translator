@@ -1,7 +1,14 @@
 """Omlx OpenAI-compatible HTTP provider.
 
-Talks to a local omlx server (default localhost:8090). Single-threaded;
-local GPU can't serve concurrent large-model requests reliably.
+Talks to a local omlx server (default localhost:8090) or a cloud vLLM/SGLang
+endpoint behind the same OpenAI-compatible API (book-translator cloud_llm.sh).
+
+Single-threaded by default — a local single-GPU omlx server can't serve
+concurrent large-model requests reliably. Pass `max_concurrent_requests > 1`
+(meant for a cloud vLLM/SGLang endpoint doing continuous batching) to set
+`supports_concurrency = True`; callers then may dispatch several `translate()`
+calls at once from separate threads. `translate()` itself does not mutate
+shared state, so that's safe as long as callers don't share other objects.
 
 Used by the per-chapter CLI and the local book driver when --engine=omlx.
 """
@@ -38,6 +45,7 @@ class OmlxProvider(TranslationProvider):
         max_tokens: int = 8192,
         chat_template_kwargs: dict[str, Any] | None = None,
         api_key: str | None = None,
+        max_concurrent_requests: int = 1,
     ) -> None:
         # api_key：雲端 vLLM（book-translator cloud_llm.sh）用 --api-key 保護公開埠，這裡帶 Bearer。
         # 本機 omlx 不需要，留 None 就完全不送標頭。
@@ -53,6 +61,10 @@ class OmlxProvider(TranslationProvider):
             if chat_template_kwargs is None
             else dict(chat_template_kwargs)
         )
+        # max_concurrent_requests>1 is meant for a cloud vLLM/SGLang endpoint;
+        # local omlx stays at the class default (1 -> supports_concurrency=False).
+        self.max_concurrent_requests = max(1, max_concurrent_requests)
+        self.supports_concurrency = self.max_concurrent_requests > 1
 
     def translate(
         self,
@@ -61,18 +73,25 @@ class OmlxProvider(TranslationProvider):
         request_id: str,
         log_dir: Path | None = None,
         system: str | None = None,
+        temperature: float | None = None,
     ) -> ProviderResult:
-        """Send a chat completion request to omlx's OpenAI-compatible endpoint."""
+        """Send a chat completion request to omlx's OpenAI-compatible endpoint.
+
+        `temperature`, when given, is used for this call only — it does not
+        touch `self.temperature`, so concurrent callers on separate threads
+        can each pick their own attempt temperature without racing.
+        """
         url = f"{self.host}/v1/chat/completions"
         messages: list[dict[str, str]] = []
         if system:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
+        effective_temperature = self.temperature if temperature is None else temperature
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
             "max_tokens": self.max_tokens,
-            "temperature": self.temperature,
+            "temperature": effective_temperature,
             "chat_template_kwargs": self.chat_template_kwargs,
         }
 

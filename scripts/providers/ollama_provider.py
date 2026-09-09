@@ -54,22 +54,29 @@ class OllamaProvider(TranslationProvider):
         request_id: str,
         log_dir: Path | None = None,
         system: str | None = None,
+        temperature: float | None = None,
     ) -> ProviderResult:
         """Send a chat request. If `system` is provided, prepend it as a system
         role message so the model's chat template separates stable role rules
         (translator persona + marker contract) from the per-chunk user content.
+
+        `temperature`, when given, is used for this call only (does not mutate
+        `self.temperature`) — kept symmetric with OmlxProvider even though this
+        provider never sets `supports_concurrency`; it shares `_translate_chunk`
+        with OmlxProvider in translate_book_ollama.py.
         """
         url = f"{self.host}/api/chat"
         messages: list[dict[str, str]] = []
         if system:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
+        effective_temperature = self.temperature if temperature is None else temperature
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
             "stream": False,
             "options": {
-                "temperature": self.temperature,
+                "temperature": effective_temperature,
                 "num_ctx": self.num_ctx,
                 "num_predict": self.num_predict,
             },

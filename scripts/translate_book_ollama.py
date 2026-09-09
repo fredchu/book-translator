@@ -34,6 +34,7 @@ Produces:
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
 import os
 import sys
@@ -119,6 +120,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--temperature", type=float, default=0.3)
     parser.add_argument("--chunk-max-chars", type=int, default=3000,
                         help="source-side chunk budget in chars (Bocky default ~1500 tokens ≈ 3000 chars)")
+    parser.add_argument("--max-concurrent-requests", type=int, default=1,
+                        help="omlx engine only; >1 targets a cloud vLLM/SGLang endpoint doing continuous "
+                             "batching and dispatches a chapter's chunks concurrently. Local single-GPU "
+                             "omlx should stay at the default (1 = sequential, unchanged behavior)")
+    parser.add_argument("--no-seam-repair", action="store_true",
+                         help="skip the post-hoc seam-repair pass (only relevant when "
+                              "--max-concurrent-requests > 1); repair re-translates each chunk "
+                              "boundary paragraph with its real preceding translation as context")
     parser.add_argument("--no-audit", action="store_true", help="skip the 4 deterministic audits at the end")
     parser.add_argument("--no-resume", action="store_true", help="re-extract + re-translate from scratch")
     parser.add_argument("--limit", type=int, default=None, help="cap on chapters translated this run (debug)")
@@ -163,13 +172,14 @@ def _translate_chunk(
     chunk_html_for_validate = "".join(f"<p>{p}</p>" for p in chunk_paragraphs)
 
     for attempt in (0, 1):
-        provider.temperature = 0.5 if attempt == 1 else default_temperature
+        attempt_temperature = 0.5 if attempt == 1 else default_temperature
         try:
             result = provider.translate(
                 user_msg,
                 request_id=f"{chapter_label}_{chunk_label}_attempt_{attempt}",
                 log_dir=log_dir,
                 system=system_msg,
+                temperature=attempt_temperature,
             )
         except ProviderError as exc:
             warnings.append(f"attempt {attempt}: ProviderError: {exc}")
@@ -194,6 +204,8 @@ def _translate_single_paragraph_fallback(
     target_lang: str,
     book_dir: Path,
     depth_label: str,
+    *,
+    temperature: float | None = None,
 ) -> tuple[str | None, list[str]]:
     """Translate one paragraph with the minimal no-marker fallback prompt."""
     system_msg, user_msg = dispatch.build_minimal_paragraph_prompt(
@@ -208,6 +220,7 @@ def _translate_single_paragraph_fallback(
             request_id=f"{depth_label}_fallback",
             log_dir=log_dir,
             system=system_msg,
+            temperature=temperature,
         )
     except ProviderError as exc:
         return None, [f"{depth_label}: fallback ProviderError: {exc}"]
@@ -256,12 +269,18 @@ def _translate_chunk_with_recursion(
 
     if len(chunk_paragraphs) == 1:
         print(f"[split] {chapter_label}_{chunk_label} fallback single paragraph", file=sys.stderr)
+        # temperature=0.5: this branch is only reached after both marker
+        # attempts in _translate_chunk failed, the second of which used 0.5 —
+        # keep that same higher-temperature hedge for the last-resort fallback
+        # (this used to happen implicitly via the now-removed provider.temperature
+        # mutation; making it explicit preserves the same behavior).
         fallback, fallback_warnings = _translate_single_paragraph_fallback(
             provider,
             chunk_paragraphs[0],
             target_lang,
             book_dir,
             chunk_label,
+            temperature=0.5,
         )
         all_warnings.extend(fallback_warnings)
         return fallback, all_warnings
@@ -281,6 +300,7 @@ def _translate_chunk_with_recursion(
                 target_lang,
                 book_dir,
                 paragraph_label,
+                temperature=0.5,
             )
             all_warnings.extend(fallback_warnings)
             if fallback is None:
@@ -390,6 +410,248 @@ def _translate_chapter_chunked(
     return chunker.stitch(accumulated), all_warnings, partial_paragraph_count
 
 
+def _intra_chapter_carries(chunks: list[chunker.Chunk], initial: str) -> list[str]:
+    """Per-chunk carryover context, computed entirely from SOURCE text.
+
+    Chunk 0 gets `initial` (the incoming cross-chapter carry). Chunk i>0 gets
+    chunker.source_tail() of chunk i-1's own source paragraphs — never chunk
+    i-1's translation. Every entry is known before any chunk is translated;
+    that is what removes the chunk1->chunk2->...->chunkN wait chain.
+    """
+    carries = [initial]
+    for prev in chunks[:-1]:
+        carries.append(chunker.source_tail(prev.paragraphs))
+    return carries
+
+
+def _resolve_max_workers(provider: LocalSequentialProvider) -> int:
+    """Concurrent batch width for one chapter's chunks.
+
+    Defaults to 1 (not the chapter's chunk count) when the provider doesn't
+    declare `max_concurrent_requests` — a provider with
+    `supports_concurrency=True` but no explicit limit (e.g. AnthropicProvider)
+    should not silently fan out to an unconfigured, unbounded level.
+    """
+    return max(1, getattr(provider, "max_concurrent_requests", 1))
+
+
+def _translate_chunks_concurrently(
+    provider: LocalSequentialProvider,
+    jobs: list[dict],
+    max_workers: int,
+) -> list[tuple[str | None, list[str]]]:
+    """Run _translate_chunk_with_recursion for each job in a thread pool.
+
+    Callers must ensure jobs are independent — no job's kwargs may depend on
+    another job's result (see _intra_chapter_carries). The HTTP calls inside
+    are I/O-bound, so a thread pool gets real concurrency despite the GIL;
+    the actual request batching happens server-side (vLLM/SGLang continuous
+    batching) — this just needs more than one request in flight at once.
+
+    `ThreadPoolExecutor.map()` yields results in job order regardless of
+    which thread finishes first (index-slot reassembly, not arrival order) —
+    that satisfies "reassemble correctly even if responses arrive out of
+    order" without any manual bookkeeping here.
+    """
+    if not jobs:
+        return []
+
+    def _run(job: dict) -> tuple[str | None, list[str]]:
+        return _translate_chunk_with_recursion(provider, **job)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, max_workers)) as pool:
+        return list(pool.map(_run, jobs))
+
+
+def _repair_chunk_seams(
+    provider: LocalSequentialProvider,
+    *,
+    plan: "chunker.ChunkPlan",
+    chunk_texts: list[str],
+    chapter_label: str,
+    book_title: str,
+    target_lang: str,
+    book_dir: Path,
+    default_temperature: float,
+    max_workers: int,
+) -> tuple[list[str], int, list[str]]:
+    """Re-translate each chunk boundary's first paragraph with the REAL
+    translated tail of the previous chunk (chunk_texts, pass-1 output) as
+    context. Pass 1 only had that chunk's own source text to stay
+    parallel-safe — this pass gets that real context back for the one
+    paragraph on each side of a boundary. Named after research-concurrency.md
+    §2 strategy 4 ("post-hoc seam repair"); that section is unverified (only
+    §1 has been fact-checked, and failed — see the file's 2026-09-09
+    annotation), so treat the strategy name as a label, not a cited result.
+    Every boundary depends only on its own immediate predecessor's
+    already-finished pass-1 text, so all boundaries are independent of each
+    other and this second pass is itself dispatched concurrently.
+
+    Isolating "the first paragraph" from a chunk's stitched translation
+    relies on the same `"\\n\\n".join(paragraph_translations)` convention
+    used throughout this pipeline (dispatch.extract_aligned_translation,
+    chunker.stitch, and the failure placeholder text) — this holds unless a
+    single paragraph's own translation happens to contain a literal blank
+    line, which the marker-per-line prompt contract does not ask the model
+    to produce. Not defended against further; a chunk with exactly one
+    paragraph needs no split (the seam translation replaces it whole).
+
+    Returns (patched chunk_texts, paragraphs re-translated, warnings).
+    """
+    seam_jobs: list[dict] = []
+    seam_boundary_for_job: list[int] = []
+    for i in range(1, len(plan.chunks)):
+        chunk = plan.chunks[i]
+        if not chunk.paragraphs:
+            continue
+        seam_jobs.append(
+            dict(
+                chunk_paragraphs=(chunk.paragraphs[0],),
+                chapter_label=chapter_label,
+                chunk_label=f"seam{i:02d}",
+                book_title=book_title,
+                target_lang=target_lang,
+                carryover=chunk_texts[i - 1][-200:],
+                book_dir=book_dir,
+                default_temperature=default_temperature,
+            )
+        )
+        seam_boundary_for_job.append(i)
+
+    if not seam_jobs:
+        return chunk_texts, 0, []
+
+    results = _translate_chunks_concurrently(provider, seam_jobs, max_workers)
+
+    patched = list(chunk_texts)
+    repaired_count = 0
+    warnings: list[str] = []
+    for i, (seam_aligned, seam_warns) in zip(seam_boundary_for_job, results):
+        warnings.extend(f"seam{i:02d}: {w}" for w in seam_warns)
+        if seam_aligned is None:
+            warnings.append(f"seam{i:02d}: repair failed, keeping pass-1 translation")
+            continue
+        split = patched[i].split("\n\n", 1)
+        if len(split) == 1:
+            # single-paragraph chunk: the seam translation IS the whole chunk
+            patched[i] = seam_aligned
+        else:
+            _old_first, remainder = split
+            patched[i] = seam_aligned + "\n\n" + remainder
+        repaired_count += 1
+
+    return patched, repaired_count, warnings
+
+
+def _translate_chapter_chunked_concurrent(
+    provider: LocalSequentialProvider,
+    *,
+    html: str,
+    chapter_id: str,
+    chapter_label: str,
+    book_title: str,
+    target_lang: str,
+    carryover: str,
+    book_dir: Path,
+    default_temperature: float,
+    chunk_max_chars: int,
+    seam_repair: bool = True,
+) -> tuple[str | None, list[str], int]:
+    """Concurrent counterpart of _translate_chapter_chunked.
+
+    Only entered when provider.supports_concurrency is True (opt-in via
+    --max-concurrent-requests > 1, meant for a cloud vLLM/SGLang endpoint —
+    see OmlxProvider). Two differences from the sequential function, both
+    needed to remove the chunk-to-chunk wait chain within one chapter:
+
+    1. Every chunk's carryover context comes from the PREVIOUS chunk's own
+       SOURCE text (_intra_chapter_carries), computed up front — not from
+       the previous chunk's translation. This is what makes every chunk's
+       prompt independent of every other chunk's completion, which is the
+       actual lock. This is a trade paid to unlock concurrency, NOT a
+       verified quality improvement: research-concurrency.md's §1 claim that
+       source-side context "matches or beats" target-side was fact-checked
+       against its own five cited papers (2026-09-09 annotation at the top
+       of that file) and found unsupported — the papers it cites say the
+       opposite where they say anything, and none address chunk/chapter
+       boundaries specifically. The size of the quality cost from this
+       switch is unmeasured.
+    2. Chunks are submitted to the provider concurrently (bounded by
+       provider.max_concurrent_requests) instead of one at a time.
+
+    Concurrency here is within-chapter only — chapters are still processed
+    one at a time by the caller (translate_single_book), in submission order,
+    so there is no benefit to decoupling the cross-chapter carry from the
+    previous chapter's real translation: it stays target-text-based on both
+    the sequential and concurrent path (only the intra-chapter carry above
+    is source-text-based — that's the one removing an actual wait chain).
+
+    Losing the real translated tail at each boundary is repaired afterwards
+    by `seam_repair` (default on; --no-seam-repair disables it): each
+    boundary's first paragraph is re-translated once more with the REAL
+    previous chunk's translation as context.
+    """
+    paragraphs = dispatch.html_to_paragraphs(html)
+    if not paragraphs:
+        return "", [], 0
+    plan = chunker.chunk_paragraphs(paragraphs, max_chars=chunk_max_chars)
+    if not plan.chunks:
+        return "", [], 0
+
+    chunk_carries = _intra_chapter_carries(plan.chunks, carryover)
+    max_workers = _resolve_max_workers(provider)
+
+    jobs = [
+        dict(
+            chunk_paragraphs=chunk.paragraphs,
+            chapter_label=chapter_label,
+            chunk_label=f"ck{i:02d}of{len(plan.chunks):02d}",
+            book_title=book_title,
+            target_lang=target_lang,
+            carryover=chunk_carries[i - 1],
+            book_dir=book_dir,
+            default_temperature=default_temperature,
+        )
+        for i, chunk in enumerate(plan.chunks, start=1)
+    ]
+    pass1_results = _translate_chunks_concurrently(provider, jobs, max_workers)
+
+    all_warnings: list[str] = []
+    partial_paragraph_count = 0
+    chunk_texts: list[str] = []
+    for i, (chunk, (aligned, warns)) in enumerate(zip(plan.chunks, pass1_results), start=1):
+        chunk_label = f"ck{i:02d}of{len(plan.chunks):02d}"
+        all_warnings.extend(
+            [f"{chunk_label} (paras {chunk.start_idx + 1}-{chunk.end_idx}): {w}" for w in warns]
+        )
+        if aligned is None:
+            partial_paragraph_count += len(chunk.paragraphs)
+            all_warnings.append(
+                f"{chunk_label}: source-preserved {len(chunk.paragraphs)} paragraph(s) after recursive failure"
+            )
+            aligned = "\n\n".join(f"[未譯：模型拒答] {p}" for p in chunk.paragraphs)
+        chunk_texts.append(aligned)
+
+    seam_repair_count = 0
+    if seam_repair and len(plan.chunks) > 1:
+        chunk_texts, seam_repair_count, seam_warnings = _repair_chunk_seams(
+            provider,
+            plan=plan,
+            chunk_texts=chunk_texts,
+            chapter_label=chapter_label,
+            book_title=book_title,
+            target_lang=target_lang,
+            book_dir=book_dir,
+            default_temperature=default_temperature,
+            max_workers=max_workers,
+        )
+        all_warnings.extend(seam_warnings)
+
+    all_warnings.append(f"partial_paragraph_count={partial_paragraph_count}")
+    all_warnings.append(f"seam_repair_paragraphs={seam_repair_count}/{len(paragraphs)}")
+    return chunker.stitch(chunk_texts), all_warnings, partial_paragraph_count
+
+
 def _record_partial_paragraphs(
     *,
     log_path: Path,
@@ -448,6 +710,7 @@ def translate_single_book(book_path: Path, args: argparse.Namespace) -> dict[str
             timeout=args.timeout,
             max_tokens=args.num_predict,
             temperature=args.temperature,
+            max_concurrent_requests=args.max_concurrent_requests,
             **({"api_key": args.omlx_api_key} if args.omlx_api_key else {}),
         )
     if not provider.ping():
@@ -473,6 +736,16 @@ def translate_single_book(book_path: Path, args: argparse.Namespace) -> dict[str
         f"target={args.target_lang}",
         file=sys.stderr,
     )
+
+    # Chapters are translated one at a time regardless of provider concurrency
+    # (only a chapter's OWN chunks are dispatched concurrently — see
+    # _translate_chapter_chunked_concurrent) — so removing the cross-chapter
+    # data dependency here would buy nothing (chapters never run out of
+    # order) while losing the real translated tail at all 19 chapter
+    # boundaries. Cross-chapter carryover stays target-text-based on BOTH
+    # paths; only the intra-chapter carry (the actual concurrency win) is
+    # source-text-based.
+    use_concurrent = getattr(provider, "supports_concurrency", False)
 
     carryover = ""
     done_count = 0
@@ -505,20 +778,34 @@ def translate_single_book(book_path: Path, args: argparse.Namespace) -> dict[str
         t0 = time.monotonic()
         source_paragraphs = dispatch.html_to_paragraphs(html)
         total_paragraphs = len(source_paragraphs)
-        aligned, warns, partial_paragraph_count = _translate_chapter_chunked(
-            provider,
-            html=html,
-            chapter_id=cid,
-            chapter_label=ch_label,
-            book_title=book_title,
-            target_lang=args.target_lang,
-            carryover=carryover,
-            book_dir=book_dir,
-            default_temperature=args.temperature,
-            chunk_max_chars=args.chunk_max_chars,
-        )
+        if use_concurrent:
+            aligned, warns, partial_paragraph_count = _translate_chapter_chunked_concurrent(
+                provider,
+                html=html,
+                chapter_id=cid,
+                chapter_label=ch_label,
+                book_title=book_title,
+                target_lang=args.target_lang,
+                carryover=carryover,
+                book_dir=book_dir,
+                default_temperature=args.temperature,
+                chunk_max_chars=args.chunk_max_chars,
+                seam_repair=not args.no_seam_repair,
+            )
+        else:
+            aligned, warns, partial_paragraph_count = _translate_chapter_chunked(
+                provider,
+                html=html,
+                chapter_id=cid,
+                chapter_label=ch_label,
+                book_title=book_title,
+                target_lang=args.target_lang,
+                carryover=carryover,
+                book_dir=book_dir,
+                default_temperature=args.temperature,
+                chunk_max_chars=args.chunk_max_chars,
+            )
         elapsed = time.monotonic() - t0
-        provider.temperature = args.temperature  # reset after retry bump
 
         log_path = translation_log.write_log_entry(
             book_dir=book_dir,

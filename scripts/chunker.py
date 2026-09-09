@@ -98,6 +98,17 @@ def chunk_paragraphs(
     return plan
 
 
+def source_tail(paragraphs: tuple[str, ...], *, width: int = 200) -> str:
+    """Last `width` chars of a chunk's SOURCE paragraphs, joined like stitch().
+
+    Used as the next chunk's carryover context. Unlike a translated-text tail,
+    this is known before any translation runs — every chunk's prompt can be
+    built up front, which is what lets chunks be dispatched concurrently
+    instead of forming a chunk1->chunk2->...->chunkN wait chain.
+    """
+    return "\n\n".join(paragraphs)[-width:]
+
+
 def stitch(chunk_translations: list[str]) -> str:
     """Join translated chunks back into a chapter translation.
 

@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Optional within-chapter concurrent translation for a cloud vLLM/SGLang endpoint**
+  (2026-09-09). The real lock was never the `supports_concurrency` flag — it was
+  `chunk_carry = aligned[-200:]` (`translate_book_ollama.py`): every chunk waited on the
+  *translation* of the one before it, serializing a chapter's ~16-40 chunks (median/max
+  measured on one book; not independently re-measured this round — see findings) into a
+  single queue no matter how many concurrent requests the server could take. New
+  `--max-concurrent-requests N` (omlx engine only, default 1 = old sequential behavior,
+  unchanged) switches each chunk's context from the *previous chunk's translation* to the
+  *previous chunk's own source text* (`chunker.source_tail`), computed for every chunk up
+  front from the chunk plan alone — no chunk's prompt depends on any other chunk's output,
+  so all of a chapter's chunks can be dispatched to the provider at once
+  (`_translate_chapter_chunked_concurrent`, `_translate_chunks_concurrently`). **This is a
+  trade paid to unlock concurrency, not a verified quality improvement.** The research
+  memo backing this design (`research-concurrency-2026-09-08.md`) claimed source-side
+  context "matches or beats" target-side and that target-side causes error propagation;
+  fact-checking its own five cited papers (2026-09-09 annotation at the top of that file)
+  found the opposite where the papers say anything, and none of the five address
+  chunk/chapter boundaries at all — they're all single-document, sentence-level. The
+  quality cost of this switch is real but its size is **unmeasured**; seam-repair below is
+  an attempt to bound it, also unmeasured. **Cross-chapter carryover is deliberately left
+  target-text-based** on both paths (review-15 correction: chapters are translated one at a
+  time regardless of provider concurrency, so decoupling that carry would have bought nothing
+  while losing the real translated tail at all 19 chapter boundaries for free — an earlier
+  draft of this change did decouple it and was reverted). Losing the real translated tail at
+  each *intra-chapter* chunk boundary is repaired afterwards, not avoided: a post-hoc
+  **seam-repair** pass (`_repair_chunk_seams`, on by default, `--no-seam-repair` to disable)
+  re-translates each boundary's first paragraph once more using the real preceding
+  translation, itself dispatched concurrently since every boundary's input is already on disk
+  once the first pass finishes. Found and fixed along the way: `_translate_chunk` used to
+  select each retry's temperature by mutating the shared `provider.temperature` — safe when
+  chunks run one at a time, a race once they run on separate threads. Both
+  `OmlxProvider.translate()` and `OllamaProvider.translate()` now take an optional
+  `temperature=` override instead; `_resolve_max_workers()` also defaults an
+  attribute-less `supports_concurrency=True` provider (e.g. `AnthropicProvider`) to 1
+  worker, not an unbounded job count. **Not done this round**: actual cross-chapter
+  concurrent dispatch (chapters remain sequential), and no live-server throughput
+  measurement (the task rules out loading the 27B model). The theoretical speedup is
+  **not** "chunks per chapter" — it's bounded by the server's own concurrency cap
+  (`~/.omlx/settings.json`'s `scheduler.max_concurrent_requests`, 8 on this machine as of
+  2026-08-15 — **that is the configured value; nobody has issued concurrent requests to
+  confirm the server actually processes 8 at once, and whether mlx-lm's BatchGenerator
+  scales linearly at 27B is unknown**): batching Mind-Gut's 260 chunks in groups of ≤8 *per chapter* takes 44
+  batches total (some chapters' chunk counts don't divide evenly by 8), for a **~5.9x**
+  (260/44) theoretical ceiling — not a measurement. A cloud vLLM/SGLang endpoint's own cap
+  must be checked separately; it is not this file's value. See `findings-worker-5.md` in
+  the collab directory for the full verification.
+
 ### Changed
 - **Simplified→Traditional conversion is now sentence-scoped, not whole-chapter** (2026-09-09).
   `s2tw` alone was still unsafe on already-Traditional prose: it emits Simplified on some input
