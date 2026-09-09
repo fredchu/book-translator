@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **A blank line inside one paragraph's own translation no longer desyncs the paragraph
+  count** (2026-09-09). `parse_marker_output()` only stripped each marker body's leading/
+  trailing whitespace — an internal blank line the model inserted inside what was meant to be
+  ONE paragraph survived unchanged. Every downstream consumer (`assemble.py`, the seam-repair
+  pass, `run_benchmark.py`) rejoins bodies with `"\n\n"` and later re-splits on `"\n\n"` to
+  recover paragraph boundaries, so that internal blank line becomes indistinguishable from a
+  real one: N source paragraphs come out looking like N+1. Not a hypothetical — a real book
+  (Mind-Gut) was checked chapter-by-chapter and never hit it (1,894/1,894 paragraphs matched
+  across all 20 chapters, 0 mismatches), but a fake-provider probe forcing the input
+  reproduced it on the *sequential* path too (13 output paragraphs vs 12 source), so this
+  predates concurrency — it was just never exercised by any real model's output. `parse_marker_
+  output()` now collapses any internal blank-line run to a single newline and reports which
+  marker indices it touched (`ParseResult.blank_line_markers`, new field); `validate_translation`
+  surfaces it as a warning. The no-marker single-paragraph fallback prompt never goes through
+  the marker parser at all, so it gets the identical collapse call directly
+  (`marker_alignment.collapse_internal_blank_lines`, now public, called from both places).
+  This is detection-and-normalization, not a retry trigger: the model producing a stray blank
+  line is usually harmless prose, so the fix removes the structural risk without spending
+  another translation attempt on it.
+
 ### Added
 - **Optional within-chapter concurrent translation for a cloud vLLM/SGLang endpoint**
   (2026-09-09). The real lock was never the `supports_concurrency` flag — it was

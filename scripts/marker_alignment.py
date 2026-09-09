@@ -14,6 +14,27 @@ from dataclasses import dataclass, field
 
 _MARKER_RE = re.compile(r"\[\[\s*PARA[\s_]*(\d+)\s*\]\]", re.IGNORECASE)
 
+# A marker's body is meant to be exactly one paragraph. Every downstream
+# consumer (assemble.py, seam repair, run_benchmark.py) rejoins bodies with
+# "\n\n" and later re-splits on "\n\n" to recover paragraph boundaries — a
+# blank line the model happens to insert inside its own body is
+# indistinguishable from a real boundary once joined, and silently desyncs
+# paragraph counts (source N paragraphs -> N+1 in the assembled output).
+_INTERNAL_BLANK_LINE_RE = re.compile(r"\n[ \t]*\n+")
+
+
+def collapse_internal_blank_lines(text: str) -> tuple[str, bool]:
+    """Collapse any blank-line run inside one paragraph's text to a single
+    newline. Returns (possibly-modified text, whether anything changed).
+
+    Used by parse_marker_output() for marker bodies, and directly by the
+    no-marker single-paragraph fallback prompt in translate_book_ollama.py
+    (which never goes through the marker parser at all) — both paths produce
+    text that other code treats as exactly one paragraph.
+    """
+    collapsed = _INTERNAL_BLANK_LINE_RE.sub("\n", text)
+    return collapsed, collapsed != text
+
 
 @dataclass
 class ParseResult:
@@ -24,6 +45,9 @@ class ParseResult:
     missing_markers: list[int]  # marker numbers expected but absent
     extra_markers: list[int]  # marker numbers present but unexpected
     duplicate_markers: list[int]  # marker numbers that appeared more than once
+    blank_line_markers: list[int] = field(default_factory=list)  # markers whose
+    # body contained an internal blank line, collapsed before being stored —
+    # reported so callers can surface a quality warning, not to gate/retry.
     is_aligned: bool = field(init=False)
 
     def __post_init__(self) -> None:
@@ -73,14 +97,18 @@ def parse_marker_output(output: str, expected_count: int) -> ParseResult:
 
     found_by_idx: dict[int, str] = {}
     marker_counts: dict[int, int] = {}
+    blank_line_markers: list[int] = []
     for i, m in enumerate(matches):
         idx = int(m.group(1))
         marker_counts[idx] = marker_counts.get(idx, 0) + 1
         start = m.end()
         end = matches[i + 1].start() if i + 1 < len(matches) else len(output)
         body = output[start:end].strip()
+        body, had_blank_line = collapse_internal_blank_lines(body)
         if idx not in found_by_idx:
             found_by_idx[idx] = body
+            if had_blank_line:
+                blank_line_markers.append(idx)
 
     expected = set(range(1, expected_count + 1))
     found = set(found_by_idx.keys())
@@ -97,4 +125,5 @@ def parse_marker_output(output: str, expected_count: int) -> ParseResult:
         missing_markers=missing,
         extra_markers=extra,
         duplicate_markers=duplicate,
+        blank_line_markers=sorted(blank_line_markers),
     )

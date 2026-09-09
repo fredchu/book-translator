@@ -47,6 +47,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 import chunker  # noqa: E402
 import dispatch  # noqa: E402
 import extract_epub  # noqa: E402
+import marker_alignment as ma  # noqa: E402
 import offline_postprocess  # noqa: E402
 import state as state_mod  # noqa: E402
 import translation_log  # noqa: E402
@@ -230,6 +231,16 @@ def _translate_single_paragraph_fallback(
     if not cleaned:
         warnings.append(f"{depth_label}: fallback empty response")
         return None, warnings
+    # This path never goes through the marker parser (it's the no-marker
+    # floor), so an internal blank line here isn't caught by
+    # parse_marker_output's collapsing — do it directly, same reason: a
+    # blank line inside what's meant to be ONE paragraph is indistinguishable
+    # from a real paragraph boundary once chunker.stitch() joins pieces.
+    cleaned, had_blank_line = ma.collapse_internal_blank_lines(cleaned)
+    if had_blank_line:
+        warnings.append(
+            f"{depth_label}: fallback blank line inside paragraph, collapsed"
+        )
     refusal = dispatch.detect_aup_refusal(cleaned)
     if refusal:
         warnings.append(f"{depth_label}: fallback {refusal}")

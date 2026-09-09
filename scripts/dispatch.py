@@ -504,6 +504,13 @@ def validate_translation(translation: str, chapter_html: str, *, min_ratio: floa
             preview = ", ".join(f"PARA_{n}" for n in result.extra_markers[:5])
             more = "" if len(result.extra_markers) <= 5 else f" (+{len(result.extra_markers)-5} more)"
             warnings.append(f"extra markers (not in source): {preview}{more}")
+        if result.blank_line_markers:
+            preview = ", ".join(f"PARA_{n}" for n in result.blank_line_markers[:5])
+            more = "" if len(result.blank_line_markers) <= 5 else f" (+{len(result.blank_line_markers)-5} more)"
+            warnings.append(
+                f"blank line inside marker body, collapsed (would have desynced "
+                f"paragraph count downstream): {preview}{more}"
+            )
     else:
         # Legacy fallback: paragraph-count ratio
         tgt_paras = [p for p in translation.split("\n\n") if p.strip()]

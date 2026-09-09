@@ -103,3 +103,51 @@ def test_parse_marker_output_no_markers_at_all():
     assert result.is_aligned is False
     assert result.missing_markers == [1, 2, 3]
     assert result.translations == []
+
+
+def test_collapse_internal_blank_lines_collapses_run_to_single_newline():
+    text, changed = ma.collapse_internal_blank_lines("上半段。\n\n下半段。")
+    assert text == "上半段。\n下半段。"
+    assert changed is True
+
+
+def test_collapse_internal_blank_lines_tolerates_trailing_whitespace_on_blank_line():
+    text, changed = ma.collapse_internal_blank_lines("上半段。\n   \n下半段。")
+    assert text == "上半段。\n下半段。"
+    assert changed is True
+
+
+def test_collapse_internal_blank_lines_noop_on_clean_text():
+    text, changed = ma.collapse_internal_blank_lines("單行段落，沒有空行。")
+    assert text == "單行段落，沒有空行。"
+    assert changed is False
+
+
+def test_parse_marker_output_collapses_blank_line_inside_one_body():
+    """Review-15 §7: a blank line inside PARA_1's own body used to survive
+    into `translations`, so "\\n\\n".join() later made 2 source paragraphs
+    look like 3 to any downstream consumer that re-splits on "\\n\\n"
+    (assemble.py, seam repair, run_benchmark.py)."""
+    output = "[[PARA_1]]\n上半。\n\n下半。\n\n[[PARA_2]]\n第二段。"
+    result = ma.parse_marker_output(output, expected_count=2)
+    assert result.is_aligned is True
+    assert result.translations == ["上半。\n下半。", "第二段。"]
+    assert result.blank_line_markers == [1]
+    # the invariant this whole fix protects: re-joining must not desync
+    # paragraph count vs the marker count.
+    assert len("\n\n".join(result.translations).split("\n\n")) == 2
+
+
+def test_parse_marker_output_blank_line_markers_empty_when_clean():
+    output = "[[PARA_1]]\n甲\n\n[[PARA_2]]\n乙"
+    result = ma.parse_marker_output(output, expected_count=2)
+    assert result.blank_line_markers == []
+
+
+def test_parse_marker_output_blank_line_only_recorded_for_kept_duplicate():
+    # PARA_1 appears twice; only the FIRST occurrence is kept (found_by_idx
+    # dedup) — blank_line_markers must reflect the kept one, not the discarded one.
+    output = "[[PARA_1]]\n乾淨版本\n\n[[PARA_1]]\n重複，含\n\n空行\n\n[[PARA_2]]\n乙"
+    result = ma.parse_marker_output(output, expected_count=2)
+    assert result.duplicate_markers == [1]
+    assert result.blank_line_markers == []  # the kept (first) body has no blank line

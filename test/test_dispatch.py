@@ -237,6 +237,31 @@ def test_extract_aligned_translation_strips_marker_lines_from_body():
     assert "[[PARA_2]]" not in text
 
 
+def test_extract_aligned_translation_collapses_blank_line_inside_one_marker_body():
+    """A blank line inside one marker's own body must not survive the join —
+    otherwise re-splitting on "\\n\\n" downstream (assemble.py, seam repair)
+    desyncs paragraph counts: 2 source paragraphs would look like 3 (review-15
+    §7 found this with a fake provider: 13 output paragraphs vs 12 source)."""
+    output = "[[PARA_1]]\n上半段。\n\n下半段（模型自己插的空行）。\n\n[[PARA_2]]\n第二段。"
+    text = dispatch.extract_aligned_translation(output, expected_count=2)
+    assert text.split("\n\n") == ["上半段。\n下半段（模型自己插的空行）。", "第二段。"]
+    assert len(text.split("\n\n")) == 2  # not 3
+
+
+def test_validate_translation_warns_on_blank_line_inside_marker_body():
+    src_html = "<p>A.</p><p>B.</p>"
+    translation = "[[PARA_1]]\n上半。\n\n下半。\n\n[[PARA_2]]\n乙"
+    warnings = dispatch.validate_translation(translation, src_html)
+    assert any("blank line" in w and "PARA_1" in w for w in warnings)
+
+
+def test_validate_translation_no_blank_line_warning_on_clean_output():
+    src_html = "<p>A.</p><p>B.</p>"
+    translation = "[[PARA_1]]\n甲\n\n[[PARA_2]]\n乙"
+    warnings = dispatch.validate_translation(translation, src_html)
+    assert not any("blank line" in w for w in warnings)
+
+
 def test_strip_known_leak_prefixes_removes_here_is_translation():
     raw = "Here is the translation:\n\n[[PARA_1]]\n甲"
     cleaned = dispatch.strip_known_leak_prefixes(raw)

@@ -475,6 +475,28 @@ def test_seam_repair_disabled_makes_no_extra_calls(tmp_path):
     assert not any("seam" in c["request_id"] for c in provider.calls)
 
 
+def test_single_paragraph_fallback_collapses_internal_blank_line(tmp_path):
+    """The no-marker fallback prompt never goes through parse_marker_output,
+    so it needs its own blank-line collapse (review-15 §7 gap) — otherwise a
+    single-paragraph chunk's fallback text could itself look like 2
+    paragraphs once chunker.stitch() joins it with siblings."""
+    mock = _mock_provider_returning("上半段。\n\n下半段（模型自己插的空行）。")
+    result, warns = drv._translate_single_paragraph_fallback(
+        mock, "Hello.", "zh-tw", tmp_path, "ck01",
+    )
+    assert result == "上半段。\n下半段（模型自己插的空行）。"
+    assert any("blank line" in w for w in warns)
+
+
+def test_single_paragraph_fallback_no_warning_on_clean_output(tmp_path):
+    mock = _mock_provider_returning("乾淨的一段。")
+    result, warns = drv._translate_single_paragraph_fallback(
+        mock, "Hello.", "zh-tw", tmp_path, "ck01",
+    )
+    assert result == "乾淨的一段。"
+    assert not any("blank line" in w for w in warns)
+
+
 def test_translate_chunk_passes_explicit_temperature_per_attempt_no_mutation(tmp_path):
     """Core fix for the orchestrator-flagged temperature race: each attempt's
     temperature must be passed explicitly to provider.translate(), never
