@@ -29,6 +29,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   translating a whole book unconverted.
 
 ### Added
+- **`scripts/build_terms.py` produces a ranked terminology review queue** (2026-09-09).
+  It combines mechanical extraction with LLM proposals, verifies every key against source-body
+  text using the same normalized whole-token matcher as runtime injection, lists hallucinated
+  proposals and person-name collisions, applies wordfreq's high/middle/low policy, and—when
+  aligned with-table/without-table translations exist—ranks by observed translation changes
+  rather than raw frequency. Chinese values remain proposals until the user approves them.
 - **Audits report three levels, not two** (2026-09-09). `translation_quality_audit` failed a whole
   run over three correct chapter titles ("Chapter 7: Understanding Intuitive Decision Making" →
   「第七章：理解直覺決策」, ratio 0.20), because Chinese titles are far more compact than English

@@ -221,6 +221,11 @@ OFFLINE_STYLE_RULES = (
     "世紀/數字/邏輯關係必須與原文一致。"
 )
 
+try:
+    from scripts.term_matching import normalize_match_text, term_occurs_normalized
+except ModuleNotFoundError:  # pragma: no cover - direct script execution path
+    from term_matching import normalize_match_text, term_occurs_normalized
+
 FIXED_TERMS_FILENAME = "spec_terms.json"
 
 
@@ -243,23 +248,6 @@ def load_fixed_terms(book_dir) -> dict[str, str]:
     return {str(k): str(v) for k, v in terms.items() if k and v}
 
 
-@functools.lru_cache(maxsize=8192)
-def _term_pattern(term: str) -> "re.Pattern[str]":
-    """Whole-token matcher for one source term.
-
-    Case sensitivity is decided by the term itself: a capitalised term is a
-    proper noun and must match case (`Weeks`, an army physician, otherwise
-    matches all 20 occurrences of "weeks" in a chapter), while a lowercase
-    term is ordinary vocabulary that also appears sentence-initially (`gut`
-    must still match "Gut" at the start of a sentence).
-
-    The boundary is alphanumeric-only rather than ``\b`` so terms ending in
-    punctuation still work, while `gut` does not match inside `gutter`.
-    """
-    flags = 0 if term[:1].isupper() else re.IGNORECASE
-    return re.compile(rf"(?<![A-Za-z0-9]){re.escape(term)}(?![A-Za-z0-9])", flags)
-
-
 def select_terms_for_text(terms: dict[str, str], text: str) -> dict[str, str]:
     """Keep only the terms that actually occur in this chunk.
 
@@ -270,16 +258,16 @@ def select_terms_for_text(terms: dict[str, str], text: str) -> dict[str, str]:
     6.8 (median 6, max 20) — about 152 chars, a 97% reduction, and only 2 of
     260 chunks match nothing at all.
 
-    Cheap substring test first; the regex only runs on candidates, since the
-    boundary check is the expensive part and most terms miss outright.
+    Matching shares the builder's boundary, apostrophe, hyphen, diacritic and
+    one-way ALL-CAPS rules. This prevents a key from passing build-time
+    validation but being impossible to inject later.
     """
     if not terms or not text:
         return {}
-    lowered = text.lower()
+    normalized_text = normalize_match_text(text)
     return {
-        src: zh
-        for src, zh in terms.items()
-        if src.lower() in lowered and _term_pattern(src).search(text)
+        src: zh for src, zh in terms.items()
+        if term_occurs_normalized(src, normalized_text)
     }
 
 

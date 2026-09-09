@@ -909,9 +909,105 @@ This skill writes to:
   6954 chars per chunk while the matching terms average 113 — a 98.4% reduction,
   and only 2 of 260 chunks match nothing. Broadcasting the whole table instead
   dilutes attention and the model reads past the instructions it needs.
-  Matching is whole-token, and case-sensitive for capitalised terms only, so
+  Matching is whole-token and case-sensitive for capitalised terms only, so
   `Weeks` (a physician) does not match "weeks" while `gut` still matches a
-  sentence-initial "Gut".
+  sentence-initial "Gut". Matching normalizes straight/curly apostrophes,
+  hyphen variants, and diacritics on both sides without rewriting the stored
+  source key; an ALL-CAPS source spelling may match a Title Case proper key.
+
+### Building a small, decision-focused term list
+
+`scripts/build_terms.py` does **not** author an authoritative term table. It
+combines mechanical candidates with one or more LLM proposal JSON files and
+writes a ranked review queue. Source text is the judge of whether a key exists;
+LLM Chinese is always labelled `proposed_zh`, and only the user may approve it.
+Bibliography, index, notes, and publication-metadata pages are excluded from the
+existence population. Missing proposals are retained under
+`dropped_proposals`, never silently discarded.
+
+```bash
+python3 scripts/build_terms.py \
+  --source source.epub \
+  --proposals llm-proposals.json \
+  --out terms-review.json
+```
+
+Proposal JSON may be a top-level list, `{"proposals": [...]}`,
+`{"terms": [...]}`, or a conventional `{"terms": {source: zh}}` mapping. Rows
+accept `en`, `zh`, and `group`, plus optional `entity_id`, `distinguish_from`,
+`user_decided`, and `east_asian`. The last three make the reason for human
+review explicit; East Asian names are marked to restore the original Han name
+rather than accept phonetic transliteration. OpenCC and the validated
+Simplified trigger set are mandatory: if either is unavailable, building fails
+instead of silently skipping the zh check.
+
+**This whole comparison path is optional** (decided 2026-09-09). The pipeline
+does not translate a calibration chapter, and `build_terms.py` runs fine
+without any of these flags — it just falls back to weaker ranking signals
+(proposal-backed distinction, proper nouns, multi-word terms, low-frequency
+words) instead of measured translation impact. Use it only for a book where
+the ordering is worth an extra chapter of GPU time.
+
+When aligned with-table and without-table chapter translations already exist,
+provide all three aligned files explicitly:
+
+```bash
+python3 scripts/build_terms.py \
+  --source whole-book.epub --proposals llm-proposals.json \
+  --comparison-source chapter-source.txt \
+  --baseline-translation chapter-without-terms.txt \
+  --termed-translation chapter-with-terms.txt \
+  --out terms-review.json
+```
+
+The three comparison files must contain the **same paragraph array in the same
+order**, serialized as UTF-8 with one blank line between paragraphs. Save
+`chapter-source.txt` from the exact paragraph list sent to the translator,
+before chunking; do not reconstruct it later from raw EPUB nodes or chapter
+HTML. Those representations can split one logical paragraph into many nodes
+(measured 161/140 nodes versus 70 translated paragraphs), and unequal counts
+fail closed. **The supported way to produce `chapter-source.txt` is `--comparison-chapter`**,
+which reads `<book_dir>/chapters/item_NNN.html` through the same
+`dispatch.html_to_paragraphs` the translator itself calls, so the array is
+aligned by construction rather than by luck:
+
+```bash
+python3 scripts/build_terms.py \
+  --source whole-book.epub --proposals llm-proposals.json \
+  --comparison-chapter "<book_dir>/chapters/item_007.html" \
+  --baseline-translation chapter-without-terms.txt \
+  --termed-translation chapter-with-terms.txt \
+  --out terms-review.json
+```
+
+`--comparison-source` takes a pre-saved array when you already have one.
+`--comparison-page` remains an advanced alternative only when its extracted
+node count is already known to align exactly; prefer the other two.
+
+The ranking then uses `translation_change_count`—how many source occurrences
+changed to the proposed wording—not raw source frequency. Every row includes
+`ranking_reasons`. Without that experiment, explicit distinction/user-decision
+metadata and word frequency are proxies: Zipf ≥4.3 is excluded as common;
+3.3–4.3 is sent to human review only when backed by an LLM/user proposal or
+when the mechanical candidate is a proper noun or multiword phrase; pure
+mechanical mid-frequency single words remain reference. Zipf <3.3 is retained
+as reference. Mechanical n-grams whose first or last token is a stopword are
+removed. Proposal-backed rows sort ahead of pure mechanical rows; raw body
+frequency is only the final tie-break and is disclosed as
+`frequency_tiebreak:not_impact_evidence`, never presented as impact evidence.
+The builder keeps a proposal spelling when it occurs literally; only missing
+Title Case/sentence-case and narrow demonym variants are rewritten. Rewrites
+choose the most frequent source spelling, preferring lowercase on ties, so a
+title encountered first cannot turn a broadly matching lowercase key into a
+case-sensitive one. A high
+occurrence count alone never makes a term important.
+
+The report also lists person-name token collisions, same-entity Chinese
+conflicts, Simplified trigger characters using the sentence-gate trigger set,
+and mechanical extractor coverage by people/institutions/concepts. Generated
+single-name forms are admitted only when unique within the book's person-name
+population; true collisions remain manual. Do not copy `proposed_zh` into
+`spec_terms.json` without user approval.
 - `<out_dir>/<book_stem>/manifest.json` — full OPF spine manifest v2
 - `<out_dir>/<book_stem>/chapters/item_NNN.html` — extracted source spine items
 - `<out_dir>/<book_stem>/chapters/item_NNN_translation.txt` — per-item translation for `translate` items

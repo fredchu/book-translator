@@ -621,6 +621,20 @@ def test_select_terms_handles_punctuation_inside_the_term() -> None:
     assert "Parkinson's disease" in picked
 
 
+def test_select_terms_normalizes_source_typography_without_rewriting_key() -> None:
+    terms = {
+        "Parkinson's disease": "帕金森氏症",
+        "Arndt-Schulz rule": "阿恩特－舒爾茨定律",
+        "Chloé": "克蘿伊",
+    }
+    text = "PARKINSON’S DISEASE differs from the Arndt–Schulz rule discussed by Chloe."
+    assert set(dispatch.select_terms_for_text(terms, text)) == set(terms)
+
+
+def test_select_terms_title_case_key_does_not_match_lowercase_prose() -> None:
+    assert dispatch.select_terms_for_text({"Weeks": "威克斯"}, "several weeks passed") == {}
+
+
 def test_select_terms_empty_table_or_text_returns_empty() -> None:
     assert dispatch.select_terms_for_text({}, "anything") == {}
     assert dispatch.select_terms_for_text(TERMS, "") == {}
