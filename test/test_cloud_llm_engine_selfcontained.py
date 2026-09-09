@@ -132,15 +132,49 @@ def test_engine_runs_thinking_probe_before_translator_without_external_checkout(
         assert server.RequestHandlerClass.requests[0]["chat_template_kwargs"] == {
             "enable_thinking": False
         }
-        assert Path(env["TRANSLATE_OUT"]).exists()
+        translated_args = Path(env["TRANSLATE_OUT"]).read_text(encoding="utf-8")
+        assert "--concurrent-chapters --max-concurrent-requests 16" in translated_args
         calls = Path(env["STUB_CALLS"]).read_text(encoding="utf-8")
         assert "destroyed" in calls
         if engine == "sglang":
             assert "--reasoning-parser qwen3" in calls
+            assert "--max-running-requests 16" in calls
             assert "--max-model-len" not in calls
         else:
-            assert "--max-num-seqs" in calls
+            assert "--max-num-seqs 16" in calls
             assert "--max-running-requests" not in calls
+    finally:
+        server.shutdown()
+
+
+def test_default_16_has_cross_card_timeout_margin() -> None:
+    max_tokens = 2048
+    timeout = 120
+
+    def margin(rate: float) -> float:
+        return (timeout - max_tokens / rate) / timeout
+
+    assert margin(28.5) >= 0.40       # N=16 on measured 48GB card
+    assert margin(20.8) < 0.20        # N=32 is too close to timeout
+    assert max_tokens / (28.5 * 0.70) < timeout  # N=16 survives a 30% slower card
+    assert margin(24.0 * 0.85) < 0.20             # N=24 does not survive 15% slower
+
+
+@pytest.mark.parametrize("engine", ["vllm", "sglang"])
+def test_concurrency_override_stays_synchronized_without_external_checkout(
+    tmp_path: Path, engine: str
+) -> None:
+    server, port = _serve()
+    try:
+        env = _env(tmp_path, port, engine)
+        env["CLOUD_LLM_CONCURRENCY"] = "12"
+        result = _run(env)
+        assert result.returncode == 0, result.stderr
+        translated_args = Path(env["TRANSLATE_OUT"]).read_text(encoding="utf-8")
+        assert "--max-concurrent-requests 12" in translated_args
+        calls = Path(env["STUB_CALLS"]).read_text(encoding="utf-8")
+        server_flag = "--max-num-seqs 12" if engine == "vllm" else "--max-running-requests 12"
+        assert server_flag in calls
     finally:
         server.shutdown()
 
