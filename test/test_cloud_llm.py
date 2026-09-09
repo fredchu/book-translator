@@ -31,6 +31,9 @@ MODEL = "XReyRobert/Qwopus3.6-27B-v2-GPTQ-Pro-v1"
 class _Models(http.server.BaseHTTPRequestHandler):
     model = MODEL
     require_key: str | None = None
+    probe_content: object = "連線測試。"
+    probe_reasoning: object = None
+    probe_requests: list[dict] = []
 
     def do_GET(self):  # noqa: N802
         if self.path != "/v1/models":
@@ -40,12 +43,39 @@ class _Models(http.server.BaseHTTPRequestHandler):
         body = json.dumps({"data": [{"id": self.model}]}).encode()
         self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(body)
 
+    def do_POST(self):  # noqa: N802
+        if self.path != "/v1/chat/completions":
+            self.send_response(404); self.end_headers(); return
+        length = int(self.headers.get("Content-Length", "0"))
+        request = json.loads(self.rfile.read(length))
+        self.__class__.probe_requests.append(request)
+        body = json.dumps({
+            "choices": [{
+                "message": {
+                    "content": self.__class__.probe_content,
+                    "reasoning_content": self.__class__.probe_reasoning,
+                },
+                "finish_reason": "stop",
+            }]
+        }).encode()
+        self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(body)
+
     def log_message(self, format, *args):  # noqa: A002  安靜
         pass
 
 
-def _serve_models(require_key: str | None = None) -> tuple[http.server.HTTPServer, int]:
-    handler = type("H", (_Models,), {"require_key": require_key})
+def _serve_models(
+    require_key: str | None = None,
+    *,
+    probe_content: object = "連線測試。",
+    probe_reasoning: object = None,
+) -> tuple[http.server.HTTPServer, int]:
+    handler = type("H", (_Models,), {
+        "require_key": require_key,
+        "probe_content": probe_content,
+        "probe_reasoning": probe_reasoning,
+        "probe_requests": [],
+    })
     srv = http.server.HTTPServer(("127.0.0.1", 0), handler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     return srv, srv.server_address[1]
@@ -121,6 +151,11 @@ def test_vast_happy_path_waits_for_models_then_translates_then_destroys(tmp_path
         assert f"--engine omlx --omlx-host http://127.0.0.1:{port} --omlx-model {MODEL}" in out
         assert "--concurrent-chapters --max-concurrent-requests 4" in out
         assert "--book x.epub --out o" in out
+        assert len(srv.RequestHandlerClass.probe_requests) == 1
+        assert srv.RequestHandlerClass.probe_requests[0]["chat_template_kwargs"] == {
+            "enable_thinking": False
+        }
+        assert "vllm thinking preflight 通過" in r.stderr
         key = out.split("KEY: ")[1].strip(); assert len(key) >= 20
         calls = _calls(env)
         create = next(c for c in calls if "create instance" in c)
@@ -155,6 +190,78 @@ def test_cloud_concurrency_one_knob_and_escape_hatch(tmp_path: Path) -> None:
         out2 = Path(env2["FAKE_TRANSLATE_OUT"]).read_text(encoding="utf-8")
         assert "--concurrent-chapters" not in out2
         assert "--max-concurrent-requests" not in out2
+    finally:
+        srv.shutdown()
+
+
+def test_sglang_engine_uses_native_args_and_passes_thinking_preflight(tmp_path: Path) -> None:
+    srv, port = _serve_models()
+    try:
+        env = _setup(tmp_path, port=port)
+        env["CLOUD_LLM_ENGINE"] = "sglang"
+        env["CLOUD_LLM_CONCURRENCY"] = "12"
+        r = _run(env, "--", "--book", "x.epub")
+        assert r.returncode == 0, r.stderr[-2000:]
+        create = next(c for c in _calls(env) if "create instance" in c)
+        assert "--image lmsysorg/sglang:latest-runtime" in create
+        assert f"--raw --args python3 -m sglang.launch_server --model-path {MODEL}" in create
+        assert "--context-length 16384" in create
+        assert "--mem-fraction-static 0.92" in create
+        assert "--max-running-requests 12" in create
+        assert "--reasoning-parser qwen3" in create
+        assert "--max-model-len" not in create
+        assert "--gpu-memory-utilization" not in create
+        assert "--max-num-seqs" not in create
+        requests = srv.RequestHandlerClass.probe_requests
+        assert len(requests) == 1
+        assert requests[0]["chat_template_kwargs"] == {"enable_thinking": False}
+        assert Path(env["FAKE_TRANSLATE_OUT"]).exists()
+        assert "thinking preflight 通過" in r.stderr
+        assert "destroyed" in _calls(env)
+    finally:
+        srv.shutdown()
+
+
+def test_sglang_rejects_reasoning_parser_override_before_renting(tmp_path: Path) -> None:
+    env = _setup(tmp_path, port=1)
+    env["CLOUD_LLM_ENGINE"] = "sglang"
+    env["CLOUD_LLM_EXTRA_SERVER_ARGS"] = "--reasoning-parser deepseek-r1"
+    r = _run(env, "--", "--book", "x.epub")
+    assert r.returncode != 0
+    assert "reasoning-parser qwen3 是強制品質守衛" in r.stderr
+    assert _calls(env) == []
+    assert not Path(env["FAKE_TRANSLATE_OUT"]).exists()
+
+
+@pytest.mark.parametrize("engine", ["vllm", "sglang"])
+@pytest.mark.parametrize(
+    ("probe_content", "probe_reasoning", "expected"),
+    [
+        ("<think>secret</think>譯文", None, "content 含 think 標籤"),
+        ("<think\n>secret</think>譯文", None, "content 含 think 標籤"),
+        ("譯文", "secret", "reasoning_content 非空"),
+        ("譯文", False, "reasoning_content 非空"),
+        ("譯文", {"text": "secret"}, "reasoning_content 非空"),
+        ("", None, "content 必須是非空字串"),
+        ({"text": "譯文"}, None, "content 必須是非空字串"),
+        (None, None, "content 必須是非空字串"),
+    ],
+)
+def test_thinking_preflight_fails_closed_and_destroys(
+    tmp_path: Path, engine: str, probe_content: object,
+    probe_reasoning: object, expected: str
+) -> None:
+    srv, port = _serve_models(
+        probe_content=probe_content, probe_reasoning=probe_reasoning
+    )
+    try:
+        env = _setup(tmp_path, port=port)
+        env["CLOUD_LLM_ENGINE"] = engine
+        r = _run(env, "--", "--book", "x.epub")
+        assert r.returncode != 0
+        assert expected in r.stderr
+        assert not Path(env["FAKE_TRANSLATE_OUT"]).exists()
+        assert "destroyed" in _calls(env)
     finally:
         srv.shutdown()
 

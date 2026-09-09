@@ -327,8 +327,11 @@ def test_translate_single_book_concurrent_cross_chapter_carry_is_translation(tmp
 def test_translate_single_book_cross_chapter_flag_is_independent_bounded_and_state_safe(
     tmp_path, monkeypatch, request_limit
 ):
-    """Opt-in chapters overlap without cross-chapter carry, while one shared
-    request budget bounds nested chapter/chunk pools and state has one writer."""
+    """Opt-in chapters overlap without cross-chapter carry and state has one writer.
+
+    The fake provider uses a barrier, not sleep/timing, so the overlap claim is
+    deterministic even when this test runs alone on a loaded machine.
+    """
     book_path = tmp_path / "book.epub"
     book_path.write_bytes(b"fake epub")
     out_dir = tmp_path / "out"
@@ -341,7 +344,7 @@ def test_translate_single_book_cross_chapter_flag_is_independent_bounded_and_sta
         for i in range(1, 4):
             cid = f"item_{i:03d}"
             (chapters_dir / f"{cid}.html").write_text(
-                f"<p>Chapter {i} source A.</p><p>Chapter {i} source B.</p>", encoding="utf-8"
+                f"<p>Chapter {i} source A.</p>", encoding="utf-8"
             )
             spine.append({"id": cid, "output_strategy": "translate", "char_count": 10})
         (book_dir / "manifest.json").write_text(
@@ -355,10 +358,17 @@ def test_translate_single_book_cross_chapter_flag_is_independent_bounded_and_sta
             self.max_inflight = 0
             self.active_by_chapter: dict[str, int] = {}
             self.max_active_chapters = 0
+            self.chapter_barrier = (
+                threading.Barrier(2, timeout=5) if request_limit > 1 else None
+            )
+            self.barrier_arrivals = 0
 
         def translate(self, prompt, *, request_id, log_dir=None, system=None, temperature=None):
             chapter = request_id.split("_", 1)[0]
             with self._lock:
+                wait_at_barrier = self.chapter_barrier is not None and self.barrier_arrivals < 2
+                if wait_at_barrier:
+                    self.barrier_arrivals += 1
                 self.inflight += 1
                 self.max_inflight = max(self.max_inflight, self.inflight)
                 self.active_by_chapter[chapter] = self.active_by_chapter.get(chapter, 0) + 1
@@ -366,7 +376,8 @@ def test_translate_single_book_cross_chapter_flag_is_independent_bounded_and_sta
                     self.max_active_chapters, len(self.active_by_chapter)
                 )
             try:
-                time_module.sleep(0.04)
+                if wait_at_barrier:
+                    self.chapter_barrier.wait()
                 with self._lock:
                     self.calls.append({"request_id": request_id, "prompt": prompt,
                                        "system": system, "temperature": temperature})
@@ -396,8 +407,7 @@ def test_translate_single_book_cross_chapter_flag_is_independent_bounded_and_sta
 
     args = drv.build_parser().parse_args(
         ["--book", str(book_path), "--out", str(out_dir), "--engine", "omlx",
-         "--max-concurrent-requests", str(request_limit), "--concurrent-chapters",
-         "--chunk-max-chars", "5", "--no-seam-repair"]
+         "--max-concurrent-requests", str(request_limit), "--concurrent-chapters"]
     )
     drv.translate_single_book(book_path, args)
 
@@ -405,15 +415,121 @@ def test_translate_single_book_cross_chapter_flag_is_independent_bounded_and_sta
         assert provider.max_active_chapters >= 2  # another chapter starts before the first finishes
     else:
         assert provider.max_inflight == 1  # flag is valid even with no intra-chapter fan-out
-    assert provider.max_inflight <= request_limit  # one global budget, not chapters × chunks
+    assert provider.max_inflight <= request_limit
     chapter2_call = next(c for c in provider.calls if c["request_id"].startswith("2_ck01"))
     assert "第1章譯文" not in chapter2_call["prompt"]
     assert "Chapter 1 source A." not in chapter2_call["prompt"]
-    assert "Chapter 1 source B." not in chapter2_call["prompt"]
     saved = json.loads((out_dir / "book" / "state.json").read_text(encoding="utf-8"))
     assert all(saved["chapters"][f"item_{i:03d}"]["status"] == drv.state_mod.DONE
                for i in range(1, 4))
     assert save_threads and set(save_threads) == {main_thread}
+
+
+def test_cross_chapter_worker_exception_is_committed_without_losing_other_results(
+    tmp_path, monkeypatch
+):
+    """An unexpected worker exception is merged by the main thread as FAILED;
+    sibling chapters still finish and state.json remains complete JSON.
+    """
+    book_path = tmp_path / "book.epub"
+    book_path.write_bytes(b"fake epub")
+    out_dir = tmp_path / "out"
+
+    def fake_extract(_book_path: Path, out_parent: Path) -> None:
+        book_dir = out_parent / book_path.stem
+        chapters_dir = book_dir / "chapters"
+        chapters_dir.mkdir(parents=True)
+        spine = []
+        for i in range(1, 4):
+            cid = f"item_{i:03d}"
+            (chapters_dir / f"{cid}.html").write_text(
+                f"<p>Chapter {i} source.</p>", encoding="utf-8"
+            )
+            spine.append({"id": cid, "output_strategy": "translate", "char_count": 10})
+        (book_dir / "manifest.json").write_text(
+            json.dumps({"spine": spine}), encoding="utf-8"
+        )
+
+    class ExplodingProvider(_FakeConcurrentProvider):
+        def __init__(self) -> None:
+            super().__init__(response_for={}, max_concurrent_requests=2)
+
+        def translate(self, prompt, *, request_id, log_dir=None, system=None, temperature=None):
+            if request_id.startswith("2_"):
+                raise RuntimeError("synthetic chapter worker crash")
+            return ProviderResult(raw_text="[[PARA_1]]\n完成", model="fake",
+                                  latency_ms=1, retries=0, metadata={})
+
+    provider = ExplodingProvider()
+    monkeypatch.setattr(drv, "extract_epub", MagicMock(extract=fake_extract))
+    monkeypatch.setattr(drv, "OmlxProvider", lambda **_kwargs: provider)
+    monkeypatch.setattr(drv.offline_postprocess, "to_traditional", lambda text: text)
+    args = drv.build_parser().parse_args(
+        ["--book", str(book_path), "--out", str(out_dir), "--engine", "omlx",
+         "--max-concurrent-requests", "2", "--concurrent-chapters"]
+    )
+
+    drv.translate_single_book(book_path, args)
+
+    saved = json.loads((out_dir / "book" / "state.json").read_text(encoding="utf-8"))
+    assert saved["chapters"]["item_001"]["status"] == drv.state_mod.DONE
+    assert saved["chapters"]["item_002"]["status"] == drv.state_mod.FAILED
+    assert "synthetic chapter worker crash" in saved["chapters"]["item_002"]["error"]
+    assert saved["chapters"]["item_003"]["status"] == drv.state_mod.DONE
+    assert set(saved["chapters"]) == {"item_001", "item_002", "item_003"}
+
+
+def test_request_limiter_never_allows_more_than_global_limit():
+    """All caller threads rendezvous before entering the wrapper; accepted
+    calls stay blocked. With the limiter intact exactly two reach the delegate.
+    Removing the semaphore lets all four reach it and deterministically fails.
+    """
+
+    class BlockingProvider:
+        supports_concurrency = True
+        max_concurrent_requests = 2
+
+        def __init__(self) -> None:
+            self.lock = threading.Lock()
+            self.active = 0
+            self.max_active = 0
+            self.two_entered = threading.Event()
+            self.four_entered = threading.Event()
+            self.release = threading.Event()
+
+        def translate(self, *_args, **_kwargs):
+            with self.lock:
+                self.active += 1
+                self.max_active = max(self.max_active, self.active)
+                if self.active >= 2:
+                    self.two_entered.set()
+                if self.active >= 4:
+                    self.four_entered.set()
+            self.release.wait(timeout=5)
+            with self.lock:
+                self.active -= 1
+            return ProviderResult(raw_text="ok", model="fake", latency_ms=1,
+                                  retries=0, metadata={})
+
+    provider = BlockingProvider()
+    limited = drv._RequestLimitedProvider(provider, 2)
+    callers_ready = threading.Barrier(5, timeout=5)
+
+    def call_provider(index: int):
+        callers_ready.wait()
+        return limited.translate("p", request_id=f"r{index}")
+
+    with drv.concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+        futures = [pool.submit(call_provider, i) for i in range(4)]
+        callers_ready.wait()
+        try:
+            assert provider.two_entered.wait(timeout=2)
+            assert not provider.four_entered.wait(timeout=0.1)
+            assert provider.max_active == 2
+        finally:
+            provider.release.set()
+        for future in futures:
+            future.result(timeout=2)
 
 
 def test_chapter_provider_namespaces_fallback_ids_without_double_prefixing():

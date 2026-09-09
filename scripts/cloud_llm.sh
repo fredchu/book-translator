@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# cloud_llm.sh — 在雲端 GPU（Vast.ai 或 RunPod）開一個 vLLM 伺服器，讓 book-translator 的 omlx 引擎
-# 直接打它，翻完砍機。
+# cloud_llm.sh — 在雲端 GPU（Vast.ai 或 RunPod）開一個 vLLM 或 SGLang 伺服器，
+# 讓 book-translator 的 omlx-compatible client 直接打它，翻完砍機。
 #
 # 跟 bookcast／srt 的雲端腳本不同：這裡不上傳程式、不走 SSH。翻譯器本來就只對一個 OpenAI 相容
-# 網址發請求（本機 omlx 在 :8090），所以雲端版只要「租一台、用官方 vLLM 映像直接起伺服器、
-# 對外開 8000 埠、拿到公網位址就當 --omlx-host」。金鑰用 vLLM 的 --api-key 擋公開埠。
+# 網址發請求（本機 omlx 在 :8090），所以雲端版只要「租一台、用官方 server 映像起服務、
+# 對外開 8000 埠、拿到公網位址就當 --omlx-host」。金鑰用 server 的 --api-key 擋公開埠。
 #
 # 用法：
 #   scripts/cloud_llm.sh [選項] -- <translate_book_ollama.py 的參數...>
@@ -21,8 +21,10 @@
 #   --model HF_ID            CLOUD_LLM_MODEL（蓋掉 profile 的模型）
 #   --gpu NAME               CLOUD_LLM_GPU（蓋掉 profile 的卡；Vast 寫法 "RTX 5090"，RunPod 寫法 "NVIDIA GeForce RTX 5090"）
 #   --max-dph X              CLOUD_LLM_MAX_DPH（Vast 價格上限，預設 int4 0.6 / fp8 1.2）
+#   CLOUD_LLM_ENGINE          vllm|sglang（預設 vllm）
 #   CLOUD_LLM_CONCURRENCY     client/server 共用併發寬度（預設 4；量批次曲線可設 8/12/16）
 #   CLOUD_LLM_CONCURRENT_CHAPTERS=0  關掉雲端預設的跨章併發，退回舊行為
+#   CLOUD_LLM_EXTRA_SERVER_ARGS  追加目前引擎的 server 參數；vllm 仍相容舊的 CLOUD_LLM_EXTRA_VLLM_ARGS
 #   --keep / --stop DIR      見上
 #
 # 憑證：Vast → VAST_API_KEY 或 ~/.config/vastai/vast_api_key；RunPod → RUNPOD_API_KEY 或 ~/.config/runpod/api_key。
@@ -42,6 +44,7 @@ LIB_DIR="${BOOK_TRANSLATOR_CLOUD_LIB_DIR:-$HOME/dev/srt-skill/scripts}"
 
 PROVIDER="${CLOUD_LLM_PROVIDER:-vast}"
 PROFILE="${CLOUD_LLM_PROFILE:-int4}"
+ENGINE="${CLOUD_LLM_ENGINE:-vllm}"
 MODEL="${CLOUD_LLM_MODEL:-}"
 GPU="${CLOUD_LLM_GPU:-}"
 MAX_DPH="${CLOUD_LLM_MAX_DPH:-}"
@@ -69,6 +72,7 @@ log()  { printf '[cloud-llm] %s\n' "$*" >&2; }
 die()  { printf '[cloud-llm] 失敗：%s\n' "$*" >&2; exit 1; }
 
 case "$PROVIDER" in vast|runpod) ;; *) die "--provider 只能是 vast 或 runpod：$PROVIDER" ;; esac
+case "$ENGINE" in vllm|sglang) ;; *) die "CLOUD_LLM_ENGINE 只能是 vllm 或 sglang：$ENGINE" ;; esac
 [[ "$CONCURRENCY" =~ ^[1-9][0-9]*$ ]] || die "CLOUD_LLM_CONCURRENCY 必須是正整數：$CONCURRENCY"
 case "$CONCURRENT_CHAPTERS" in 0|1) ;; *) die "CLOUD_LLM_CONCURRENT_CHAPTERS 只能是 0 或 1：$CONCURRENT_CHAPTERS" ;; esac
 case "$PROFILE" in
@@ -82,7 +86,11 @@ case "$PROFILE" in
         MAX_DPH="${MAX_DPH:-1.2}" ;;
     *) die "--profile 只能是 int4 或 fp8：$PROFILE" ;;
 esac
-IMAGE="${CLOUD_LLM_IMAGE:-vllm/vllm-openai:v0.28.0}"
+if [[ "$ENGINE" == vllm ]]; then
+    IMAGE="${CLOUD_LLM_IMAGE:-vllm/vllm-openai:v0.28.0}"
+else
+    IMAGE="${CLOUD_LLM_IMAGE:-lmsysorg/sglang:latest-runtime}"
+fi
 # 挑報價用預估總費用排序：這條流程流量最重——每次拉 10 GB 映像＋ int4 19 GB／fp8 31 GB 模型，
 # 流量費常高過 GPU 費（Vast 單價 0 到 0.039 美元／GB）。時數預設 1.5 小時（一本 47 萬字約 1 小時），可用環境變數改。
 export VAST_LIB_EST_HOURS="${VAST_LIB_EST_HOURS:-1.5}"
@@ -180,14 +188,37 @@ mkdir -p "$RUN_DIR"
 printf '%s\n' "$PROVIDER" >"$RUN_DIR/provider"
 API_KEY="$(python3 -c 'import secrets;print(secrets.token_urlsafe(24))')"
 LABEL="book-translator-$(date -u +%Y%m%dT%H%M%SZ)"
-log "平台 $PROVIDER / 卡 $GPU / 模型 $MODEL / 映像 $IMAGE / run $RUN_DIR"
+log "平台 $PROVIDER / 引擎 $ENGINE / 卡 $GPU / 模型 $MODEL / 映像 $IMAGE / run $RUN_DIR"
 
-# vLLM 參數。--served-model-name 讓翻譯器用同一個 MODEL 字串當模型名。
-# 模型是位置參數（v0.28 對 --model 印警告）；--disable-log-requests 在 v0.28 已移除，不能帶。
-VLLM_ARGS=("$MODEL" --served-model-name "$MODEL" --port "$PORT" --host 0.0.0.0
-           --api-key "$API_KEY" --max-model-len "$MAX_MODEL_LEN" --gpu-memory-utilization "$GPU_MEM_UTIL"
-           --max-num-seqs "$CONCURRENCY")
-[[ -n "${CLOUD_LLM_EXTRA_VLLM_ARGS:-}" ]] && read -r -a _extra <<<"$CLOUD_LLM_EXTRA_VLLM_ARGS" && VLLM_ARGS+=("${_extra[@]}")
+# 每個映像各自組合法合法的啟動參數，不能靠 append 企圖蓋掉另一個引擎的旗標。
+if [[ "$ENGINE" == vllm ]]; then
+    # vLLM 映像的 entrypoint 已是 `vllm serve`；模型是位置參數。
+    SERVER_ARGS=("$MODEL" --served-model-name "$MODEL" --port "$PORT" --host 0.0.0.0
+                 --api-key "$API_KEY" --max-model-len "$MAX_MODEL_LEN" --gpu-memory-utilization "$GPU_MEM_UTIL"
+                 --max-num-seqs "$CONCURRENCY")
+else
+    # SGLang runtime 映像沒有 vLLM entrypoint；明確啟動 OpenAI-compatible server。
+    # reasoning parser 是品質守衛的一部分，不能只靠 request 的 enable_thinking=false。
+    SERVER_ARGS=(python3 -m sglang.launch_server --model-path "$MODEL" --port "$PORT" --host 0.0.0.0
+                 --api-key "$API_KEY" --context-length "$MAX_MODEL_LEN" --mem-fraction-static "$GPU_MEM_UTIL"
+                 --max-running-requests "$CONCURRENCY" --reasoning-parser qwen3)
+fi
+if [[ -n "${CLOUD_LLM_EXTRA_SERVER_ARGS:-}" ]]; then
+    read -r -a _extra <<<"$CLOUD_LLM_EXTRA_SERVER_ARGS"
+    if [[ "$ENGINE" == sglang ]]; then
+        for _arg in "${_extra[@]}"; do
+            case "$_arg" in
+                --reasoning-parser|--reasoning-parser=*)
+                    die "SGLang 的 --reasoning-parser qwen3 是強制品質守衛，不能由 CLOUD_LLM_EXTRA_SERVER_ARGS 覆蓋" ;;
+            esac
+        done
+    fi
+    SERVER_ARGS+=("${_extra[@]}")
+elif [[ "$ENGINE" == vllm && -n "${CLOUD_LLM_EXTRA_VLLM_ARGS:-}" ]]; then
+    # Backward compatibility for existing vLLM benchmark commands only.
+    read -r -a _extra <<<"$CLOUD_LLM_EXTRA_VLLM_ARGS"
+    SERVER_ARGS+=("${_extra[@]}")
+fi
 
 # ---------- 開機 ----------
 if [[ "$PROVIDER" == vast ]]; then
@@ -200,7 +231,7 @@ if [[ "$PROVIDER" == vast ]]; then
         [[ -n "$OFFER_ID" ]] || continue
         TRIES=$((TRIES + 1)); (( TRIES <= 3 )) || break
         log "試報價 ${OFFER_ID}（$TRIES/3）：$OFFER_DESC"
-        if OUT="$(vast_lib_create_instance_args "$OFFER_ID" "$IMAGE" "$DISK_GB" "$LABEL" "$ENV_STR" "${VLLM_ARGS[@]}")"; then
+        if OUT="$(vast_lib_create_instance_args "$OFFER_ID" "$IMAGE" "$DISK_GB" "$LABEL" "$ENV_STR" "${SERVER_ARGS[@]}")"; then
             INSTANCE_ID="$OUT"; break
         fi
         # 解析失敗≠沒開機（09-04 首跑就這樣連漏三台）。換下一張前先依 label 回查，有就認領。
@@ -213,7 +244,7 @@ if [[ "$PROVIDER" == vast ]]; then
     [[ -n "$INSTANCE_ID" ]] || die "Vast.ai 開機失敗（試了 $TRIES 張報價）"
 else
     BODY="$(mktemp "${TMPDIR:-/tmp}/cloud_llm.XXXXXX")"
-    ARGS_STR="$(printf '%q ' "${VLLM_ARGS[@]}")"
+    ARGS_STR="$(printf '%q ' "${SERVER_ARGS[@]}")"
     jq -n --arg name "$LABEL" --arg image "$IMAGE" --arg gpu "$GPU" --arg args "$ARGS_STR" \
           --argjson disk "$DISK_GB" --arg hf "${HF_TOKEN:-}" '
         {name:$name, cloud:"SECURE", gpu:{id:$gpu, count:1, minCudaVersion:"12.8"},
@@ -262,8 +293,8 @@ while :; do
         if curl -s -m 8 -H "Authorization: Bearer $API_KEY" "http://$HOST:$HPORT/v1/models" 2>/dev/null | jq -e --arg m "$MODEL" '.data[]? | select(.id == $m)' >/dev/null 2>&1; then
             break
         fi
-        log "狀態 ${status}，端點 $HOST:$HPORT 已有、vLLM 還在載入模型…"
-        # 每五輪印一次容器紀錄尾巴：vLLM 參數錯會反覆重啟，不印的話只看得到「還在載入」直到預算用完
+        log "狀態 ${status}，端點 $HOST:$HPORT 已有、${ENGINE} 還在載入模型…"
+        # 每五輪印一次容器紀錄尾巴：server 參數錯會反覆重啟，不印的話只看得到「還在載入」直到預算用完
         POLLS=$(( ${POLLS:-0} + 1 ))
         if [[ "$PROVIDER" == vast && $(( POLLS % 5 )) -eq 0 ]]; then
             vast_lib_cli logs "$INSTANCE_ID" --tail 5 2>/dev/null | grep -v '^$' | tail -3 | sed 's/^/[cloud-llm]   容器: /' >&2 || true
@@ -274,7 +305,30 @@ while :; do
     sleep "$POLL_SECONDS"
 done
 ENDPOINT="http://$HOST:$HPORT"
-log "vLLM 就緒：${ENDPOINT}（模型 ${MODEL}），等了 $(( ( $(date +%s) - (boot_deadline - BOOT_WAIT_MIN * 60) ) / 60 )) 分鐘"
+log "${ENGINE} 就緒：${ENDPOINT}（模型 ${MODEL}），等了 $(( ( $(date +%s) - (boot_deadline - BOOT_WAIT_MIN * 60) ) / 60 )) 分鐘"
+
+# Thinking preflight 必須是啟動後的第一個 completion request，兩個引擎都要跑。
+# Qwopus 的微調模板可能讓 enable_thinking=false 靜默失效；content 出現 think tag 或
+# reasoning_content 非空都立即砍機，不把受污染輸出帶進翻譯／benchmark。
+    PROBE_PAYLOAD="$(jq -cn --arg model "$MODEL" '{model:$model,messages:[{role:"user",content:"Translate into Taiwan Traditional Chinese. Output only the translation: Connection test."}],max_tokens:64,temperature:0,chat_template_kwargs:{enable_thinking:false}}')"
+    if ! PROBE_RESPONSE="$(curl -fsS -m 180 -H "Authorization: Bearer $API_KEY" -H 'Content-Type: application/json' \
+        --data-binary "$PROBE_PAYLOAD" "$ENDPOINT/v1/chat/completions")"; then
+        die "${ENGINE} thinking preflight 請求失敗，未開始翻譯"
+    fi
+    jq -e '.choices[0].message.content | type == "string" and length > 0' \
+        <<<"$PROBE_RESPONSE" >/dev/null 2>&1 \
+        || die "${ENGINE} thinking preflight content 必須是非空字串，未開始翻譯"
+    jq -e '.choices[0].message as $m | ((($m | has("reasoning_content")) | not) or $m.reasoning_content == null or $m.reasoning_content == "")' \
+        <<<"$PROBE_RESPONSE" >/dev/null 2>&1 \
+        || die "${ENGINE} thinking preflight reasoning_content 非空，未開始翻譯"
+    PROBE_CONTENT="$(jq -r '.choices[0].message.content' <<<"$PROBE_RESPONSE")"
+    # grep 是逐行工具；先拿掉換行，才能抓到 `<think\n>` 這類跨行 tag。
+    PROBE_CONTENT_ONE_LINE="$(printf '%s' "$PROBE_CONTENT" | tr -d '\r\n')"
+    if grep -Eiq '<[[:space:]]*/?[[:space:]]*think([[:space:]>])' <<<"$PROBE_CONTENT_ONE_LINE"; then
+        die "${ENGINE} thinking preflight content 含 think 標籤，未開始翻譯"
+    fi
+log "${ENGINE} thinking preflight 通過：content 無 think 標籤、reasoning_content 為空"
+
 printf 'OMLX_HOST=%s\nOMLX_MODEL=%s\nOMLX_API_KEY=%s\n' "$ENDPOINT" "$MODEL" "$API_KEY" >"$RUN_DIR/endpoint.env"
 chmod 600 "$RUN_DIR/endpoint.env"
 
