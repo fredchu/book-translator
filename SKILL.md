@@ -1,6 +1,6 @@
 ---
 name: book-translator
-version: 1.0.1
+version: 1.0.2
 description: |-
   Translate full-length books (EPUB) to Traditional Chinese (Taiwan) with literary tone fidelity and cross-chapter coherence, preserving EPUB structure. Use when the user says "翻書", "翻電子書", "翻譯整本書", "book translate", "bilingual epub", or gives an .epub expecting literary translation. Main session extracts an OPF spine manifest plus a per-book glossary and style anchor, then dispatches parallel subagents (each gets glossary, style anchor, and last-paragraph carryover for coherence); the first item is previewed for tone confirmation before fanning out the rest. Produces a bilingual .epub (source + translation interleaved) with manifest/glossary/state for resume. Differs from translate-book (generic PDF/DOCX/EPUB, single-language, no coherence): book-translator targets literary works, uses Opus for the style-anchor pass and Sonnet for the parallel fan-out, and gates quality before shipping. Not for short articles (use polish) or SRT subtitles (use srt).
 allowed-tools:
@@ -103,17 +103,21 @@ The skill supports two providers:
   `Jackrong/Qwopus3.6-27B-v2-FP8`（30.9 GB，要 ≥40 GB 卡，預設 L40S 約 0.80）。
   機器挑選、IP 排除、停滯偵測都沿用 srt-skill 的 `vast_instance_lib.sh`／`runpod_pod_lib.sh`。
 
-  **併發（2026-09-09 起，選用）**：本機 omlx 單一 GPU，維持預設循序（不用管這段）。
-  雲端 vLLM／SGLang 才有意義：加 `--max-concurrent-requests N`，同一章的塊會一次送出，
-  不再排成一條長龍等前一塊翻完。**N 不要超過雲端伺服器自己接受的上限**（vLLM/SGLang
-  的併發設定，跟這裡的 CLI 旗標是兩回事，要分別確認）；本機 `~/.omlx/settings.json` 目前是 `scheduler.max_concurrent_requests: 8`，但那是本機的值，不代表雲端那台也是 8。**而且那 8 是設定檔寫的數字，沒有人送過併發請求驗證伺服器真的同時處理 8 條**；mlx-lm 的 BatchGenerator 在 27B 上會不會線性擴展，也還不知道。
-  加速比不是「那一章有幾塊」，是**伺服器併發上限**——本機 8 的話，Mind-Gut 260 塊按每章
-  分批（有些章塊數除不盡 8）總共要跑 44 批，理論加速 260/44 ≈ **5.9 倍**，這是算出來的
-  天花板不是實測值。跨章之間仍是循序跑，交界的上下文照舊用前一章**真正的譯文**
-  （不是原文——拿掉這層資料相依沒有意義，因為章本來就是一次跑一章，等於白白損失接縫品質）。
-  預設連 seam-repair 一起做（重翻每個章內接縫的第一段，找回真正的譯文上下文），
-  不想要就加 `--no-seam-repair`。細節與已知限制見 `CHANGELOG.md`
-  「Optional within-chapter concurrent translation」那條。
+  **併發（2026-09-10 起，雲端預設）**：本機 omlx 單一 GPU 維持循序。雲端 vLLM／SGLang
+  由 `cloud_llm.sh` 預設帶 `--concurrent-chapters --max-concurrent-requests N`；直接跑 driver
+  時要同時加這兩個旗標，前者開跨章排程、後者控制全書總在途 request 上限。server 與 client
+  共用 `CLOUD_LLM_CONCURRENCY`（預設 4），不會膨脹成「章數 × 塊數」的無界 fan-out。
+
+  **術語表是併發的前提，不是加分項。** 開併發前先建立並人工確認
+  `<book_dir>/spec_terms.json`。八趟 Mind-Gut 實測：有術語表的三種模式，人名都只剩單一形態，
+  次數為 **61／61／60**；沒有術語表的五趟中，**四趟出現三種形態**，而併發路徑最分散，
+  另冒出第五種形態「艾蘭娜」**13 次**。機制是章內並行把接續上下文改成原文，各塊會獨立
+  決定人名譯法；跨章並行又增加獨立邊界。driver 偵測到任一併發旗標開啟但沒有可用術語表時，
+  會在 stderr 明顯警告但不阻擋，使用者仍可自行承擔一致性風險繼續。
+
+  章內接縫預設做 seam repair：重翻邊界第一段，取回上一塊真正譯文的上下文；可用
+  `--no-seam-repair` 關閉。跨章並行時跨章 carryover 為空，這是以吞吐換取章界上下文的明示
+  取捨。細節與守衛見 `CHANGELOG.md` 的 concurrent translation 條目。
 
 ### Cloud mode — triggers + workflow
 
@@ -131,9 +135,9 @@ scripts/cloud_llm.sh --stop runs/cloud-llm-<id>                     # 砍掉 --k
 - 憑證：`VAST_API_KEY`／`~/.config/vastai/vast_api_key`；`RUNPOD_API_KEY`／`~/.config/runpod/api_key`。
 - 錢的守衛：`CLOUD_LLM_BOOT_WAIT_MIN`（25，拉映像＋下載模型）、`CLOUD_LLM_BOOT_STALL_MIN`（6）、
   `CLOUD_LLM_MAX_HOURS`（6，看門狗送 TERM 讓 trap 砍機）。收屍：`bash ~/dev/srt-skill/scripts/vast_reap.sh`／`runpod_reap.sh`。
-- 為什麼是 vLLM 不是 SGLang／llama.cpp：Vast 主機常快取 vLLM 官方映像、int4 模型頁面明寫測過 vLLM；
-  llama.cpp 在單張 NVIDIA 上吞吐低（租卡按時計費）。映像與參數都是環境變數（`CLOUD_LLM_IMAGE`、
-  `CLOUD_LLM_EXTRA_VLLM_ARGS`），要換 SGLang 改那兩個即可。
+- 推論 server 可用 `CLOUD_LLM_ENGINE=vllm|sglang` 選擇；兩邊各自組原生參數，不用互塞不相容旗標。
+  SGLang 強制 `--reasoning-parser qwen3`。兩個引擎在正式翻譯前都會送 thinking preflight，確認
+  `enable_thinking:false` 生效、content 無 think tag、`reasoning_content` 為空，否則立即砍機。
 - 在 Claude Code 裡跑長書請放背景並掛監看；Ctrl-C 會砍機（那是刻意的）。
 - 09-04 真機：台灣 5090（0.356 美元／小時）從開機到 vLLM 就緒 19 分鐘（拉 10 GB 映像＋下載 18.7 GB 模型＋初始化），
   固定開銷約 0.12 美元；之後翻譯 5 章結構測試檔 0.3 分鐘。RunPod 路徑只有替身測試，還沒真機跑過。

@@ -17,6 +17,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 import chunker as chk  # type: ignore  # noqa: E402
 import translate_book_ollama as drv  # type: ignore  # noqa: E402
 from audit_result import AuditResult  # noqa: E402
+from providers import OmlxProvider  # noqa: E402
 from providers.base import ProviderResult  # noqa: E402
 
 
@@ -325,7 +326,7 @@ def test_translate_single_book_concurrent_cross_chapter_carry_is_translation(tmp
 
 @pytest.mark.parametrize("request_limit", [1, 2])
 def test_translate_single_book_cross_chapter_flag_is_independent_bounded_and_state_safe(
-    tmp_path, monkeypatch, request_limit
+    tmp_path, monkeypatch, request_limit, capsys
 ):
     """Opt-in chapters overlap without cross-chapter carry and state has one writer.
 
@@ -410,6 +411,8 @@ def test_translate_single_book_cross_chapter_flag_is_independent_bounded_and_sta
          "--max-concurrent-requests", str(request_limit), "--concurrent-chapters"]
     )
     drv.translate_single_book(book_path, args)
+    run_stderr = capsys.readouterr().err
+    assert "max_tokens=2048 (omlx default)" in run_stderr
 
     if request_limit > 1:
         assert provider.max_active_chapters >= 2  # another chapter starts before the first finishes
@@ -541,6 +544,78 @@ def test_chapter_provider_namespaces_fallback_ids_without_double_prefixing():
         "2_ck01_fallback",
         "2_ck01_attempt_0",
     ]
+
+
+@pytest.mark.parametrize(
+    "concurrency_args",
+    [["--max-concurrent-requests", "2"], ["--concurrent-chapters"]],
+)
+def test_concurrency_warns_when_book_has_no_term_table(
+    tmp_path, capsys, concurrency_args
+):
+    args = drv.build_parser().parse_args(
+        ["--book", str(tmp_path / "x.epub"), *concurrency_args]
+    )
+    drv._warn_if_concurrent_without_terms(args, tmp_path)
+    warning = capsys.readouterr().err
+    assert "併發模式已開啟" in warning
+    assert "沒有可用的 spec_terms.json 術語表" in warning
+    assert "本次仍會繼續" in warning
+
+
+@pytest.mark.parametrize(
+    "term_file",
+    ["{not-json", '{"terms": []}', '{"terms": {}}', "[]", "null", "42"],
+)
+def test_concurrency_treats_malformed_or_empty_term_table_as_missing(
+    tmp_path, capsys, term_file
+):
+    (tmp_path / "spec_terms.json").write_text(term_file, encoding="utf-8")
+    args = drv.build_parser().parse_args(
+        ["--book", str(tmp_path / "x.epub"), "--concurrent-chapters"]
+    )
+    drv._warn_if_concurrent_without_terms(args, tmp_path)
+    assert "沒有可用的 spec_terms.json 術語表" in capsys.readouterr().err
+
+
+def test_concurrency_does_not_warn_when_book_has_term_table(tmp_path, capsys):
+    (tmp_path / "spec_terms.json").write_text(
+        json.dumps({"terms": {"Elena": "艾蓮娜"}}), encoding="utf-8"
+    )
+    args = drv.build_parser().parse_args(
+        ["--book", str(tmp_path / "x.epub"), "--concurrent-chapters"]
+    )
+    drv._warn_if_concurrent_without_terms(args, tmp_path)
+    assert capsys.readouterr().err == ""
+
+
+def test_sequential_mode_without_term_table_does_not_warn(tmp_path, capsys):
+    args = drv.build_parser().parse_args(
+        ["--book", str(tmp_path / "x.epub")]
+    )
+    drv._warn_if_concurrent_without_terms(args, tmp_path)
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize("term_file", ["{not-json", "[]", "null", '{"terms": []}'])
+def test_sequential_malformed_term_table_remains_a_hard_error(
+    tmp_path, capsys, term_file
+):
+    (tmp_path / "spec_terms.json").write_text(term_file, encoding="utf-8")
+    args = drv.build_parser().parse_args(
+        ["--book", str(tmp_path / "x.epub")]
+    )
+    drv._warn_if_concurrent_without_terms(args, tmp_path)
+    assert capsys.readouterr().err == ""
+    with pytest.raises((json.JSONDecodeError, ValueError)):
+        drv.dispatch.load_fixed_terms(tmp_path)
+
+
+def test_book_driver_engine_specific_output_token_defaults_and_explicit_override():
+    assert drv._resolve_num_predict("omlx", None) == 2048
+    assert drv._resolve_num_predict("ollama", None) == 4096
+    assert drv._resolve_num_predict("omlx", 4096) == 4096
+    assert drv._resolve_num_predict("ollama", 1234) == 1234
 
 
 def test_resolve_max_workers_defaults_to_one_without_attribute():
@@ -715,6 +790,58 @@ def test_single_paragraph_fallback_no_warning_on_clean_output(tmp_path):
     )
     assert result == "乾淨的一段。"
     assert not any("blank line" in w for w in warns)
+
+
+def _openai_response(content: str, finish_reason: str) -> MagicMock:
+    response = MagicMock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = {
+        "choices": [{"message": {"content": content}, "finish_reason": finish_reason}]
+    }
+    return response
+
+
+def test_length_finish_reason_triggers_driver_temperature_retry(tmp_path, monkeypatch):
+    post = MagicMock(side_effect=[
+        _openai_response("[[PARA_1]]\n截斷", "length"),
+        _openai_response("[[PARA_1]]\n完整", "stop"),
+    ])
+    monkeypatch.setattr("providers.omlx_provider.requests.post", post)
+    provider = OmlxProvider("model-a", max_retries=3)
+    aligned, _raw, warnings = drv._translate_chunk(
+        provider,
+        chunk_paragraphs=("Source.",),
+        chapter_label="1",
+        chunk_label="ck01",
+        book_title="T",
+        target_lang="zh-tw",
+        carryover="",
+        book_dir=tmp_path,
+        default_temperature=0.3,
+    )
+    assert aligned == "完整"
+    assert post.call_count == 2
+    assert [call.kwargs["json"]["temperature"] for call in post.call_args_list] == [0.3, 0.5]
+    assert any("response truncated" in warning for warning in warnings)
+
+
+def test_stop_finish_reason_does_not_trigger_driver_retry(tmp_path, monkeypatch):
+    post = MagicMock(return_value=_openai_response("[[PARA_1]]\n完整", "stop"))
+    monkeypatch.setattr("providers.omlx_provider.requests.post", post)
+    aligned, _raw, _warnings = drv._translate_chunk(
+        OmlxProvider("model-a", max_retries=3),
+        chunk_paragraphs=("Source.",),
+        chapter_label="1",
+        chunk_label="ck01",
+        book_title="T",
+        target_lang="zh-tw",
+        carryover="",
+        book_dir=tmp_path,
+        default_temperature=0.3,
+    )
+    assert aligned == "完整"
+    assert post.call_count == 1
+    assert post.call_args.kwargs["json"]["temperature"] == 0.3
 
 
 def test_translate_chunk_passes_explicit_temperature_per_attempt_no_mutation(tmp_path):

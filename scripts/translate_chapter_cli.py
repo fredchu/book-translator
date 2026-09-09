@@ -32,6 +32,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 import dispatch  # noqa: E402
 from epub_reader import EPUBReader  # noqa: E402
 from providers import provider_factory  # noqa: E402
+from providers.omlx_provider import DEFAULT_MAX_TOKENS as OMLX_DEFAULT_MAX_TOKENS  # noqa: E402
 
 
 MINIMAL_GLOSSARY = {
@@ -80,6 +81,16 @@ def _build_prompt(chapter_html: str, *, chapter_label: str, book_title: str) -> 
     )
 
 
+def _resolve_num_predict(engine: str, requested: int | None) -> int | None:
+    if requested is not None:
+        return requested
+    if engine == "omlx":
+        return OMLX_DEFAULT_MAX_TOKENS
+    if engine == "ollama":
+        return 8192
+    return None
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--book", required=True, type=Path, help="path to .epub")
@@ -97,7 +108,10 @@ def main() -> int:
     parser.add_argument("--book-title", default=None, help="title to inject into prompt")
     parser.add_argument("--timeout", type=int, default=1200)
     parser.add_argument("--num-ctx", type=int, default=32768)
-    parser.add_argument("--num-predict", type=int, default=8192)
+    parser.add_argument(
+        "--num-predict", type=int, default=None,
+        help="maximum output tokens; engine default is omlx 2048 or ollama 8192",
+    )
     parser.add_argument("--temperature", type=float, default=0.3)
     parser.add_argument(
         "--validate-markers",
@@ -113,6 +127,8 @@ def main() -> int:
         parser.error("--omlx-model is required when --engine=omlx")
 
     args.out.mkdir(parents=True, exist_ok=True)
+    effective_num_predict = _resolve_num_predict(args.engine, args.num_predict)
+    max_tokens_source = "user specified" if args.num_predict is not None else f"{args.engine} default"
 
     chapter_html, item_name = _read_chapter_html(args.book, args.chapter)
     book_title = args.book_title or args.book.stem
@@ -126,7 +142,7 @@ def main() -> int:
             host=args.ollama_host,
             timeout=args.timeout,
             num_ctx=args.num_ctx,
-            num_predict=args.num_predict,
+            num_predict=effective_num_predict,
             temperature=args.temperature,
         )
     elif args.engine == "omlx":
@@ -137,7 +153,7 @@ def main() -> int:
             # 只在有金鑰時才傳：本機 omlx 的建構參數要跟以前一模一樣（既有測試比對完整 kwargs）
             **({"api_key": args.omlx_api_key} if args.omlx_api_key else {}),
             timeout=args.timeout,
-            max_tokens=args.num_predict,
+            max_tokens=effective_num_predict,
             temperature=args.temperature,
         )
     else:
@@ -157,7 +173,9 @@ def main() -> int:
 
     print(
         f"[run] engine={args.engine} model={selected_model or 'opus'} "
-        f"chapter={args.chapter} ({item_name}) source_paragraphs={len(source_paragraphs)}",
+        f"chapter={args.chapter} ({item_name}) source_paragraphs={len(source_paragraphs)} "
+        f"max_tokens={effective_num_predict if effective_num_predict is not None else 'n/a'} "
+        f"({max_tokens_source})",
         file=sys.stderr,
     )
     started = time.monotonic()

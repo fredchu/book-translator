@@ -13,6 +13,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 
 from providers import OmlxProvider, provider_factory  # type: ignore  # noqa: E402
 from providers.base import ProviderError  # type: ignore  # noqa: E402
+from providers.omlx_provider import DEFAULT_MAX_TOKENS, DEFAULT_TIMEOUT  # type: ignore  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -37,6 +38,16 @@ def test_provider_factory_omlx_uses_model() -> None:
 def test_provider_factory_omlx_requires_model() -> None:
     with pytest.raises(ValueError):
         provider_factory("omlx")
+
+
+def test_omlx_default_max_tokens_has_measured_headroom_and_finishes_before_timeout() -> None:
+    provider = OmlxProvider("model-a")
+    observed_legitimate_ceiling = 650
+    worst_measured_tokens_per_second = 26.6
+    assert provider.max_tokens == DEFAULT_MAX_TOKENS == 2048
+    assert DEFAULT_MAX_TOKENS >= 2 * observed_legitimate_ceiling
+    assert DEFAULT_TIMEOUT >= 2 * (observed_legitimate_ceiling / worst_measured_tokens_per_second)
+    assert DEFAULT_MAX_TOKENS / worst_measured_tokens_per_second < DEFAULT_TIMEOUT
 
 
 def test_omlx_default_does_not_support_concurrency() -> None:
@@ -130,6 +141,29 @@ def test_omlx_translate_parses_content_and_ignores_reasoning(mock_post: MagicMoc
     assert result.metadata["usage"] == {"completion_tokens": 3}
 
 
+def test_omlx_length_finish_reason_fails_immediately_without_same_temperature_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mock_post = MagicMock(return_value=_response({
+        "choices": [{"message": {"content": "partial"}, "finish_reason": "length"}]
+    }))
+    monkeypatch.setattr("providers.omlx_provider.requests.post", mock_post)
+    with pytest.raises(ProviderError, match="truncated at max_tokens=2048"):
+        OmlxProvider("model-a", max_retries=3).translate("prompt", request_id="req")
+    assert mock_post.call_count == 1
+
+
+@patch("providers.omlx_provider.requests.post")
+def test_omlx_stop_finish_reason_returns_without_retry(mock_post: MagicMock) -> None:
+    mock_post.return_value = _response({
+        "choices": [{"message": {"content": "譯文"}, "finish_reason": "stop"}]
+    })
+    result = OmlxProvider("model-a", max_retries=3).translate("prompt", request_id="req")
+    assert result.raw_text == "譯文"
+    assert result.metadata["finish_reason"] == "stop"
+    assert mock_post.call_count == 1
+
+
 @patch("providers.omlx_provider.requests.post")
 def test_omlx_translate_retries_malformed_response_then_raises(mock_post: MagicMock) -> None:
     mock_post.return_value = _response({"choices": []})
@@ -180,7 +214,6 @@ def test_omlx_ping_returns_false_on_connection_error(mock_get: MagicMock) -> Non
 def test_omlx_api_key_adds_bearer_header_on_ping_and_translate(monkeypatch, tmp_path):
     """雲端 vLLM 用 --api-key 保護公開埠；有金鑰時 ping 與 translate 都要帶 Bearer，沒金鑰時不加 headers。"""
     from unittest.mock import MagicMock, patch
-    from providers.omlx_provider import OmlxProvider
 
     ok = MagicMock(status_code=200)
     ok.json.return_value = {"choices": [{"message": {"content": "譯文"}}], "usage": {}}

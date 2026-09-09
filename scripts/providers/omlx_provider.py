@@ -26,6 +26,11 @@ from .base import ProviderError, ProviderResult, TranslationProvider
 
 DEFAULT_HOST = "http://localhost:8090"
 DEFAULT_TIMEOUT = 120
+# Real full-size 3000-char chunks produced about 509-534 tokens; the observed
+# legitimate ceiling is ~650. 2048 leaves >3x output headroom while capping a
+# runaway generation at ~77s even at the measured worst N=24 rate (26.6 tok/s),
+# safely inside the unchanged 120s request timeout instead of timing out first.
+DEFAULT_MAX_TOKENS = 2048
 RETRY_BACKOFF = [10, 30, 90]
 DEFAULT_CHAT_TEMPLATE_KWARGS = {"enable_thinking": False}
 
@@ -42,7 +47,7 @@ class OmlxProvider(TranslationProvider):
         timeout: int = DEFAULT_TIMEOUT,
         max_retries: int = 3,
         temperature: float = 0.3,
-        max_tokens: int = 8192,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
         chat_template_kwargs: dict[str, Any] | None = None,
         api_key: str | None = None,
         max_concurrent_requests: int = 1,
@@ -104,6 +109,14 @@ class OmlxProvider(TranslationProvider):
                 response.raise_for_status()
                 data = response.json()
                 raw_text = self._extract_content(data)
+                finish_reason = data["choices"][0].get("finish_reason")
+                if finish_reason == "length":
+                    # Do not pass a known-truncated response to marker validation.
+                    # Raise immediately (without same-temperature HTTP retries) so
+                    # the driver's existing attempt 1 retries at temperature 0.5.
+                    raise ProviderError(
+                        f"OmlxProvider({self.model}) response truncated at max_tokens={self.max_tokens}"
+                    )
                 latency_ms = int((time.monotonic() - start) * 1000)
                 attempt_latency_ms = int((time.monotonic() - attempt_start) * 1000)
 
@@ -123,7 +136,8 @@ class OmlxProvider(TranslationProvider):
                                 "prompt": prompt,
                                 "response_content": raw_text,
                                 "response_meta": {
-                                    k: v for k, v in data.items() if k not in {"choices"}
+                                    **{k: v for k, v in data.items() if k not in {"choices"}},
+                                    "finish_reason": finish_reason,
                                 },
                                 "latency_ms_total": latency_ms,
                                 "latency_ms_attempt": attempt_latency_ms,
@@ -145,6 +159,7 @@ class OmlxProvider(TranslationProvider):
                         "object": data.get("object"),
                         "created": data.get("created"),
                         "usage": data.get("usage"),
+                        "finish_reason": finish_reason,
                     },
                 )
             except (

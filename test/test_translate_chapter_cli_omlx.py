@@ -83,7 +83,7 @@ def test_omlx_cli_flags_build_provider_and_write_outputs(
 
 
 def test_omlx_cli_uses_default_model_when_omitted(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """2026-08-09: --omlx-model defaults to Qwopus3.6-27B-v2-MLX-4bit, and
     --engine defaults to omlx. Previously this test asserted SystemExit when
@@ -125,6 +125,16 @@ def test_omlx_cli_uses_default_model_when_omitted(
     assert len(calls) == 1
     assert calls[0]["engine"] == "omlx"
     assert calls[0]["model"] == "Qwopus3.6-27B-v2-MLX-4bit"
+    assert calls[0]["kwargs"]["max_tokens"] == 2048
+    assert "max_tokens=2048 (omlx default)" in capsys.readouterr().err
+
+
+def test_chapter_cli_engine_specific_output_token_defaults_and_explicit_override() -> None:
+    assert cli._resolve_num_predict("omlx", None) == 2048
+    assert cli._resolve_num_predict("ollama", None) == 8192
+    assert cli._resolve_num_predict("omlx", 4096) == 4096
+    assert cli._resolve_num_predict("ollama", 1234) == 1234
+    assert cli._resolve_num_predict("anthropic", None) is None
 
 
 def test_live_omlx_ping_smoke_skips_unless_enabled() -> None:

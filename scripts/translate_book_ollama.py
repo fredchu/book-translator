@@ -56,6 +56,7 @@ import translation_log  # noqa: E402
 from assemble import assemble  # noqa: E402
 from audit_suite import all_passed, format_summary, run_all as run_audits  # noqa: E402
 from providers import OllamaProvider, OmlxProvider, ProviderError  # noqa: E402
+from providers.omlx_provider import DEFAULT_MAX_TOKENS as OMLX_DEFAULT_MAX_TOKENS  # noqa: E402
 
 
 MINIMAL_GLOSSARY = {
@@ -118,8 +119,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--timeout", type=int, default=1800)
     parser.add_argument("--num-ctx", type=int, default=8192,
                         help="num_ctx per chunk; smaller is faster (default 8192 — chunks ≤ ~3K source chars)")
-    parser.add_argument("--num-predict", type=int, default=4096,
-                        help="num_predict per chunk; output is 60-80%% of input tokens")
+    parser.add_argument(
+        "--num-predict",
+        type=int,
+        default=None,
+        help="maximum output tokens per chunk; engine default is omlx 2048 or ollama 4096. Observed normal output is about 50-60%% of prompt tokens",
+    )
     parser.add_argument("--temperature", type=float, default=0.3)
     parser.add_argument("--chunk-max-chars", type=int, default=3000,
                         help="source-side chunk budget in chars (Bocky default ~1500 tokens ≈ 3000 chars)")
@@ -140,6 +145,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-resume", action="store_true", help="re-extract + re-translate from scratch")
     parser.add_argument("--limit", type=int, default=None, help="cap on chapters translated this run (debug)")
     return parser
+
+
+def _resolve_num_predict(engine: str, requested: int | None) -> int:
+    """Resolve only after engine selection so an explicit 4096 stays explicit."""
+    if requested is not None:
+        return requested
+    return OMLX_DEFAULT_MAX_TOKENS if engine == "omlx" else 4096
 
 
 def _translate_chunk(
@@ -900,6 +912,29 @@ def _translate_chapters_concurrently(
     return done_count, failed_count, skipped_count
 
 
+def _warn_if_concurrent_without_terms(args: argparse.Namespace, book_dir: Path) -> None:
+    """Warn, but do not block, when independent chunks lack fixed name forms."""
+    concurrency_enabled = (
+        getattr(args, "concurrent_chapters", False)
+        or getattr(args, "max_concurrent_requests", 1) > 1
+    )
+    if not concurrency_enabled:
+        return
+    try:
+        has_usable_terms = bool(dispatch.load_fixed_terms(book_dir))
+    except (OSError, UnicodeError, ValueError, TypeError, AttributeError):
+        # This probe must only warn. The real prompt load remains strict, so a
+        # damaged editorial file is not silently ignored during translation.
+        has_usable_terms = False
+    if not has_usable_terms:
+        print(
+            "[warn] 併發模式已開啟，但本書沒有可用的 spec_terms.json 術語表；"
+            "各分塊會獨立決定人名譯法，可能產生不一致。"
+            "建議先建立術語表再翻譯（本次仍會繼續）。",
+            file=sys.stderr,
+        )
+
+
 def translate_single_book(book_path: Path, args: argparse.Namespace) -> dict[str, object]:
     started = time.monotonic()
     out_parent = args.out or book_path.parent
@@ -928,6 +963,9 @@ def translate_single_book(book_path: Path, args: argparse.Namespace) -> dict[str
         state_mod.save(state_path, state)
         print(f"[state] initialized {len(state['chapters'])} chapters at {state_path}", file=sys.stderr)
 
+    effective_num_predict = _resolve_num_predict(args.engine, args.num_predict)
+    max_tokens_source = "user specified" if args.num_predict is not None else f"{args.engine} default"
+
     if args.engine == "ollama":
         selected_model = args.ollama_model
         selected_host = args.ollama_host
@@ -936,7 +974,7 @@ def translate_single_book(book_path: Path, args: argparse.Namespace) -> dict[str
             host=args.ollama_host,
             timeout=args.timeout,
             num_ctx=args.num_ctx,
-            num_predict=args.num_predict,
+            num_predict=effective_num_predict,
             temperature=args.temperature,
         )
     else:
@@ -946,7 +984,7 @@ def translate_single_book(book_path: Path, args: argparse.Namespace) -> dict[str
             model=args.omlx_model,
             host=args.omlx_host,
             timeout=args.timeout,
-            max_tokens=args.num_predict,
+            max_tokens=effective_num_predict,
             temperature=args.temperature,
             max_concurrent_requests=args.max_concurrent_requests,
             **({"api_key": args.omlx_api_key} if args.omlx_api_key else {}),
@@ -971,9 +1009,10 @@ def translate_single_book(book_path: Path, args: argparse.Namespace) -> dict[str
     )
     print(
         f"[run] engine={args.engine} model={selected_model} chapters={len(translate_ids)} "
-        f"target={args.target_lang}",
+        f"target={args.target_lang} max_tokens={effective_num_predict} ({max_tokens_source})",
         file=sys.stderr,
     )
+    _warn_if_concurrent_without_terms(args, book_dir)
 
     # These are independent gates. Provider concurrency controls chunk fan-out
     # WITHIN a chapter. By default chapters still run in order and retain the

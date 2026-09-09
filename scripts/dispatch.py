@@ -236,7 +236,9 @@ def load_fixed_terms(book_dir) -> dict[str, str]:
     Spec §5.3 requires a per-book term table agreed before translation starts.
     Kept out of this repo — it is book-specific editorial data, not skill logic.
     Returns {} when the file is absent, so books without a table behave as before.
-    Cached because the driver asks once per chunk (226 chunks on a 470K-char book).
+    Malformed editorial data remains a hard error rather than silently disabling
+    mandated terminology. Cached because the driver asks once per chunk (226 chunks
+    on a 470K-char book).
     """
     from pathlib import Path
 
@@ -244,7 +246,11 @@ def load_fixed_terms(book_dir) -> dict[str, str]:
     if not path.is_file():
         return {}
     data = json.loads(path.read_text(encoding="utf-8"))
-    terms = data.get("terms", data) if isinstance(data, dict) else {}
+    if not isinstance(data, dict):
+        raise ValueError(f"{FIXED_TERMS_FILENAME} must contain a JSON object")
+    terms = data.get("terms", data)
+    if not isinstance(terms, dict):
+        raise ValueError(f"{FIXED_TERMS_FILENAME} terms must be a JSON object")
     return {str(k): str(v) for k, v in terms.items() if k and v}
 
 
