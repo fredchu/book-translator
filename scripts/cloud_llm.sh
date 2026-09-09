@@ -22,7 +22,7 @@
 #   --gpu NAME               CLOUD_LLM_GPU（蓋掉 profile 的卡；Vast 寫法 "RTX 5090"，RunPod 寫法 "NVIDIA GeForce RTX 5090"）
 #   --max-dph X              CLOUD_LLM_MAX_DPH（Vast 價格上限，預設 int4 0.6 / fp8 1.2）
 #   CLOUD_LLM_ENGINE          vllm|sglang（預設 vllm）
-#   CLOUD_LLM_CONCURRENCY     client/server 共用併發寬度（預設 4；量批次曲線可設 8/12/16）
+#   CLOUD_LLM_CONCURRENCY     client/server 共用併發寬度（預設 16；可明確調低或調高）
 #   CLOUD_LLM_CONCURRENT_CHAPTERS=0  關掉雲端預設的跨章併發，退回舊行為
 #   CLOUD_LLM_EXTRA_SERVER_ARGS  追加目前引擎的 server 參數；vllm 仍相容舊的 CLOUD_LLM_EXTRA_VLLM_ARGS
 #   --keep / --stop DIR      見上
@@ -48,7 +48,10 @@ ENGINE="${CLOUD_LLM_ENGINE:-vllm}"
 MODEL="${CLOUD_LLM_MODEL:-}"
 GPU="${CLOUD_LLM_GPU:-}"
 MAX_DPH="${CLOUD_LLM_MAX_DPH:-}"
-CONCURRENCY="${CLOUD_LLM_CONCURRENCY:-4}"
+# RTX 6000 Ada 48GB int4 實測 N=16：420.3 tok/s、單筆 28.5 tok/s、品質訊號全 0。
+# 2048-token 跑飛約 72s，對 120s timeout 留 40% 餘裕；N=32 只留 18% 不合格。
+# N=24 在這張卡合格但預設要跨卡共用，N=16 換慢 30% 的卡仍可在 timeout 內結束。
+CONCURRENCY="${CLOUD_LLM_CONCURRENCY:-16}"
 CONCURRENT_CHAPTERS="${CLOUD_LLM_CONCURRENT_CHAPTERS:-1}"
 KEEP=false
 STOP_DIR=""

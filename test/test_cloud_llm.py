@@ -149,7 +149,7 @@ def test_vast_happy_path_waits_for_models_then_translates_then_destroys(tmp_path
         assert r.returncode == 0, r.stderr[-1500:]
         out = Path(env["FAKE_TRANSLATE_OUT"]).read_text(encoding="utf-8")
         assert f"--engine omlx --omlx-host http://127.0.0.1:{port} --omlx-model {MODEL}" in out
-        assert "--concurrent-chapters --max-concurrent-requests 4" in out
+        assert "--concurrent-chapters --max-concurrent-requests 16" in out
         assert "--book x.epub --out o" in out
         assert len(srv.RequestHandlerClass.probe_requests) == 1
         assert srv.RequestHandlerClass.probe_requests[0]["chat_template_kwargs"] == {
@@ -161,12 +161,32 @@ def test_vast_happy_path_waits_for_models_then_translates_then_destroys(tmp_path
         create = next(c for c in calls if "create instance" in c)
         assert "--image vllm/vllm-openai:v0.28.0" in create and "--env -p 8000:8000" in create
         assert f"--raw --args {MODEL} --served-model-name {MODEL} --port 8000" in create and f"--api-key {key}" in create
-        assert "--max-num-seqs 4" in create
+        assert "--max-num-seqs 16" in create
         assert "--ssh" not in create and "--disable-log-requests" not in create and not create.endswith("--raw")
         assert "destroyed" in calls and calls.index("destroyed") > calls.index(create)
         assert "已確認 7001 不在清單中" in r.stderr
     finally:
         srv.shutdown()
+
+
+def test_cloud_default_concurrency_is_measured_cross_card_safe_value() -> None:
+    script = SCRIPT.read_text(encoding="utf-8")
+    assert 'CONCURRENCY="${CLOUD_LLM_CONCURRENCY:-16}"' in script
+    assert 'CONCURRENCY="${CLOUD_LLM_CONCURRENCY:-4}"' not in script
+    assert 'CONCURRENCY="${CLOUD_LLM_CONCURRENCY:-32}"' not in script
+
+    max_tokens = 2048
+    timeout = 120
+    n16_single_tok_s = 28.5
+    n24_single_tok_s = 24.0
+    n32_single_tok_s = 20.8
+    def margin(rate: float) -> float:
+        return (timeout - max_tokens / rate) / timeout
+
+    assert margin(n16_single_tok_s) >= 0.40
+    assert margin(n32_single_tok_s) < 0.20
+    assert max_tokens / (n16_single_tok_s * 0.70) < timeout
+    assert margin(n24_single_tok_s * 0.85) < 0.20
 
 
 def test_cloud_concurrency_one_knob_and_escape_hatch(tmp_path: Path) -> None:

@@ -1,6 +1,6 @@
 ---
 name: book-translator
-version: 1.0.2
+version: 1.0.3
 description: |-
   Translate full-length books (EPUB) to Traditional Chinese (Taiwan) with literary tone fidelity and cross-chapter coherence, preserving EPUB structure. Use when the user says "翻書", "翻電子書", "翻譯整本書", "book translate", "bilingual epub", or gives an .epub expecting literary translation. Main session extracts an OPF spine manifest plus a per-book glossary and style anchor, then dispatches parallel subagents (each gets glossary, style anchor, and last-paragraph carryover for coherence); the first item is previewed for tone confirmation before fanning out the rest. Produces a bilingual .epub (source + translation interleaved) with manifest/glossary/state for resume. Differs from translate-book (generic PDF/DOCX/EPUB, single-language, no coherence): book-translator targets literary works, uses Opus for the style-anchor pass and Sonnet for the parallel fan-out, and gates quality before shipping. Not for short articles (use polish) or SRT subtitles (use srt).
 allowed-tools:
@@ -106,7 +106,21 @@ The skill supports two providers:
   **併發（2026-09-10 起，雲端預設）**：本機 omlx 單一 GPU 維持循序。雲端 vLLM／SGLang
   由 `cloud_llm.sh` 預設帶 `--concurrent-chapters --max-concurrent-requests N`；直接跑 driver
   時要同時加這兩個旗標，前者開跨章排程、後者控制全書總在途 request 上限。server 與 client
-  共用 `CLOUD_LLM_CONCURRENCY`（預設 4），不會膨脹成「章數 × 塊數」的無界 fan-out。
+  共用 `CLOUD_LLM_CONCURRENCY`（**預設 16**），不會膨脹成「章數 × 塊數」的無界 fan-out。
+
+  預設 16 來自 RTX 6000 Ada 48GB、int4、真實 chunk＋seam 負載的補跑，不是拍腦袋：
+
+  | N | 整批 tok/s | 單筆 tok/s | 2048-token 跑飛時間 | 120s 餘裕 | 品質訊號 | 每本執行費 |
+  |---:|---:|---:|---:|---:|---|---:|
+  | 16 | 420.3 | 28.5 | 72s | 40% | 全 0 | $0.064 |
+  | 24 | 517.3 | 24.0 | 85s | 29% | 全 0 | $0.051 |
+  | 32 | 582.4 | 20.8 | 98s | 18% | 全 0 | $0.044 |
+
+  N=4 時估計每本約 **$0.30／20 分鐘**；N=16 約 **$0.16（含 19 分鐘開機）／7 分鐘**。
+  24、32 在這張 48GB 卡更便宜且品質訊號仍全 0，但預設還要跨卡安全：32 的跑飛餘裕低於
+  20% 直接刷掉；24 換慢約 15% 的卡也會掉到 20% 以下。16 有 40% 餘裕，即使換慢 30%
+  的卡，2048-token 跑飛仍能在 120 秒 timeout 內乾淨結束。因此共用預設選 16，而不是舊的
+  4 或單卡最快的 32。可依已量過的卡明確覆蓋 `CLOUD_LLM_CONCURRENCY`，不要把 32 當通用值。
 
   **術語表是併發的前提，不是加分項。** 開併發前先建立並人工確認
   `<book_dir>/spec_terms.json`。八趟 Mind-Gut 實測：有術語表的三種模式，人名都只剩單一形態，
