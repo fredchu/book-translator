@@ -16,11 +16,13 @@ Used by the per-chapter CLI and the local book driver when --engine=omlx.
 from __future__ import annotations
 
 import json
+import threading
 import time
 from pathlib import Path
 from typing import Any
 
 import requests
+from requests.adapters import HTTPAdapter
 
 from .base import ProviderError, ProviderResult, TranslationProvider
 
@@ -70,6 +72,10 @@ class OmlxProvider(TranslationProvider):
         # local omlx stays at the class default (1 -> supports_concurrency=False).
         self.max_concurrent_requests = max(1, max_concurrent_requests)
         self.supports_concurrency = self.max_concurrent_requests > 1
+        # requests.Session is not guaranteed thread-safe. Keep one Session per
+        # provider *and* worker thread so sequential calls reuse TCP/TLS while
+        # concurrent chapter/chunk workers never mutate the same Session.
+        self._thread_local = threading.local()
 
     def translate(
         self,
@@ -105,7 +111,9 @@ class OmlxProvider(TranslationProvider):
         for attempt in range(self.max_retries):
             attempt_start = time.monotonic()
             try:
-                response = requests.post(url, json=payload, timeout=self.timeout, **self._req_kwargs())
+                response = self._session_for_thread().post(
+                    url, json=payload, timeout=self.timeout, **self._req_kwargs()
+                )
                 response.raise_for_status()
                 data = response.json()
                 raw_text = self._extract_content(data)
@@ -178,6 +186,24 @@ class OmlxProvider(TranslationProvider):
             f"OmlxProvider({self.model}) failed after {self.max_retries} attempts: {last_err!r}"
         )
 
+    def _session_for_thread(self) -> requests.Session:
+        session = getattr(self._thread_local, "session", None)
+        if session is None:
+            session = requests.Session()
+            # Do not let urllib3's default pool size (10) become a hidden queue
+            # when cloud_llm selects N=16/24. Each thread owns its Session, but
+            # sizing both adapters to the configured budget keeps the invariant
+            # explicit and safe if a Session gains multiple in-flight calls.
+            adapter = HTTPAdapter(
+                pool_connections=self.max_concurrent_requests,
+                pool_maxsize=self.max_concurrent_requests,
+                pool_block=True,
+            )
+            session.mount("http://", adapter)
+            session.mount("https://", adapter)
+            self._thread_local.session = session
+        return session
+
     def _req_kwargs(self) -> dict[str, Any]:
         # 沒金鑰就完全不加 headers 參數，讓本機 omlx 的呼叫形狀跟以前一模一樣
         return {"headers": {"Authorization": f"Bearer {self.api_key}"}} if self.api_key else {}
@@ -185,7 +211,9 @@ class OmlxProvider(TranslationProvider):
     def ping(self) -> bool:
         """Quick health-check against the omlx server."""
         try:
-            r = requests.get(f"{self.host}/v1/models", timeout=5, **self._req_kwargs())
+            r = self._session_for_thread().get(
+                f"{self.host}/v1/models", timeout=5, **self._req_kwargs()
+            )
             r.raise_for_status()
             return True
         except requests.RequestException:

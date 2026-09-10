@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import concurrent.futures as cf
 import json
 import sys
+import threading
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -63,7 +65,52 @@ def test_omlx_max_concurrent_requests_enables_supports_concurrency() -> None:
     assert provider.supports_concurrency is True
 
 
-@patch("providers.omlx_provider.requests.post")
+def test_omlx_same_thread_reuses_session_and_pool_matches_concurrency() -> None:
+    provider = OmlxProvider("model-a", max_concurrent_requests=24)
+    first = provider._session_for_thread()
+    second = provider._session_for_thread()
+
+    assert first is second
+    for scheme in ("http://", "https://"):
+        adapter = first.get_adapter(scheme)
+        assert adapter._pool_connections >= 24
+        assert adapter._pool_maxsize >= 24
+        assert adapter._pool_block is True
+
+
+def test_omlx_worker_threads_do_not_share_sessions() -> None:
+    provider = OmlxProvider("model-a", max_concurrent_requests=4)
+    barrier = threading.Barrier(4)
+
+    def get_twice() -> tuple[requests.Session, requests.Session]:
+        first = provider._session_for_thread()
+        barrier.wait(timeout=5)
+        return first, provider._session_for_thread()
+
+    with cf.ThreadPoolExecutor(max_workers=4) as pool:
+        pairs = list(pool.map(lambda _: get_twice(), range(4)))
+
+    assert all(first is second for first, second in pairs)
+    assert len({id(first) for first, _ in pairs}) == 4
+
+
+def test_omlx_consecutive_requests_reuse_same_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = OmlxProvider("model-a")
+    seen_sessions: list[requests.Session] = []
+
+    def fake_post(session: requests.Session, *_args, **_kwargs):
+        seen_sessions.append(session)
+        return _response({"choices": [{"message": {"content": "譯文"}}]})
+
+    monkeypatch.setattr(requests.Session, "post", fake_post)
+    provider.translate("one", request_id="one")
+    provider.translate("two", request_id="two")
+
+    assert len(seen_sessions) == 2
+    assert seen_sessions[0] is seen_sessions[1]
+
+
+@patch("providers.omlx_provider.requests.Session.post")
 def test_omlx_translate_temperature_override_does_not_mutate_self(mock_post: MagicMock) -> None:
     """A per-call `temperature` must be used for that request only — mutating
     self.temperature would race when multiple chunks run concurrently on
@@ -77,7 +124,7 @@ def test_omlx_translate_temperature_override_does_not_mutate_self(mock_post: Mag
     assert provider.temperature == 0.3  # unchanged
 
 
-@patch("providers.omlx_provider.requests.post")
+@patch("providers.omlx_provider.requests.Session.post")
 def test_omlx_translate_without_temperature_override_uses_self(mock_post: MagicMock) -> None:
     mock_post.return_value = _response({"choices": [{"message": {"content": "譯文"}}]})
 
@@ -87,7 +134,7 @@ def test_omlx_translate_without_temperature_override_uses_self(mock_post: MagicM
     assert mock_post.call_args.kwargs["json"]["temperature"] == 0.3
 
 
-@patch("providers.omlx_provider.requests.post")
+@patch("providers.omlx_provider.requests.Session.post")
 def test_omlx_translate_request_shape_defaults_disable_thinking(mock_post: MagicMock) -> None:
     mock_post.return_value = _response(
         {"choices": [{"message": {"content": "譯文", "reasoning_content": "ignored"}}]}
@@ -117,7 +164,7 @@ def test_omlx_translate_request_shape_defaults_disable_thinking(mock_post: Magic
     }
 
 
-@patch("providers.omlx_provider.requests.post")
+@patch("providers.omlx_provider.requests.Session.post")
 def test_omlx_translate_parses_content_and_ignores_reasoning(mock_post: MagicMock) -> None:
     mock_post.return_value = _response(
         {
@@ -147,13 +194,13 @@ def test_omlx_length_finish_reason_fails_immediately_without_same_temperature_re
     mock_post = MagicMock(return_value=_response({
         "choices": [{"message": {"content": "partial"}, "finish_reason": "length"}]
     }))
-    monkeypatch.setattr("providers.omlx_provider.requests.post", mock_post)
+    monkeypatch.setattr("providers.omlx_provider.requests.Session.post", mock_post)
     with pytest.raises(ProviderError, match="truncated at max_tokens=2048"):
         OmlxProvider("model-a", max_retries=3).translate("prompt", request_id="req")
     assert mock_post.call_count == 1
 
 
-@patch("providers.omlx_provider.requests.post")
+@patch("providers.omlx_provider.requests.Session.post")
 def test_omlx_stop_finish_reason_returns_without_retry(mock_post: MagicMock) -> None:
     mock_post.return_value = _response({
         "choices": [{"message": {"content": "譯文"}, "finish_reason": "stop"}]
@@ -164,7 +211,7 @@ def test_omlx_stop_finish_reason_returns_without_retry(mock_post: MagicMock) -> 
     assert mock_post.call_count == 1
 
 
-@patch("providers.omlx_provider.requests.post")
+@patch("providers.omlx_provider.requests.Session.post")
 def test_omlx_translate_retries_malformed_response_then_raises(mock_post: MagicMock) -> None:
     mock_post.return_value = _response({"choices": []})
 
@@ -174,7 +221,7 @@ def test_omlx_translate_retries_malformed_response_then_raises(mock_post: MagicM
     assert mock_post.call_count == 3
 
 
-@patch("providers.omlx_provider.requests.post")
+@patch("providers.omlx_provider.requests.Session.post")
 def test_omlx_translate_log_dir_writes_attempt_json(mock_post: MagicMock, tmp_path: Path) -> None:
     mock_post.return_value = _response({"choices": [{"message": {"content": "abc"}}]})
 
@@ -193,7 +240,7 @@ def test_omlx_translate_log_dir_writes_attempt_json(mock_post: MagicMock, tmp_pa
     assert data["chat_template_kwargs"] == {"enable_thinking": False}
 
 
-@patch("providers.omlx_provider.requests.get")
+@patch("providers.omlx_provider.requests.Session.get")
 def test_omlx_ping_uses_models_endpoint_with_host_override(mock_get: MagicMock) -> None:
     response = MagicMock()
     response.raise_for_status.return_value = None
@@ -204,7 +251,7 @@ def test_omlx_ping_uses_models_endpoint_with_host_override(mock_get: MagicMock) 
     mock_get.assert_called_once_with("http://127.0.0.1:8099/v1/models", timeout=5)
 
 
-@patch("providers.omlx_provider.requests.get")
+@patch("providers.omlx_provider.requests.Session.get")
 def test_omlx_ping_returns_false_on_connection_error(mock_get: MagicMock) -> None:
     mock_get.side_effect = requests.ConnectionError("down")
 
@@ -218,14 +265,14 @@ def test_omlx_api_key_adds_bearer_header_on_ping_and_translate(monkeypatch, tmp_
     ok = MagicMock(status_code=200)
     ok.json.return_value = {"choices": [{"message": {"content": "譯文"}}], "usage": {}}
     ok.raise_for_status.return_value = None
-    with patch("providers.omlx_provider.requests.get", return_value=ok) as g, \
-         patch("providers.omlx_provider.requests.post", return_value=ok) as p:
+    with patch("providers.omlx_provider.requests.Session.get", return_value=ok) as g, \
+         patch("providers.omlx_provider.requests.Session.post", return_value=ok) as p:
         prov = OmlxProvider(model="m", host="http://127.0.0.1:8099", api_key="sekret")
         assert prov.ping()
         g.assert_called_once_with("http://127.0.0.1:8099/v1/models", timeout=5,
                                   headers={"Authorization": "Bearer sekret"})
         prov.translate("hi", request_id="r1")
         assert p.call_args.kwargs["headers"] == {"Authorization": "Bearer sekret"}
-    with patch("providers.omlx_provider.requests.get", return_value=ok) as g:
+    with patch("providers.omlx_provider.requests.Session.get", return_value=ok) as g:
         OmlxProvider(model="m", host="http://127.0.0.1:8099").ping()
         assert "headers" not in g.call_args.kwargs

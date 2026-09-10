@@ -806,7 +806,7 @@ def test_length_finish_reason_triggers_driver_temperature_retry(tmp_path, monkey
         _openai_response("[[PARA_1]]\n截斷", "length"),
         _openai_response("[[PARA_1]]\n完整", "stop"),
     ])
-    monkeypatch.setattr("providers.omlx_provider.requests.post", post)
+    monkeypatch.setattr("providers.omlx_provider.requests.Session.post", post)
     provider = OmlxProvider("model-a", max_retries=3)
     aligned, _raw, warnings = drv._translate_chunk(
         provider,
@@ -827,7 +827,7 @@ def test_length_finish_reason_triggers_driver_temperature_retry(tmp_path, monkey
 
 def test_stop_finish_reason_does_not_trigger_driver_retry(tmp_path, monkeypatch):
     post = MagicMock(return_value=_openai_response("[[PARA_1]]\n完整", "stop"))
-    monkeypatch.setattr("providers.omlx_provider.requests.post", post)
+    monkeypatch.setattr("providers.omlx_provider.requests.Session.post", post)
     aligned, _raw, _warnings = drv._translate_chunk(
         OmlxProvider("model-a", max_retries=3),
         chunk_paragraphs=("Source.",),
