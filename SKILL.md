@@ -99,8 +99,20 @@ The skill supports two providers:
   `--omlx-host` 指到雲端、`--omlx-api-key` 帶金鑰。**不上傳程式、不走 SSH**：只開 8000 埠，
   用 vLLM 的 `--api-key` 擋公開埠。翻完砍機（trap 保證、回查確認）。
   預設 `--profile int4`＝`XReyRobert/Qwopus3.6-27B-v2-GPTQ-Pro-v1`（18.7 GB，跟本機 MLX 4bit 同級）
-  配 RTX 5090（Vast 約 0.40 美元／小時）；「這本要更好」用 `--profile fp8`＝作者的
+  配 RTX 5090（Vast 約 0.40 美元／小時）；「這本要書面一點」用 `--profile fp8`＝作者的
   `Jackrong/Qwopus3.6-27B-v2-FP8`（30.9 GB，要 ≥40 GB 卡，預設 L40S 約 0.80）。
+
+  > **fp8 不是「品質比較好」，是「語域不同」（2026-09-10 實讀）。**
+  > 同一章、同一款卡、同樣 prompt 與後處理，唯一變因是量化精度，
+  > 兩版逐字相似度 84.3%——低於「同一版本重跑一次」的 88.2%，所以差異是真的不是噪音。
+  > 但讀者的判斷是**各有優缺點、適合不同內容**：
+  > **int4 用詞白話口語、句子較短；fp8 用詞精練書面，有「嚴謹、正式」的感覺。**
+  > 所以這是**按書選語域**，不是「重要的書就升級」。
+  > 成本：同價格歸一化後 fp8 每本貴約 31%（併發 16）到 111%（單請求）。
+  > 並排對照：`company/_shared/collab/20260910-.../quality/int4-vs-fp8.md`。
+  >
+  > 同族教訓：2026-06-25 曾用自動化語域評分把 35B 升成預設，2026-08-09 讀者讀完一章推翻。
+  > **兩次都是：自動化的數字說不出讀者讀到的東西。**
   機器挑選、IP 排除、停滯偵測都沿用 srt-skill 的 `vast_instance_lib.sh`／`runpod_pod_lib.sh`。
 
   **機器記憶（2026-09-10 起，沿用 bookcast，只用於 Vast）**：跟 bookcast 租同一個 Vast
@@ -163,7 +175,7 @@ Triggers: 「用 vast 翻 X.epub」「上雲翻」「用 runpod 翻書」「clou
 ```bash
 scripts/cloud_llm.sh --provider vast -- --book /path/X.epub --out /path/translations/
 scripts/cloud_llm.sh --provider runpod -- --book /path/X.epub
-scripts/cloud_llm.sh --profile fp8 -- --book /path/X.epub          # 這本要更好
+scripts/cloud_llm.sh --profile fp8 -- --book /path/X.epub          # 這本要書面、正式一點
 scripts/cloud_llm.sh --keep -- --book A.epub                        # 翻完不砍；下一本用 runs/<id>/endpoint.env
 scripts/cloud_llm.sh --stop runs/cloud-llm-<id>                     # 砍掉 --keep 的那台
 ```

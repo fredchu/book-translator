@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documented
+- **fp8 is a different register, not higher quality** (2026-09-10, read by a human).
+  Same chapter, same card model, same prompt and post-processing, quantization the only
+  variable: the two versions are 84.3% character-identical, below the 88.2% that a plain
+  rerun of one version produces — so the difference is real, not sampling noise. The reader's
+  verdict was **not** "one is better": int4 reads plainer and more colloquial with shorter
+  sentences; fp8 reads more polished and written, with a formal, rigorous feel. Each suits
+  different books. `--profile fp8` is therefore documented as a **register choice**, not an
+  upgrade — the previous wording ("this one deserves better") invited people to buy quality
+  they were not getting. Cost, normalised to one price and boot time: fp8 is ~31% more per
+  book at 16 in flight, ~111% more at 1.
+
+  This is the second time an automated signal failed to predict what a reader caught: in
+  2026-06-25 an automated register score promoted a 35B model to default on a 5x throughput
+  win, and a full-chapter read-through reversed it on 2026-08-09.
+
+
 ### Added
 - **`cloud_llm.sh` reuses bookcast's Vast machine memory instead of learning from scratch**
   (2026-09-10). bookcast already tracks which Vast machines boot reliably in a small sqlite3
