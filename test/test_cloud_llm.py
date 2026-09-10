@@ -110,6 +110,13 @@ out=""
 while [[ $# -gt 0 ]]; do
     if [[ "$1" == --out ]]; then out="$2"; shift 2; else shift; fi
 done
+# spec-07 item 1：模擬探針自己判活後回報「伺服器死了」——跟一般探針失敗（下面
+# 那個 FAKE_PROBE_FAIL）是不同的狀態，cloud_llm.sh 要分兩條路走。
+if [[ -n "${FAKE_PROBE_STATUS:-}" ]]; then
+    printf '{"status":"%s","error":"%s"}\n' \
+        "${FAKE_PROBE_STATUS}" "${FAKE_PROBE_ERROR:-N=16 波失敗，伺服器判活也連不上}" >"$out"
+    exit 1
+fi
 [[ "${FAKE_PROBE_FAIL:-0}" == 1 ]] && exit 7
 safe="${FAKE_SAFE_CONCURRENCY:-16}"
 passed="${FAKE_PROBE_PASSED:-true}"
@@ -837,5 +844,221 @@ def test_unparseable_create_response_adopts_instance_by_label_instead_of_retryin
         calls = _calls(env)
         assert sum(1 for c in calls if "create instance" in c) == 1, calls
         assert "認領它" in r.stderr and "destroyed" in calls
+    finally:
+        srv.shutdown()
+
+
+# ---------- spec-07：SGLang fp8 安全上限——證據落盤與伺服器判活 ----------
+
+def _run_dir_from_stderr(stderr: str) -> Path:
+    line = next(ln for ln in stderr.splitlines() if " run " in ln and "平台" in ln)
+    return Path(line.split(" run ")[-1].strip())
+
+
+def test_terminate_captures_final_container_log_on_normal_path(tmp_path: Path) -> None:
+    srv, port = _serve_models()
+    try:
+        env = _setup(tmp_path, port=port)
+        r = _run(env, "--", "--book", "x.epub")
+        assert r.returncode == 0, r.stderr[-1500:]
+        run_dir = _run_dir_from_stderr(r.stderr)
+        log_file = run_dir / "vastai-logs-final.txt"
+        assert log_file.exists(), r.stderr[-1500:]
+        assert "fake container log" in log_file.read_text(encoding="utf-8")
+    finally:
+        srv.shutdown()
+
+
+def test_terminate_captures_final_container_log_on_die_path(tmp_path: Path) -> None:
+    """die()（server 一直沒就緒）跟正常結尾一樣，都要在真的砍機前撈完整 log——
+    這兩條路徑共用同一個 terminate_instance()，這裡驗的是那個共用點真的生效。"""
+    env = _setup(tmp_path, port=1)
+    env["FAKE_INSTANCES_JSON"] = json.dumps([{"actual_status": "loading", "status_msg": "pulling"}])
+    env["CLOUD_LLM_BOOT_WAIT_MIN"] = "0"
+    r = _run(env, "--", "--book", "x.epub")
+    assert r.returncode != 0
+    run_dir = _run_dir_from_stderr(r.stderr)
+    assert (run_dir / "vastai-logs-final.txt").exists()
+    assert "destroyed" in _calls(env)
+
+
+def test_terminate_captures_final_container_log_on_sigterm_trap(tmp_path: Path) -> None:
+    env = _setup(tmp_path, port=1)
+    env["CLOUD_LLM_BOOT_WAIT_MIN"] = "5"
+    proc = subprocess.Popen(
+        ["/bin/bash", str(SCRIPT), "--", "--book", "x.epub"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env, cwd=REPO,
+    )
+    try:
+        lines: list[str] = []
+        for _ in range(300):
+            line = proc.stderr.readline()
+            if not line:
+                pytest.fail("腳本提早結束，來不及送 SIGTERM")
+            lines.append(line)
+            if "已開機" in line:
+                break
+        proc.send_signal(signal.SIGTERM)
+        _out, err = proc.communicate(timeout=30)
+        lines.append(err)
+    finally:
+        if proc.poll() is None:
+            proc.kill(); proc.communicate()
+    assert proc.returncode == 143
+    run_dir = _run_dir_from_stderr("".join(lines))
+    assert (run_dir / "vastai-logs-final.txt").exists()
+
+
+def test_append_container_log_tail_dedupes_repeated_content(tmp_path: Path) -> None:
+    """伺服器一直沒就緒逼出很多輪輪詢；FAKE_VASTAI 的 logs 指令每次回同一行——
+    去重要讓落盤檔案裡只留一份，不是每圈都重複寫。port=1：instance record 有
+    埠但沒人在聽，curl 永遠失敗，穩定卡在「還在載入模型」那個分支（append_
+    container_log_tail 就掛在這個分支）而不是死掉或就緒。"""
+    env = _setup(tmp_path, port=1)
+    env["CLOUD_LLM_BOOT_WAIT_MIN"] = "5"
+    env["CLOUD_LLM_POLL_SECONDS"] = "0"
+    proc = subprocess.Popen(
+        ["/bin/bash", str(SCRIPT), "--", "--book", "x.epub"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env, cwd=REPO,
+    )
+    try:
+        lines: list[str] = []
+        loading_seen = 0
+        for _ in range(5000):
+            line = proc.stderr.readline()
+            if not line:
+                pytest.fail("腳本提早結束，來不及觀察到足夠的輪詢：" + "".join(lines)[-2000:])
+            lines.append(line)
+            if "還在載入模型" in line:
+                loading_seen += 1
+                # append_container_log_tail only fires every 5th poll -- need
+                # at least two firings (POLLS=5 and POLLS=10) for there to be
+                # anything to dedupe against; stopping at 6 would only ever
+                # exercise a single fetch, making the dedup check vacuous.
+                if loading_seen >= 11:
+                    break
+        proc.send_signal(signal.SIGTERM)
+        _out, err = proc.communicate(timeout=30)
+        lines.append(err)
+    finally:
+        if proc.poll() is None:
+            proc.kill(); proc.communicate()
+    run_dir = _run_dir_from_stderr("".join(lines))
+    tail_log = run_dir / "vastai-logs-tail.log"
+    assert tail_log.exists(), "".join(lines)[-2000:]
+    kept = [ln for ln in tail_log.read_text(encoding="utf-8").splitlines() if ln]
+    assert kept.count("fake container log") <= 1, kept
+
+
+def test_probe_server_died_status_dies_without_translating(tmp_path: Path) -> None:
+    """spec-07 item 1：探針判定伺服器已死，不能退回預設併發繼續翻譯——
+    上一趟就是這樣拿死掉的伺服器跑了 120 筆。"""
+    srv, port = _serve_models()
+    try:
+        env = _setup(tmp_path, port=port)
+        env["FAKE_PROBE_STATUS"] = "server_died"
+        env["FAKE_PROBE_ERROR"] = "N=16 波失敗，伺服器判活也連不上"
+        r = _run(env, "--", "--book", "x.epub")
+        assert r.returncode != 0
+        assert not Path(env["FAKE_TRANSLATE_OUT"]).exists(), "伺服器已死不該叫到翻譯器"
+        assert "伺服器行程已死" in r.stderr and "不進翻譯" in r.stderr
+        assert "N=16 波失敗，伺服器判活也連不上" in r.stderr
+        assert "destroyed" in _calls(env)
+        failed = [c for c in _mm_calls(env) if c.startswith("record") and "--event boot_failed" in c]
+        assert failed and "--reason probe_server_died" in failed[0], _mm_calls(env)
+    finally:
+        srv.shutdown()
+
+
+def test_probe_generic_failure_still_falls_back_not_server_died(tmp_path: Path) -> None:
+    """既有行為不能因為新加的 server_died 分支被波及：探針腳本自己掛掉（沒有
+    status 欄位可讀）維持退回全域預設 16 繼續翻譯，不會被誤判成伺服器已死。"""
+    srv, port = _serve_models()
+    try:
+        env = _setup(tmp_path, port=port)
+        env["FAKE_PROBE_FAIL"] = "1"
+        r = _run(env, "--", "--book", "x.epub")
+        assert r.returncode == 0, r.stderr
+        assert Path(env["FAKE_TRANSLATE_OUT"]).exists()
+        assert "伺服器行程已死" not in r.stderr
+    finally:
+        srv.shutdown()
+
+
+def test_sglang_fp8_enables_metrics_flag(tmp_path: Path) -> None:
+    srv, port = _serve_models()
+    srv.shutdown()
+    env = _setup(tmp_path, port=port); env["CLOUD_LLM_BOOT_WAIT_MIN"] = "0"
+    env["CLOUD_LLM_ENGINE"] = "sglang"
+    _run(env, "--profile", "fp8", "--", "--book", "x.epub")
+    create = next(c for c in _calls(env) if "create instance" in c)
+    assert "--enable-metrics" in create
+
+
+def test_sglang_vllm_profile_has_no_enable_metrics_flag(tmp_path: Path) -> None:
+    """vLLM 的 /metrics 預設就有，不用旗標——不能不分引擎一律加。"""
+    srv, port = _serve_models()
+    try:
+        env = _setup(tmp_path, port=port)
+        r = _run(env, "--", "--book", "x.epub")
+        assert r.returncode == 0, r.stderr[-1500:]
+        create = next(c for c in _calls(env) if "create instance" in c)
+        assert "--enable-metrics" not in create
+    finally:
+        srv.shutdown()
+
+
+def test_sglang_fp8_max_running_requests_knob_overrides_server_concurrency(tmp_path: Path) -> None:
+    srv, port = _serve_models()
+    srv.shutdown()
+    env = _setup(tmp_path, port=port); env["CLOUD_LLM_BOOT_WAIT_MIN"] = "0"
+    env["CLOUD_LLM_ENGINE"] = "sglang"
+    env["CLOUD_LLM_SGLANG_FP8_MAX_RUNNING_REQUESTS"] = "40"
+    _run(env, "--profile", "fp8", "--", "--book", "x.epub")
+    create = next(c for c in _calls(env) if "create instance" in c)
+    assert "--max-running-requests 40" in create
+
+
+def test_sglang_fp8_max_running_requests_below_probe_ceiling_dies_before_renting(tmp_path: Path) -> None:
+    """決策樹第 4 條的上限必須 >= 探針候選頂端，否則探針量到的是這個上限造成的
+    排隊——量到之前就該擋，不能開了機才發現量不到。"""
+    env = _setup(tmp_path, port=1)
+    env["CLOUD_LLM_ENGINE"] = "sglang"
+    env["CLOUD_LLM_SGLANG_FP8_MAX_RUNNING_REQUESTS"] = "8"
+    r = _run(env, "--profile", "fp8", "--", "--book", "x.epub")
+    assert r.returncode != 0
+    assert "小於探針候選頂端" in r.stderr
+    assert _calls(env) == [], "應該在租機前就死，不該有任何 vastai 呼叫"
+
+
+def test_int4_profile_unaffected_by_fp8_knob(tmp_path: Path) -> None:
+    """這個旋鈕只在 sglang+fp8 生效——int4 走既有的全域 SERVER_CONCURRENCY，
+    不該被一個 fp8 專用的環境變數牽動。"""
+    srv, port = _serve_models()
+    try:
+        env = _setup(tmp_path, port=port)
+        env["CLOUD_LLM_SGLANG_FP8_MAX_RUNNING_REQUESTS"] = "8"  # 太低，若被誤用在 int4 上會被擋
+        r = _run(env, "--", "--book", "x.epub")
+        assert r.returncode == 0, r.stderr[-1500:]
+        create = next(c for c in _calls(env) if "create instance" in c)
+        assert "--max-num-seqs 32" in create
+    finally:
+        srv.shutdown()
+
+
+def test_provenance_files_written_for_reproducibility(tmp_path: Path) -> None:
+    """spec-07 item 5：映像、完整伺服器啟動參數、原始 instance record 都要落盤，
+    不能事後只靠記憶重建這趟到底用了什麼設定開機。"""
+    srv, port = _serve_models()
+    try:
+        env = _setup(tmp_path, port=port)
+        r = _run(env, "--", "--book", "x.epub")
+        assert r.returncode == 0, r.stderr[-1500:]
+        run_dir = _run_dir_from_stderr(r.stderr)
+        assert (run_dir / "image.txt").read_text(encoding="utf-8").strip() == "vllm/vllm-openai:v0.28.0"
+        server_args = (run_dir / "server-args.txt").read_text(encoding="utf-8")
+        assert MODEL in server_args and "--max-num-seqs" in server_args and "32" in server_args
+        record = json.loads((run_dir / "vast-instance-record.json").read_text(encoding="utf-8"))
+        assert record["machine_id"] == 555
     finally:
         srv.shutdown()

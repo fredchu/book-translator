@@ -461,10 +461,21 @@ def test_probe_one_http_error_includes_response_body_not_just_status() -> None:
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_POST(self):  # noqa: N802
+            # Drain the request body before responding -- an unread body
+            # still sitting in the socket's receive buffer at close time can
+            # trigger a TCP RST instead of a clean FIN (observed as
+            # intermittent ChunkedEncodingError/"Connection reset by peer"
+            # under full-suite load). Every other handler in this file reads
+            # its body for this reason; this one skipped it since it doesn't
+            # need the content, which is exactly what made it flaky.
+            size = int(self.headers.get("Content-Length", "0"))
+            self.rfile.read(size)
+            body = b'{"error": "linear_attn assert failed: seq_lens mismatch"}'
             self.send_response(500)
             self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
             self.end_headers()
-            self.wfile.write(b'{"error": "linear_attn assert failed: seq_lens mismatch"}')
+            self.wfile.write(body)
 
         def log_message(self, _format, *_args):
             pass

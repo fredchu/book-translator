@@ -640,6 +640,15 @@ if [[ $PROBE_RC -eq 0 ]] && SAFE_CONCURRENCY="$(jq -er '.selected_concurrency | 
         log "⚠️  探針沒有回傳可用的逾時值，翻譯器用它自己的 --timeout 預設"
     fi
 else
+    # spec-07 item 1：探針失敗要先分「行程死了」跟「探針本身出狀況」，不能一律
+    # 退回預設繼續翻譯——上一趟就是這樣拿死掉的伺服器跑了 120 筆。探針自己已經
+    # 做過判活（wave 失敗後打 /get_server_info、/metrics），這裡只是照它的結論走，
+    # 不重新判斷。「閘門不過」在探針那邊會走 status=ok（見上面那個分支），不會落到這裡。
+    PROBE_STATUS="$(jq -r '.status // ""' "$PROBE_RESULT" 2>/dev/null || echo "")"
+    if [[ "$PROBE_STATUS" == server_died ]]; then
+        MACHINE_FAILURE_CLASS=probe_server_died
+        die "自適應探針判定伺服器行程已死（$(jq -r '.error // "無錯誤訊息"' "$PROBE_RESULT" 2>/dev/null)）；不進翻譯。證據：${PROBE_RESULT} 與 run 目錄裡的 evidence／vastai-logs 檔"
+    fi
     log "⚠️  自適應併發探針失敗，無法取得可靠量測；併發退回全域預設 16，繼續翻譯"
     if [[ "$CONCURRENCY_EXPLICIT" == false ]]; then
         CONCURRENCY=16
