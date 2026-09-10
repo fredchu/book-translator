@@ -1,0 +1,609 @@
+{
+  "gpu": "RTX 6000Ada",
+  "profile": "fp8",
+  "model": "Jackrong/Qwopus3.6-27B-v2-FP8",
+  "max_tokens": 2048,
+  "probe_timeout_s": 120.0,
+  "effective_cap": 32,
+  "candidates": [
+    8,
+    12,
+    16,
+    24,
+    32
+  ],
+  "status": "ok",
+  "selected_concurrency": 16,
+  "passed": true,
+  "waves": [
+    {
+      "n": 8,
+      "requests": 8,
+      "mean_single_tok_s": 22.337,
+      "aggregate_tok_per_s": 115.998,
+      "max_latency_s": 41.371,
+      "median_latency_s": 25.121,
+      "samples": [
+        {
+          "elapsed_s": 26.19913195911795,
+          "out_tokens": 590.0,
+          "tok_per_s": 22.519830081418608
+        },
+        {
+          "elapsed_s": 24.309292582795024,
+          "out_tokens": 541.0,
+          "tok_per_s": 22.254863984931195
+        },
+        {
+          "elapsed_s": 22.39154704194516,
+          "out_tokens": 493.0,
+          "tok_per_s": 22.01723708846394
+        },
+        {
+          "elapsed_s": 24.985294999554753,
+          "out_tokens": 558.0,
+          "tok_per_s": 22.333136351199524
+        },
+        {
+          "elapsed_s": 25.35544579103589,
+          "out_tokens": 568.0,
+          "tok_per_s": 22.40149925507559
+        },
+        {
+          "elapsed_s": 41.37140658311546,
+          "out_tokens": 930.0,
+          "tok_per_s": 22.47929371537376
+        },
+        {
+          "elapsed_s": 24.823334082961082,
+          "out_tokens": 554.0,
+          "tok_per_s": 22.317711156305535
+        },
+        {
+          "elapsed_s": 25.256658458150923,
+          "out_tokens": 565.0,
+          "tok_per_s": 22.370338536120208
+        }
+      ],
+      "evidence_before": {
+        "server_info": {
+          "alive": true,
+          "status_code": 200,
+          "error": null,
+          "file": "/Users/fredchu/dev/book-translator/runs/cloud-llm-20260910T071554Z-29870/adaptive-concurrency-evidence-001-server_info.txt"
+        },
+        "metrics": {
+          "alive": true,
+          "status_code": 200,
+          "error": null,
+          "file": "/Users/fredchu/dev/book-translator/runs/cloud-llm-20260910T071554Z-29870/adaptive-concurrency-evidence-001-metrics.txt"
+        }
+      },
+      "evidence_after": {
+        "server_info": {
+          "alive": true,
+          "status_code": 200,
+          "error": null,
+          "file": "/Users/fredchu/dev/book-translator/runs/cloud-llm-20260910T071554Z-29870/adaptive-concurrency-evidence-002-server_info.txt"
+        },
+        "metrics": {
+          "alive": true,
+          "status_code": 200,
+          "error": null,
+          "file": "/Users/fredchu/dev/book-translator/runs/cloud-llm-20260910T071554Z-29870/adaptive-concurrency-evidence-002-metrics.txt"
+        }
+      },
+      "retract_before": 0.0,
+      "retract_after": 0.0,
+      "retract_evidence_before": {
+        "value": 0.0,
+        "match": "exact",
+        "lines": [
+          {
+            "endpoint": "metrics",
+            "line": "sglang:num_retracted_reqs{engine_type=\"unified\",model_name=\"Jackrong/Qwopus3.6-27B-v2-FP8\",moe_ep_rank=\"0\",pid=\"208\",pp_rank=\"0\",tp_rank=\"0\"} 0.0",
+            "metric": "sglang:num_retracted_reqs",
+            "series": "sglang:num_retracted_reqs{engine_type=\"unified\",model_name=\"Jackrong/Qwopus3.6-27B-v2-FP8\",moe_ep_rank=\"0\",pid=\"208\",pp_rank=\"0\",tp_rank=\"0\"}",
+            "value": 0.0
+          }
+        ]
+      },
+      "retract_evidence_after": {
+        "value": 0.0,
+        "match": "exact",
+        "lines": [
+          {
+            "endpoint": "metrics",
+            "line": "sglang:num_retracted_reqs{engine_type=\"unified\",model_name=\"Jackrong/Qwopus3.6-27B-v2-FP8\",moe_ep_rank=\"0\",pid=\"208\",pp_rank=\"0\",tp_rank=\"0\"} 0.0",
+            "metric": "sglang:num_retracted_reqs",
+            "series": "sglang:num_retracted_reqs{engine_type=\"unified\",model_name=\"Jackrong/Qwopus3.6-27B-v2-FP8\",moe_ep_rank=\"0\",pid=\"208\",pp_rank=\"0\",tp_rank=\"0\"}",
+            "value": 0.0
+          }
+        ]
+      },
+      "retract_series_compatible": true,
+      "backlog_gate_used": "retract",
+      "backlog_ok": true,
+      "throughput_gain": null,
+      "saturation_ok": true,
+      "passed": true
+    },
+    {
+      "n": 12,
+      "requests": 12,
+      "mean_single_tok_s": 19.825,
+      "aggregate_tok_per_s": 204.402,
+      "max_latency_s": 32.147,
+      "median_latency_s": 27.02,
+      "samples": [
+        {
+          "elapsed_s": 24.701013207435608,
+          "out_tokens": 481.0,
+          "tok_per_s": 19.472885422173988
+        },
+        {
+          "elapsed_s": 32.147391834296286,
+          "out_tokens": 654.0,
+          "tok_per_s": 20.343796578305408
+        },
+        {
+          "elapsed_s": 26.65914862509817,
+          "out_tokens": 525.0,
+          "tok_per_s": 19.693051994381413
+        },
+        {
+          "elapsed_s": 31.25543708447367,
+          "out_tokens": 635.0,
+          "tok_per_s": 20.316465205199133
+        },
+        {
+          "elapsed_s": 26.46819174941629,
+          "out_tokens": 521.0,
+          "tok_per_s": 19.684004292113748
+        },
+        {
+          "elapsed_s": 28.928422500379384,
+          "out_tokens": 579.0,
+          "tok_per_s": 20.014917854314618
+        },
+        {
+          "elapsed_s": 27.37994904257357,
+          "out_tokens": 542.0,
+          "tok_per_s": 19.795507988610005
+        },
+        {
+          "elapsed_s": 27.638469916768372,
+          "out_tokens": 548.0,
+          "tok_per_s": 19.827436238339885
+        },
+        {
+          "elapsed_s": 27.68208266608417,
+          "out_tokens": 549.0,
+          "tok_per_s": 19.832322828535936
+        },
+        {
+          "elapsed_s": 26.432520332746208,
+          "out_tokens": 520.0,
+          "tok_per_s": 19.6727362148585
+        },
+        {
+          "elapsed_s": 25.62358041573316,
+          "out_tokens": 502.0,
+          "tok_per_s": 19.591329230936303
+        },
+        {
+          "elapsed_s": 26.20705208275467,
+          "out_tokens": 515.0,
+          "tok_per_s": 19.65119916478097
+        }
+      ],
+      "evidence_before": {
+        "server_info": {
+          "alive": true,
+          "status_code": 200,
+          "error": null,
+          "file": "/Users/fredchu/dev/book-translator/runs/cloud-llm-20260910T071554Z-29870/adaptive-concurrency-evidence-003-server_info.txt"
+        },
+        "metrics": {
+          "alive": true,
+          "status_code": 200,
+          "error": null,
+          "file": "/Users/fredchu/dev/book-translator/runs/cloud-llm-20260910T071554Z-29870/adaptive-concurrency-evidence-003-metrics.txt"
+        }
+      },
+      "evidence_after": {
+        "server_info": {
+          "alive": true,
+          "status_code": 200,
+          "error": null,
+          "file": "/Users/fredchu/dev/book-translator/runs/cloud-llm-20260910T071554Z-29870/adaptive-concurrency-evidence-004-server_info.txt"
+        },
+        "metrics": {
+          "alive": true,
+          "status_code": 200,
+          "error": null,
+          "file": "/Users/fredchu/dev/book-translator/runs/cloud-llm-20260910T071554Z-29870/adaptive-concurrency-evidence-004-metrics.txt"
+        }
+      },
+      "retract_before": 0.0,
+      "retract_after": 0.0,
+      "retract_evidence_before": {
+        "value": 0.0,
+        "match": "exact",
+        "lines": [
+          {
+            "endpoint": "metrics",
+            "line": "sglang:num_retracted_reqs{engine_type=\"unified\",model_name=\"Jackrong/Qwopus3.6-27B-v2-FP8\",moe_ep_rank=\"0\",pid=\"208\",pp_rank=\"0\",tp_rank=\"0\"} 0.0",
+            "metric": "sglang:num_retracted_reqs",
+            "series": "sglang:num_retracted_reqs{engine_type=\"unified\",model_name=\"Jackrong/Qwopus3.6-27B-v2-FP8\",moe_ep_rank=\"0\",pid=\"208\",pp_rank=\"0\",tp_rank=\"0\"}",
+            "value": 0.0
+          }
+        ]
+      },
+      "retract_evidence_after": {
+        "value": 0.0,
+        "match": "exact",
+        "lines": [
+          {
+            "endpoint": "metrics",
+            "line": "sglang:num_retracted_reqs{engine_type=\"unified\",model_name=\"Jackrong/Qwopus3.6-27B-v2-FP8\",moe_ep_rank=\"0\",pid=\"208\",pp_rank=\"0\",tp_rank=\"0\"} 0.0",
+            "metric": "sglang:num_retracted_reqs",
+            "series": "sglang:num_retracted_reqs{engine_type=\"unified\",model_name=\"Jackrong/Qwopus3.6-27B-v2-FP8\",moe_ep_rank=\"0\",pid=\"208\",pp_rank=\"0\",tp_rank=\"0\"}",
+            "value": 0.0
+          }
+        ]
+      },
+      "retract_series_compatible": true,
+      "backlog_gate_used": "retract",
+      "backlog_ok": true,
+      "throughput_gain": 0.7621,
+      "saturation_ok": true,
+      "passed": true
+    },
+    {
+      "n": 16,
+      "requests": 16,
+      "mean_single_tok_s": 18.537,
+      "aggregate_tok_per_s": 256.921,
+      "max_latency_s": 35.466,
+      "median_latency_s": 30.339,
+      "samples": [
+        {
+          "elapsed_s": 32.64357104152441,
+          "out_tokens": 616.0,
+          "tok_per_s": 18.870484458223466
+        },
+        {
+          "elapsed_s": 30.043031875044107,
+          "out_tokens": 553.0,
+          "tok_per_s": 18.406930508879878
+        },
+        {
+          "elapsed_s": 28.057865540497005,
+          "out_tokens": 508.0,
+          "tok_per_s": 18.10543996180978
+        },
+        {
+          "elapsed_s": 26.13958466704935,
+          "out_tokens": 466.0,
+          "tok_per_s": 17.82736818261016
+        },
+        {
+          "elapsed_s": 35.46618412528187,
+          "out_tokens": 686.0,
+          "tok_per_s": 19.34236842556143
+        },
+        {
+          "elapsed_s": 27.7791062919423,
+          "out_tokens": 502.0,
+          "tok_per_s": 18.07113572064814
+        },
+        {
+          "elapsed_s": 32.72667112480849,
+          "out_tokens": 618.0,
+          "tok_per_s": 18.883680458765767
+        },
+        {
+          "elapsed_s": 30.33877974934876,
+          "out_tokens": 560.0,
+          "tok_per_s": 18.45822424720364
+        },
+        {
+          "elapsed_s": 30.55245495773852,
+          "out_tokens": 565.0,
+          "tok_per_s": 18.492785629879254
+        },
+        {
+          "elapsed_s": 33.27515020780265,
+          "out_tokens": 632.0,
+          "tok_per_s": 18.993152429160276
+        },
+        {
+          "elapsed_s": 30.33848899975419,
+          "out_tokens": 560.0,
+          "tok_per_s": 18.45840114201262
+        },
+        {
+          "elapsed_s": 29.478022208437324,
+          "out_tokens": 540.0,
+          "tok_per_s": 18.318732382440466
+        },
+        {
+          "elapsed_s": 28.68616341613233,
+          "out_tokens": 522.0,
+          "tok_per_s": 18.196926247252748
+        },
+        {
+          "elapsed_s": 31.371330624446273,
+          "out_tokens": 585.0,
+          "tok_per_s": 18.647599204610586
+        },
+        {
+          "elapsed_s": 28.822129500098526,
+          "out_tokens": 525.0,
+          "tok_per_s": 18.215170395310498
+        },
+        {
+          "elapsed_s": 34.928408165462315,
+          "out_tokens": 674.0,
+          "tok_per_s": 19.296613713603485
+        }
+      ],
+      "evidence_before": {
+        "server_info": {
+          "alive": true,
+          "status_code": 200,
+          "error": null,
+          "file": "/Users/fredchu/dev/book-translator/runs/cloud-llm-20260910T071554Z-29870/adaptive-concurrency-evidence-005-server_info.txt"
+        },
+        "metrics": {
+          "alive": true,
+          "status_code": 200,
+          "error": null,
+          "file": "/Users/fredchu/dev/book-translator/runs/cloud-llm-20260910T071554Z-29870/adaptive-concurrency-evidence-005-metrics.txt"
+        }
+      },
+      "evidence_after": {
+        "server_info": {
+          "alive": true,
+          "status_code": 200,
+          "error": null,
+          "file": "/Users/fredchu/dev/book-translator/runs/cloud-llm-20260910T071554Z-29870/adaptive-concurrency-evidence-006-server_info.txt"
+        },
+        "metrics": {
+          "alive": true,
+          "status_code": 200,
+          "error": null,
+          "file": "/Users/fredchu/dev/book-translator/runs/cloud-llm-20260910T071554Z-29870/adaptive-concurrency-evidence-006-metrics.txt"
+        }
+      },
+      "retract_before": 0.0,
+      "retract_after": 0.0,
+      "retract_evidence_before": {
+        "value": 0.0,
+        "match": "exact",
+        "lines": [
+          {
+            "endpoint": "metrics",
+            "line": "sglang:num_retracted_reqs{engine_type=\"unified\",model_name=\"Jackrong/Qwopus3.6-27B-v2-FP8\",moe_ep_rank=\"0\",pid=\"208\",pp_rank=\"0\",tp_rank=\"0\"} 0.0",
+            "metric": "sglang:num_retracted_reqs",
+            "series": "sglang:num_retracted_reqs{engine_type=\"unified\",model_name=\"Jackrong/Qwopus3.6-27B-v2-FP8\",moe_ep_rank=\"0\",pid=\"208\",pp_rank=\"0\",tp_rank=\"0\"}",
+            "value": 0.0
+          }
+        ]
+      },
+      "retract_evidence_after": {
+        "value": 0.0,
+        "match": "exact",
+        "lines": [
+          {
+            "endpoint": "metrics",
+            "line": "sglang:num_retracted_reqs{engine_type=\"unified\",model_name=\"Jackrong/Qwopus3.6-27B-v2-FP8\",moe_ep_rank=\"0\",pid=\"208\",pp_rank=\"0\",tp_rank=\"0\"} 0.0",
+            "metric": "sglang:num_retracted_reqs",
+            "series": "sglang:num_retracted_reqs{engine_type=\"unified\",model_name=\"Jackrong/Qwopus3.6-27B-v2-FP8\",moe_ep_rank=\"0\",pid=\"208\",pp_rank=\"0\",tp_rank=\"0\"}",
+            "value": 0.0
+          }
+        ]
+      },
+      "retract_series_compatible": true,
+      "backlog_gate_used": "retract",
+      "backlog_ok": true,
+      "throughput_gain": 0.2569,
+      "saturation_ok": true,
+      "passed": true
+    },
+    {
+      "n": 24,
+      "requests": 24,
+      "mean_single_tok_s": 16.757,
+      "aggregate_tok_per_s": 265.727,
+      "max_latency_s": 54.992,
+      "median_latency_s": 34.746,
+      "samples": [
+        {
+          "elapsed_s": 33.7875218745321,
+          "out_tokens": 552.0,
+          "tok_per_s": 16.337392308610802
+        },
+        {
+          "elapsed_s": 28.639645459130406,
+          "out_tokens": 441.0,
+          "tok_per_s": 15.398235310884683
+        },
+        {
+          "elapsed_s": 34.18666787445545,
+          "out_tokens": 561.0,
+          "tok_per_s": 16.40990581650643
+        },
+        {
+          "elapsed_s": 34.5355039993301,
+          "out_tokens": 569.0,
+          "tok_per_s": 16.475798355542665
+        },
+        {
+          "elapsed_s": 32.61996120773256,
+          "out_tokens": 526.0,
+          "tok_per_s": 16.125095816340572
+        },
+        {
+          "elapsed_s": 36.94372154213488,
+          "out_tokens": 628.0,
+          "tok_per_s": 16.99882886145502
+        },
+        {
+          "elapsed_s": 35.08210350014269,
+          "out_tokens": 582.0,
+          "tok_per_s": 16.58965517839125
+        },
+        {
+          "elapsed_s": 34.95635525044054,
+          "out_tokens": 579.0,
+          "tok_per_s": 16.563511723457015
+        },
+        {
+          "elapsed_s": 31.97718166653067,
+          "out_tokens": 512.0,
+          "tok_per_s": 16.01141730810791
+        },
+        {
+          "elapsed_s": 36.22716008219868,
+          "out_tokens": 610.0,
+          "tok_per_s": 16.838195393067593
+        },
+        {
+          "elapsed_s": 34.40454149991274,
+          "out_tokens": 566.0,
+          "tok_per_s": 16.4513164635964
+        },
+        {
+          "elapsed_s": 32.66978937480599,
+          "out_tokens": 527.0,
+          "tok_per_s": 16.131111038212186
+        },
+        {
+          "elapsed_s": 35.703056749887764,
+          "out_tokens": 597.0,
+          "tok_per_s": 16.72125734729637
+        },
+        {
+          "elapsed_s": 30.24447300005704,
+          "out_tokens": 475.0,
+          "tok_per_s": 15.705348874787937
+        },
+        {
+          "elapsed_s": 36.54713224992156,
+          "out_tokens": 618.0,
+          "tok_per_s": 16.90967148322086
+        },
+        {
+          "elapsed_s": 35.415521666407585,
+          "out_tokens": 590.0,
+          "tok_per_s": 16.659362116911247
+        },
+        {
+          "elapsed_s": 32.622748624533415,
+          "out_tokens": 526.0,
+          "tok_per_s": 16.12371802431234
+        },
+        {
+          "elapsed_s": 34.2742945831269,
+          "out_tokens": 563.0,
+          "tok_per_s": 16.426304519106356
+        },
+        {
+          "elapsed_s": 38.091708375141025,
+          "out_tokens": 658.0,
+          "tok_per_s": 17.27410053442015
+        },
+        {
+          "elapsed_s": 38.585863624699414,
+          "out_tokens": 671.0,
+          "tok_per_s": 17.389788305022734
+        },
+        {
+          "elapsed_s": 51.54065762553364,
+          "out_tokens": 1012.0,
+          "tok_per_s": 19.63498423618575
+        },
+        {
+          "elapsed_s": 37.2211560420692,
+          "out_tokens": 635.0,
+          "tok_per_s": 17.06019015858324
+        },
+        {
+          "elapsed_s": 54.99248354136944,
+          "out_tokens": 1090.0,
+          "tok_per_s": 19.82089059825823
+        },
+        {
+          "elapsed_s": 32.57979254145175,
+          "out_tokens": 525.0,
+          "tok_per_s": 16.11428308918894
+        }
+      ],
+      "evidence_before": {
+        "server_info": {
+          "alive": true,
+          "status_code": 200,
+          "error": null,
+          "file": "/Users/fredchu/dev/book-translator/runs/cloud-llm-20260910T071554Z-29870/adaptive-concurrency-evidence-007-server_info.txt"
+        },
+        "metrics": {
+          "alive": true,
+          "status_code": 200,
+          "error": null,
+          "file": "/Users/fredchu/dev/book-translator/runs/cloud-llm-20260910T071554Z-29870/adaptive-concurrency-evidence-007-metrics.txt"
+        }
+      },
+      "evidence_after": {
+        "server_info": {
+          "alive": true,
+          "status_code": 200,
+          "error": null,
+          "file": "/Users/fredchu/dev/book-translator/runs/cloud-llm-20260910T071554Z-29870/adaptive-concurrency-evidence-008-server_info.txt"
+        },
+        "metrics": {
+          "alive": true,
+          "status_code": 200,
+          "error": null,
+          "file": "/Users/fredchu/dev/book-translator/runs/cloud-llm-20260910T071554Z-29870/adaptive-concurrency-evidence-008-metrics.txt"
+        }
+      },
+      "retract_before": 0.0,
+      "retract_after": 0.0,
+      "retract_evidence_before": {
+        "value": 0.0,
+        "match": "exact",
+        "lines": [
+          {
+            "endpoint": "metrics",
+            "line": "sglang:num_retracted_reqs{engine_type=\"unified\",model_name=\"Jackrong/Qwopus3.6-27B-v2-FP8\",moe_ep_rank=\"0\",pid=\"208\",pp_rank=\"0\",tp_rank=\"0\"} 0.0",
+            "metric": "sglang:num_retracted_reqs",
+            "series": "sglang:num_retracted_reqs{engine_type=\"unified\",model_name=\"Jackrong/Qwopus3.6-27B-v2-FP8\",moe_ep_rank=\"0\",pid=\"208\",pp_rank=\"0\",tp_rank=\"0\"}",
+            "value": 0.0
+          }
+        ]
+      },
+      "retract_evidence_after": {
+        "value": 0.0,
+        "match": "exact",
+        "lines": [
+          {
+            "endpoint": "metrics",
+            "line": "sglang:num_retracted_reqs{engine_type=\"unified\",model_name=\"Jackrong/Qwopus3.6-27B-v2-FP8\",moe_ep_rank=\"0\",pid=\"208\",pp_rank=\"0\",tp_rank=\"0\"} 0.0",
+            "metric": "sglang:num_retracted_reqs",
+            "series": "sglang:num_retracted_reqs{engine_type=\"unified\",model_name=\"Jackrong/Qwopus3.6-27B-v2-FP8\",moe_ep_rank=\"0\",pid=\"208\",pp_rank=\"0\",tp_rank=\"0\"}",
+            "value": 0.0
+          }
+        ]
+      },
+      "retract_series_compatible": true,
+      "backlog_gate_used": "retract",
+      "backlog_ok": true,
+      "throughput_gain": 0.0343,
+      "saturation_ok": false,
+      "passed": false
+    }
+  ],
+  "derived_timeout_s": 138.102
+}

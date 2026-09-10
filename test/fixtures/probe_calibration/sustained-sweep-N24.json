@@ -1,0 +1,1688 @@
+{
+  "n": 24,
+  "tok_per_s": 342.4,
+  "requests": 240,
+  "ok_count": 240,
+  "request_details": [
+    {
+      "kind": "chunk",
+      "dt_s": 41.204997667111456,
+      "out_tokens": 595,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 35.39102141652256,
+      "out_tokens": 523,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 45.35262450017035,
+      "out_tokens": 654,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 20.573173749260604,
+      "out_tokens": 260,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 10.244269750081003,
+      "out_tokens": 73,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 41.442198583856225,
+      "out_tokens": 600,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 37.542546125128865,
+      "out_tokens": 554,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 39.47195579204708,
+      "out_tokens": 569,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 35.24588220845908,
+      "out_tokens": 520,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 35.05037233326584,
+      "out_tokens": 516,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 19.149447499774396,
+      "out_tokens": 244,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 37.49826499912888,
+      "out_tokens": 553,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 32.838560624979436,
+      "out_tokens": 483,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 26.554820667020977,
+      "out_tokens": 375,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 36.8897520005703,
+      "out_tokens": 540,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 14.521293291822076,
+      "out_tokens": 159,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 25.192707584239542,
+      "out_tokens": 349,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 23.832966833375394,
+      "out_tokens": 326,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 7.492697541601956,
+      "out_tokens": 18,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 18.728630458004773,
+      "out_tokens": 235,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 41.152140541002154,
+      "out_tokens": 594,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 32.88181420881301,
+      "out_tokens": 484,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 13.9267119159922,
+      "out_tokens": 146,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 49.60396016668528,
+      "out_tokens": 715,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 10.06995724979788,
+      "out_tokens": 181,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 31.711979084648192,
+      "out_tokens": 523,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 29.411476916633546,
+      "out_tokens": 458,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 4.768392416648567,
+      "out_tokens": 79,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 21.277626083232462,
+      "out_tokens": 326,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 13.020357582718134,
+      "out_tokens": 216,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 8.672953166998923,
+      "out_tokens": 142,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 33.075207624584436,
+      "out_tokens": 510,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 8.628155708312988,
+      "out_tokens": 144,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 30.04787033330649,
+      "out_tokens": 436,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 2.176315540447831,
+      "out_tokens": 28,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 20.640092791989446,
+      "out_tokens": 295,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 2.141194541938603,
+      "out_tokens": 24,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 9.021072749979794,
+      "out_tokens": 129,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 7.9350668750703335,
+      "out_tokens": 110,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 21.858962416648865,
+      "out_tokens": 310,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 31.56048308312893,
+      "out_tokens": 454,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 32.302695624530315,
+      "out_tokens": 471,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 46.19811649993062,
+      "out_tokens": 715,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 37.05087220761925,
+      "out_tokens": 560,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 23.490696167573333,
+      "out_tokens": 308,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 8.798595290631056,
+      "out_tokens": 103,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 20.222562417387962,
+      "out_tokens": 280,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 44.795302792452276,
+      "out_tokens": 702,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 14.869342292658985,
+      "out_tokens": 207,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 19.309061707928777,
+      "out_tokens": 275,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 10.251307125203311,
+      "out_tokens": 137,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 7.641210999339819,
+      "out_tokens": 100,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 35.000126250088215,
+      "out_tokens": 550,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 15.420634499751031,
+      "out_tokens": 214,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 34.88538004178554,
+      "out_tokens": 551,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 26.660672082565725,
+      "out_tokens": 414,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 12.981480208225548,
+      "out_tokens": 184,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 12.907457125373185,
+      "out_tokens": 182,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 8.524225790984929,
+      "out_tokens": 125,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 39.48583862464875,
+      "out_tokens": 640,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 37.34610466752201,
+      "out_tokens": 605,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 32.987421666271985,
+      "out_tokens": 539,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 38.831239459104836,
+      "out_tokens": 629,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 16.270089000463486,
+      "out_tokens": 254,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 6.02702141739428,
+      "out_tokens": 73,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 36.395693625323474,
+      "out_tokens": 569,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 33.93550737481564,
+      "out_tokens": 545,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 36.15376616641879,
+      "out_tokens": 577,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 30.5524833323434,
+      "out_tokens": 512,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 33.878618207760155,
+      "out_tokens": 542,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 16.503645832650363,
+      "out_tokens": 273,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 35.50313387531787,
+      "out_tokens": 561,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 29.453312708064914,
+      "out_tokens": 483,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 20.892753291875124,
+      "out_tokens": 358,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 34.691098666749895,
+      "out_tokens": 558,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 8.885737208649516,
+      "out_tokens": 158,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 21.171120666898787,
+      "out_tokens": 356,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 21.080597000196576,
+      "out_tokens": 333,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 1.7034327909350395,
+      "out_tokens": 18,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 13.062055957503617,
+      "out_tokens": 215,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 37.44139179214835,
+      "out_tokens": 584,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 31.548018832691014,
+      "out_tokens": 485,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 9.156050500459969,
+      "out_tokens": 144,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 47.471918458119035,
+      "out_tokens": 710,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 10.491086667403579,
+      "out_tokens": 165,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 36.21007987484336,
+      "out_tokens": 532,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 29.153673542663455,
+      "out_tokens": 424,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 5.306357999332249,
+      "out_tokens": 76,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 21.79546237550676,
+      "out_tokens": 309,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 16.183001708239317,
+      "out_tokens": 212,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 10.175256541930139,
+      "out_tokens": 120,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 35.76382200047374,
+      "out_tokens": 516,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 11.003520040772855,
+      "out_tokens": 131,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 30.865446832962334,
+      "out_tokens": 440,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 3.9508528746664524,
+      "out_tokens": 28,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 20.714528041891754,
+      "out_tokens": 300,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 3.4849167903885245,
+      "out_tokens": 26,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 10.378917917609215,
+      "out_tokens": 134,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 8.56892904266715,
+      "out_tokens": 103,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 21.588161000050604,
+      "out_tokens": 316,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 30.768227458000183,
+      "out_tokens": 447,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 32.58156679198146,
+      "out_tokens": 477,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 48.09768274985254,
+      "out_tokens": 762,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 36.400625417008996,
+      "out_tokens": 563,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 19.534303084015846,
+      "out_tokens": 294,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 7.234373916871846,
+      "out_tokens": 98,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 18.50690683349967,
+      "out_tokens": 281,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 43.22282024938613,
+      "out_tokens": 691,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 13.023001082241535,
+      "out_tokens": 210,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 17.70988666638732,
+      "out_tokens": 265,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 8.598664542660117,
+      "out_tokens": 128,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 6.753308167681098,
+      "out_tokens": 98,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 34.510256375186145,
+      "out_tokens": 548,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 14.961055957712233,
+      "out_tokens": 223,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 34.79706241749227,
+      "out_tokens": 553,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 25.939105458557606,
+      "out_tokens": 404,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 14.771413874812424,
+      "out_tokens": 200,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 12.534927332773805,
+      "out_tokens": 170,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 9.587491624988616,
+      "out_tokens": 127,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 43.1279352074489,
+      "out_tokens": 668,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 38.1415931256488,
+      "out_tokens": 597,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 33.4127424582839,
+      "out_tokens": 526,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 42.397534707561135,
+      "out_tokens": 654,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 16.69619958475232,
+      "out_tokens": 253,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 5.539543374441564,
+      "out_tokens": 74,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 36.74348674993962,
+      "out_tokens": 592,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 33.70994779281318,
+      "out_tokens": 548,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 36.767812041565776,
+      "out_tokens": 585,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 31.238100167363882,
+      "out_tokens": 507,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 34.55435554124415,
+      "out_tokens": 550,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 16.971920083276927,
+      "out_tokens": 280,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 33.73235129099339,
+      "out_tokens": 542,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 30.055647041648626,
+      "out_tokens": 490,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 20.63402145821601,
+      "out_tokens": 351,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 34.45563845895231,
+      "out_tokens": 539,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 10.06387358251959,
+      "out_tokens": 165,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 20.71961283311248,
+      "out_tokens": 352,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 20.11539337504655,
+      "out_tokens": 338,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 1.9274493334814906,
+      "out_tokens": 18,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 14.443860459141433,
+      "out_tokens": 235,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 35.8948392085731,
+      "out_tokens": 553,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 30.466868249699473,
+      "out_tokens": 468,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 8.739202374592423,
+      "out_tokens": 143,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 47.68371283262968,
+      "out_tokens": 716,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 11.295849207788706,
+      "out_tokens": 177,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 34.55031566694379,
+      "out_tokens": 529,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 31.021618916653097,
+      "out_tokens": 460,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 5.8223651656880975,
+      "out_tokens": 76,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 21.609919290989637,
+      "out_tokens": 303,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 15.127103916369379,
+      "out_tokens": 204,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 11.220415959134698,
+      "out_tokens": 142,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 35.60505770891905,
+      "out_tokens": 511,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 10.235896416939795,
+      "out_tokens": 131,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 29.23608979023993,
+      "out_tokens": 414,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 2.3902329159900546,
+      "out_tokens": 28,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 21.502575209364295,
+      "out_tokens": 315,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 2.7208697916939855,
+      "out_tokens": 21,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 10.48549308348447,
+      "out_tokens": 125,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 9.205569333396852,
+      "out_tokens": 109,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 23.395920207723975,
+      "out_tokens": 339,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 30.824291083030403,
+      "out_tokens": 448,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 31.806073875166476,
+      "out_tokens": 464,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 47.39354716707021,
+      "out_tokens": 749,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 38.41731133405119,
+      "out_tokens": 587,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 20.090383000671864,
+      "out_tokens": 296,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 7.523004500195384,
+      "out_tokens": 100,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 17.791663750074804,
+      "out_tokens": 272,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 43.90285279136151,
+      "out_tokens": 702,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 14.024478917010128,
+      "out_tokens": 220,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 17.381183332763612,
+      "out_tokens": 266,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 8.837233250029385,
+      "out_tokens": 132,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 6.981341624632478,
+      "out_tokens": 101,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 33.8273247089237,
+      "out_tokens": 535,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 13.628329583443701,
+      "out_tokens": 207,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 33.25116450060159,
+      "out_tokens": 518,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 26.260033207945526,
+      "out_tokens": 413,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 14.05837474949658,
+      "out_tokens": 197,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 13.059773417189717,
+      "out_tokens": 179,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 10.309236959554255,
+      "out_tokens": 129,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 40.76185833290219,
+      "out_tokens": 640,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 38.65835724957287,
+      "out_tokens": 603,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 32.67998224962503,
+      "out_tokens": 519,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 41.17228904180229,
+      "out_tokens": 635,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 16.26340225059539,
+      "out_tokens": 247,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 6.121245374903083,
+      "out_tokens": 73,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 39.636394541710615,
+      "out_tokens": 618,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 35.47677662502974,
+      "out_tokens": 562,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 38.200118416920304,
+      "out_tokens": 595,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 32.43413262441754,
+      "out_tokens": 520,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 30.9498940827325,
+      "out_tokens": 506,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 17.06234429217875,
+      "out_tokens": 274,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 36.543437499552965,
+      "out_tokens": 570,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 28.94152770936489,
+      "out_tokens": 476,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 22.4496378749609,
+      "out_tokens": 378,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 31.69105912465602,
+      "out_tokens": 507,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 9.008097584359348,
+      "out_tokens": 155,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 21.352009166032076,
+      "out_tokens": 355,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 19.327620916999876,
+      "out_tokens": 331,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 1.8741057086735964,
+      "out_tokens": 18,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 13.939551208168268,
+      "out_tokens": 224,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 38.59612795896828,
+      "out_tokens": 602,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 31.72314704116434,
+      "out_tokens": 487,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 8.105976833030581,
+      "out_tokens": 136,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 41.86386354081333,
+      "out_tokens": 700,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 11.110791709274054,
+      "out_tokens": 178,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 33.994722791947424,
+      "out_tokens": 532,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 29.169334333389997,
+      "out_tokens": 437,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 5.585612832568586,
+      "out_tokens": 72,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 21.5606396663934,
+      "out_tokens": 310,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 16.06301825027913,
+      "out_tokens": 216,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 10.495413167402148,
+      "out_tokens": 132,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 31.851354249753058,
+      "out_tokens": 525,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 11.058239457197487,
+      "out_tokens": 141,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 27.622264833189547,
+      "out_tokens": 442,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 2.7118065003305674,
+      "out_tokens": 28,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 20.313339083455503,
+      "out_tokens": 297,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 2.4591696243733168,
+      "out_tokens": 21,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 9.82019329071045,
+      "out_tokens": 123,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 8.596610750071704,
+      "out_tokens": 101,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 21.125781582668424,
+      "out_tokens": 322,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 25.89144283439964,
+      "out_tokens": 440,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 27.738030875101686,
+      "out_tokens": 486,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 35.66286245826632,
+      "out_tokens": 702,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 30.132951291278005,
+      "out_tokens": 564,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 18.760623374953866,
+      "out_tokens": 307,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 7.511210999451578,
+      "out_tokens": 102,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 17.090868500061333,
+      "out_tokens": 278,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 33.4964799573645,
+      "out_tokens": 695,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 14.383087708614767,
+      "out_tokens": 223,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 16.668535000644624,
+      "out_tokens": 286,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 9.081538875587285,
+      "out_tokens": 137,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 6.426216833293438,
+      "out_tokens": 99,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 26.474155875854194,
+      "out_tokens": 551,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 12.845135207287967,
+      "out_tokens": 222,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 25.50003679189831,
+      "out_tokens": 556,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 19.318361333571374,
+      "out_tokens": 409,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 10.941464208066463,
+      "out_tokens": 205,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "seam",
+      "dt_s": 9.668153416365385,
+      "out_tokens": 177,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 7.331601249985397,
+      "out_tokens": 132,
+      "finish_reason": "stop",
+      "why": null
+    },
+    {
+      "kind": "chunk",
+      "dt_s": 27.742390791885555,
+      "out_tokens": 646,
+      "finish_reason": "stop",
+      "why": null
+    }
+  ]
+}
