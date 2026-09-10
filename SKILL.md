@@ -210,8 +210,11 @@ scripts/cloud_llm.sh --stop runs/cloud-llm-<id>                     # 砍掉 --k
   > 設定裡的 `dynamic` 只排了 embed／lm_head／mtp／norm／vision。
   > 所以 SGLang 照設定把那些層當量化層建，找不到 `qweight` → 96 次
   > `not found in params_dict` → 再對沒載到的 96 寬層做 marlin 重打包 → 崩。
-  > 次要責任在 SGLang：它的 `linear_attn` 量化 guard（上游 `#22618`，v0.5.19 已含）
-  > 只認 `ignore` 清單格式，**沒認 GPTQModel 的 `dynamic` 格式**。vLLM 走得過。
+  > SGLang 那邊的責任比想像中大：**它只信設定不看權重**，而且那個洞今天還開著——
+  > 上游 `#22618` 提過修法（檢查 `ignore` 清單），但**那個 PR 從來沒被合併**
+  > （`merged: false`，被機器人以「作者閒置 PR 超過軟上限」自動關掉）。
+  > 實查 v0.5.19 的 `qwen3_5.py`：**連 `modelopt_fp4` 的 guard 都沒有**。
+  > vLLM 走得過，但那只代表 vLLM 對這種不一致比較寬容，**不代表 checkpoint 沒問題**。
   > **要用 SGLang 就用 fp8 版**（它的 `modules_to_not_convert` 有 882 條逐層明列，
   > 已實測載入成功）。細節見 CHANGELOG 2026-09-10。
   >

@@ -108,9 +108,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   layer × 48 layers = the 96 missing parameters) but never recorded that in the config: the
   `dynamic` rules only exclude embed/lm_head/mtp/norm/vision. SGLang therefore builds those
   layers as quantized, finds no `qweight`, and then repacks an unloaded 96-wide layer.
-  SGLang's share is secondary: its `linear_attn` quantization guard (upstream `#22618`,
-  already in v0.5.19) recognises an `ignore` list but **not GPTQModel's `dynamic` format**.
-  vLLM handles it. Searching three keyword sets found no existing issue covering the
+  SGLang's share is larger than it first looked, and the hole is still open. Upstream
+  `#22618` proposed a guard that reads the config's `ignore` list, but **that PR was never
+  merged** (`merged: false`; a bot closed it for exceeding the idle-PR soft cap). Reading
+  `qwen3_5.py` at the v0.5.19 tag: no `_ignores_linear_attn`, and **not even the earlier
+  `modelopt_fp4` guard**. So SGLang trusts the config and never checks the weights, for
+  every checkpoint format. vLLM loads it, but that only means vLLM is more tolerant of the
+  inconsistency — **it does not mean the checkpoint is fine**. Searching three keyword sets found no existing issue covering the
   `dynamic` format — reporting it upstream is a candidate deliverable, and the failing log
   plus the config/weight-index mismatch are the evidence.
 
