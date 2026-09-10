@@ -108,7 +108,19 @@ The skill supports two providers:
   > 但讀者的判斷是**各有優缺點、適合不同內容**：
   > **int4 用詞白話口語、句子較短；fp8 用詞精練書面，有「嚴謹、正式」的感覺。**
   > 所以這是**按書選語域**，不是「重要的書就升級」。
-  > 成本：同價格歸一化後 fp8 每本貴約 31%（併發 16）到 111%（單請求）。
+  > **成本：fp8 每本貴約 83%，也就是 1.8 倍**（同價格、同開機時間歸一化）。
+  > 這個數字 2026-09-10 更正過：先前寫「貴 31%」是拿併發 16 算的，
+  > 但**自適應探針會把 fp8 降到併發 8**——fp8 在 24／16／12 的單筆速度是
+  > 18.0／19.4，都不到門檻 21.33，只有 N=8 的 21.4 過得了。
+  > 所以正式流程裡 fp8 拿不到 16。實際數字：int4 每本 0.152、fp8 每本 0.279。
+  > **這不是探針算錯，是那個門檻在 fp8 上綁得更緊。**
+  > 若判斷 fp8 值得，正解是給 fp8 profile 自己的逾時或輸出上限，**不是放寬探針**——
+  > 那是另一個決策。
+  >
+  > **fp8 落到併發 8 是常態，帶不帶警告都正常，不要當故障去查。**
+  > N=8 量到的 21.4 只比門檻 21.33 高 0.07，餘裕 0.3%。探針第一波的 prefix cache
+  > 是冷的、會再慢一點，所以這一級**有時過、有時不過**。不過的時候探針退到最後一級
+  > （也是 8）並印大聲警告——**同樣是 8，log 長得不一樣**。
   > 並排對照：`company/_shared/collab/20260910-.../quality/int4-vs-fp8.md`。
   >
   > 同族教訓：2026-06-25 曾用自動化語域評分把 35B 升成預設，2026-08-09 讀者讀完一章推翻。
@@ -190,6 +202,14 @@ scripts/cloud_llm.sh --stop runs/cloud-llm-<id>                     # 砍掉 --k
   本機這個 shell 死了（睡眠、斷線、關終端機），遠端機器就沒人管，額度加再多小時
   都不會讓遠端自己停下來）。收屍：`bash ~/dev/srt-skill/scripts/vast_reap.sh`／`runpod_reap.sh`。
 - 推論 server 可用 `CLOUD_LLM_ENGINE=vllm|sglang` 選擇；兩邊各自組原生參數，不用互塞不相容旗標。
+  > **⚠️ SGLang 目前載不了預設的 int4 GPTQ 模型**（2026-09-10 真機試過）。
+  > `gptq_marlin_repack.cuh:311: size_n = 96 is not divisible by tile_n_size = 64`——
+  > GDN 線性注意力層有寬度 96 的投影權重，SGLang 的 marlin 重打包要 64 的倍數，
+  > vLLM 的走得過。另有 96 次 `linear_attn.in_proj_ba.weight not found in params_dict`。
+  > **要用 SGLang 得換 fp8 或 bf16 版的模型。** 細節見 CHANGELOG 2026-09-10。
+  >
+  > 讀 log 時注意：`Using gptq_marlin kernel` **不代表通過**，那只是宣告要用 marlin，
+  > 真正的檢查在重打包時才跑。
   SGLang 強制 `--reasoning-parser qwen3`。兩個引擎在正式翻譯前都會送 thinking preflight，確認
   `enable_thinking:false` 生效、content 無 think tag、`reasoning_content` 為空，否則立即砍機。
 - 在 Claude Code 裡跑長書請放背景並掛監看；Ctrl-C 會砍機（那是刻意的）。

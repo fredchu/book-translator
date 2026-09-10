@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Verified on real hardware
+- **SGLang cannot load the default int4 GPTQ checkpoint** (2026-09-10, first real-machine
+  trial, ~0.18 USD). `lmsysorg/sglang:latest-runtime` (v0.5.19, digest `sha256:710bc114…`)
+  on an RTX 6000 Ada fails during weight loading:
+
+  ```
+  RuntimeError: gptq_marlin_repack.cuh:311: size_n = 96 is not divisible by tile_n_size = 64
+  ```
+
+  plus 96 occurrences of `Parameter model.layers.N.linear_attn.in_proj_ba.weight not found
+  in params_dict`. Two things break at once: the GDN linear-attention layers carry a
+  width-96 projection and SGLang's marlin repack requires a multiple of 64 (vLLM's marlin
+  handles it), and SGLang's loader does not recognise this checkpoint's parameter names
+  either. The scheduler then takes a sigquit and the container enters a restart loop.
+
+  **`Using gptq_marlin kernel` is not a pass.** Both the implementer and the reviewer read
+  that line as "GPTQ works". It only announces the *intent* to use marlin; the constraint is
+  checked later, during repack, which is exactly where it died.
+
+  Untried: `--quantization gptq` would use a non-marlin kernel and sidestep the multiple-of-64
+  constraint, but that kernel is much slower and the parameter-name mismatch may kill it
+  anyway. Using SGLang at all needs an fp8 or bf16 build of the model.
+
+- **`vastai logs --tail N` is unsafe as a health signal.** The script prints `--tail 5`, which
+  showed only the *caught* torchcodec traceback and its closing marker — indistinguishable
+  from a healthy load. The fatal `RuntimeError` needed `--tail 400`. Worse, the output is not
+  strictly chronological: `--tail 20` ends on the container's start-up NGC banner while
+  `--tail 5` ends on a live timestamp.
+
+
 ### Fixed
 - **A shared `requests.Session` per provider — the per-thread design from the previous entry
   never actually reused a connection** (2026-09-10). The real driver re-creates its thread pool
@@ -51,8 +81,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sentences; fp8 reads more polished and written, with a formal, rigorous feel. Each suits
   different books. `--profile fp8` is therefore documented as a **register choice**, not an
   upgrade — the previous wording ("this one deserves better") invited people to buy quality
-  they were not getting. Cost, normalised to one price and boot time: fp8 is ~31% more per
-  book at 16 in flight, ~111% more at 1.
+  they were not getting.
+
+  **Cost, corrected 2026-09-10: fp8 is ~83% more per book — 1.8x, not 1.3x.** The earlier
+  "+31%" compared both profiles at 16 requests in flight, but the adaptive probe never lets
+  fp8 reach 16: its single-request throughput is 18.0 tok/s at N=16 and 19.4 at N=12, both
+  under the 21.33 threshold, and only N=8 (21.4) clears it. Normalised to one price and boot
+  time, int4 costs 0.152 USD per book at N=16 and fp8 costs 0.279 at the N=8 the probe
+  actually selects. **This is not a probe error** — the "a runaway must finish inside the
+  timeout" threshold simply binds tighter on the slower profile. If fp8 is judged worth it,
+  the fix is a profile-specific timeout or output cap, **not a looser probe**; that is a
+  separate decision.
 
   This is the second time an automated signal failed to predict what a reader caught: in
   2026-06-25 an automated register score promoted a 35B model to default on a 5x throughput
