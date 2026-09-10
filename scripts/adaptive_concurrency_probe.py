@@ -14,13 +14,11 @@ externally-supplied timeout at all:
   - backlog: this wave's worst latency must stay within LATENCY_MULTIPLE of
     this wave's own median (catches a request stuck behind cache
     eviction/preemption, independent of absolute scale)
-  - saturation: this wave's AGGREGATE (whole-wave) throughput must beat the
-    previous (smaller) tier by at least SATURATION_GAIN (catches "bigger N
-    stopped helping"). Correction after initial review: this must be
-    aggregate throughput, not mean per-request speed — per-request speed
-    falls as N rises even when the server has plenty of headroom left, so
-    gating on it made saturation_ok go negative on the very first climb and
-    froze selection at the smallest candidate regardless of real capacity.
+  - saturation: originally "this wave's AGGREGATE (whole-wave) throughput
+    must beat the previous (smaller) tier by at least a gain threshold" —
+    SUPERSEDED by the second redesign below (see the module-level comment
+    above SATURATION_DEGRADATION_TOLERANCE and choose_tier()'s docstring);
+    kept here as history, not as current behavior.
 `max_tokens` no longer gates anything during selection; it only feeds the
 timeout DERIVED from whichever tier gets selected (see derive_timeout()),
 which cloud_llm.sh then hands to both this probe's own future runs and the
@@ -65,7 +63,7 @@ of the above, both found in review before any money was spent on a live run.
 from __future__ import annotations
 
 import argparse
-import concurrent.futures as cf
+import itertools
 import json
 import os
 import re
@@ -74,7 +72,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, NamedTuple
 
 import requests
 
@@ -84,6 +82,16 @@ sys.path.insert(0, str(SCRIPT_DIR))
 from providers.omlx_provider import DEFAULT_MAX_TOKENS  # noqa: E402  single source with the translator
 
 CANDIDATES = (8, 12, 16, 24, 32)
+# Single source for build_adaptive_probe_load.py's "full" mode pool size
+# (pi's redesign, 2026-09-10, imports this directly rather than keeping its
+# own copy of the formula — the exact duplication shape spec-05 exists to
+# remove). 230 = 2.5 x sum(CANDIDATES) (92): choose_concurrency() below
+# splits the pool PROPORTIONALLY by each candidate's own N, so every tier
+# ends up with roughly 2.5x its own N distinct prompts to cycle through
+# during its closed-loop window -- the old design only needed exactly N per
+# tier (one shot, fire-and-wait), but the closed loop can complete many more
+# than N requests per tier and heavy repetition would bias the measurement.
+REQUIRED = 230
 # Ceiling for the PROBE'S OWN measurement HTTP calls only — unrelated to the
 # derived production timeout this script outputs. Generous on purpose: an
 # artificially tight measurement timeout would truncate a real slow wave and
@@ -102,7 +110,42 @@ LATENCY_MULTIPLE = 3.0
 # on purpose: a real observed straggler on SGLang fp8 hit 2.44x its wave's
 # own median, which the old shared 3.0x constant would have let through.
 BACKLOG_FALLBACK_LATENCY_MULTIPLE = 2.0
-SATURATION_GAIN = 0.10
+
+# ---------- 2026-09-10 second redesign: closed-loop measurement + asymmetric gate ----------
+# Real hardware (4th SGLang fp8 trial) proved the FIRST redesign's saturation gate still
+# under-measured higher N: the old probe_wave() fired N requests once simultaneously and
+# measured wall-clock of the whole batch, which is bound by the slowest member AND includes
+# every request's cold-start ramp. That made 16->24 look like +3.4% (SATURATION_GAIN's old
+# 10% threshold stopped the climb at 16), while a real 10xN sustained-load sweep measured
+# +26.6%, and 32 a further +21.2% on top of that -- the old single-shot method was measuring
+# the wrong thing, not just gating it too strictly.
+#
+# Fix has two independent parts:
+# 1. probe_wave() now runs a CLOSED-LOOP fixed-duration measurement: N slots stay
+#    continuously busy for T = max(MIN_WAVE_DURATION_S, WAVE_DURATION_LATENCY_MULTIPLE x this
+#    wave's own median single-request latency) seconds, each slot immediately dispatching a
+#    replacement request as soon as its previous one completes. Only tokens completed within
+#    the steady-state window [T x STEADY_STATE_RAMP_FRACTION, T] count toward
+#    steady_state_tok_per_s -- the first quarter is the ramp-up (no steady-state analogue
+#    while all N slots are still starting cold) and anything finishing after T is a straggler
+#    outside the window. The OLD metric (aggregate_tok_per_s: total tokens / whole-run wall
+#    clock) is still computed and recorded for reference, but no longer drives selection.
+# 2. choose_tier() replaces the old "stop at the first tier that doesn't beat the previous by
+#    SATURATION_GAIN" rule with an asymmetric one: since one extra tier costs about a minute
+#    but a false early stop can hide 53% of real throughput, climbing NEVER stops just because
+#    a tier didn't set a new best -- only when a tier's steady-state throughput falls more
+#    than SATURATION_DEGRADATION_TOLERANCE below the best tier seen so far, AND the very next
+#    tier ALSO fails to recover to within that tolerance, does it stop. Selection is always
+#    whichever tier had the best throughput measured overall, not the highest N or the last
+#    one tried -- a real "higher N is actually worse" case must still be caught.
+# Both parts are independently necessary: with the real (correct) numbers, even the OLD
+# threshold-style gate would have climbed to 32 (26.6%/21.2% both clear the old 10% bar) --
+# see choose_tier()'s docstring for the mutation check proving the SELECTION rule alone was
+# never the primary bug, the MEASUREMENT was.
+MIN_WAVE_DURATION_S = 60.0
+WAVE_DURATION_LATENCY_MULTIPLE = 3.0
+STEADY_STATE_RAMP_FRACTION = 0.25
+SATURATION_DEGRADATION_TOLERANCE = 0.05
 DIAGNOSTIC_TIMEOUT_S = 10.0
 
 
@@ -125,9 +168,11 @@ def probe_one(
     request: dict[str, Any],
     max_tokens: int,
     timeout: float,
-    barrier: threading.Barrier,
 ) -> dict[str, float]:
-    barrier.wait(timeout=10)
+    """One request, fire-and-measure. No synchronized-start barrier any more
+    (2026-09-10 redesign) -- probe_wave() is now a closed loop where each
+    slot dispatches its own replacement the instant it frees up, so there is
+    no single "wave start" instant to synchronize on."""
     started = time.monotonic()
     response = requests.post(
         f"{endpoint.rstrip('/')}/v1/chat/completions",
@@ -170,36 +215,116 @@ def probe_wave(
     n: int,
     max_tokens: int,
     timeout: float,
+    *,
+    min_duration_s: float = MIN_WAVE_DURATION_S,
+    duration_latency_multiple: float = WAVE_DURATION_LATENCY_MULTIPLE,
+    ramp_fraction: float = STEADY_STATE_RAMP_FRACTION,
 ) -> dict[str, Any]:
-    if len(requests_) != n:
-        raise ValueError(f"N={n} requires exactly {n} prompts, got {len(requests_)}")
-    barrier = threading.Barrier(n)
-    with cf.ThreadPoolExecutor(max_workers=n) as pool:
-        futures = [
-            pool.submit(probe_one, endpoint, model, api_key, req, max_tokens, timeout, barrier)
-            for req in requests_
-        ]
-        rows = [future.result() for future in futures]
-    latencies = [row["elapsed_s"] for row in rows]
-    wall_clock_s = max(latencies)
-    total_out_tokens = sum(row["out_tokens"] for row in rows)
+    """Closed-loop, fixed-duration, steady-state-window measurement at
+    concurrency n (2026-09-10 redesign — see the module-level comment above
+    SATURATION_DEGRADATION_TOLERANCE for why the old single-shot design
+    systematically under-measured higher N).
+
+    Keeps exactly n requests in flight continuously for T seconds, where
+    T = max(min_duration_s, duration_latency_multiple x the median
+    single-request latency observed SO FAR in this wave) -- T is not known
+    up front (there is no latency estimate before the first completions
+    arrive) and is recomputed after every completion, converging once enough
+    samples exist. As soon as one request completes, its slot immediately
+    dispatches a replacement (cycling through `requests_`; a wave that runs
+    long at high n can complete far more requests than len(requests_), so
+    the caller should provide enough DISTINCT prompts per tier to keep
+    repeats rare — that sizing is out of scope here, see
+    build_adaptive_probe_load.py).
+
+    Only tokens from completions finishing within the steady-state window
+    [T x ramp_fraction, T] count toward `steady_state_tok_per_s` — the first
+    fraction is the ramp-up (all n slots starting cold has no steady-state
+    analogue) and anything finishing after T is a straggler outside the
+    window, same reasoning as excluding the ramp.
+
+    A request-level exception propagates out of this function exactly like
+    the old ThreadPoolExecutor.map()-based design did (first exception wins,
+    every other in-flight slot's result is discarded) — the safety-gate
+    behavior in choose_concurrency() that reacts to this is unchanged by
+    this redesign.
+    """
+    if not requests_:
+        raise ValueError(f"N={n} needs at least one prompt to run a closed-loop wave")
+
+    lock = threading.Lock()
+    completions: list[dict[str, Any]] = []
+    failure: list[BaseException] = []
+    duration_s = min_duration_s
+    start = time.monotonic()
+    counter = itertools.count()
+
+    def worker() -> None:
+        nonlocal duration_s
+        while True:
+            with lock:
+                if failure:
+                    return
+                if time.monotonic() - start >= duration_s:
+                    return
+                req = requests_[next(counter) % len(requests_)]
+            try:
+                row = probe_one(endpoint, model, api_key, req, max_tokens, timeout)
+            except Exception as exc:  # noqa: BLE001 -- must propagate, matches the old pool.map() behavior
+                with lock:
+                    if not failure:
+                        failure.append(exc)
+                return
+            row["end_t"] = time.monotonic() - start
+            with lock:
+                completions.append(row)
+                med = statistics.median(c["elapsed_s"] for c in completions)
+                duration_s = max(min_duration_s, duration_latency_multiple * med)
+
+    threads = [threading.Thread(target=worker) for _ in range(n)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    if failure:
+        raise failure[0]
+
+    final_duration_s = duration_s
+    window_start_s = final_duration_s * ramp_fraction
+    window_length_s = final_duration_s - window_start_s
+    window_tokens = sum(
+        c["out_tokens"] for c in completions
+        if window_start_s <= c["end_t"] <= final_duration_s
+    )
+    latencies = [c["elapsed_s"] for c in completions]
+    total_out_tokens = sum(c["out_tokens"] for c in completions)
+    wall_clock_s = max((c["end_t"] for c in completions), default=0.0)
+
     return {
         "n": n,
-        "requests": n,
+        "requests": len(completions),
+        "duration_s": round(final_duration_s, 3),
+        "window_start_s": round(window_start_s, 3),
         # Per-REQUEST speed. Naturally DECREASES as concurrency rises (more
         # requests sharing the same GPU/scheduler) even when the server is
         # doing strictly more total work — never use this to judge whether
-        # raising N is still paying off (see choose_concurrency()).
-        "mean_single_tok_s": statistics.mean(row["tok_per_s"] for row in rows),
-        # Whole-WAVE throughput: all N requests' output tokens over the wall
-        # time the wave actually took (barrier-started, ends when the last
-        # one finishes). This is what "is bigger N still helping" means.
-        "aggregate_tok_per_s": total_out_tokens / wall_clock_s,
-        "max_latency_s": wall_clock_s,
+        # raising N is still paying off. Still needed by derive_timeout()'s
+        # per-request timeout bound, which is a different question.
+        "mean_single_tok_s": statistics.mean(row["tok_per_s"] for row in completions),
+        # PRIMARY metric (2026-09-10 redesign): tokens completed strictly
+        # within the steady-state window, divided by the window's own
+        # length. This is what choose_tier() actually compares across tiers.
+        "steady_state_tok_per_s": (window_tokens / window_length_s) if window_length_s > 0 else 0.0,
+        # OLD metric, kept for reference only (see module comment) — total
+        # tokens over the whole run's wall clock, including ramp-up and any
+        # stragglers past T. No longer drives selection.
+        "aggregate_tok_per_s": (total_out_tokens / wall_clock_s) if wall_clock_s else 0.0,
+        "max_latency_s": max(latencies),
         "median_latency_s": statistics.median(latencies),
         # Keep raw measurements in telemetry so aggregation can be audited without
         # asserting anything about the runner's absolute wall-clock performance.
-        "samples": rows,
+        "samples": completions,
     }
 
 
@@ -388,6 +513,73 @@ def _default_fetch_evidence() -> dict[str, Any]:
     return {"server_info": dict(empty), "metrics": dict(empty)}
 
 
+class LevelResult(NamedTuple):
+    """One tier's outcome, stripped down to exactly what choose_tier() needs
+    to decide. Factored out (spec-09) so the selection rule can be
+    calibration-tested against fixed sustained-load numbers with no HTTP and
+    no timing — feed it real (n, steady_tok_per_s, safety_ok) triples and
+    assert what N comes out."""
+
+    n: int
+    steady_tok_per_s: float
+    safety_ok: bool
+
+
+def choose_tier(levels: list[LevelResult]) -> int:
+    """Pure selection logic (spec-09): given the tiers tried IN ORDER (as if
+    this were the live climb), return the N to select.
+
+    Asymmetric rule (2026-09-10 redesign; a real observed case picked N=16
+    when N=32 was actually 53% faster in sustained use): climbing never
+    stops just because a tier failed to set a new best — only when a tier's
+    steady-state throughput falls more than SATURATION_DEGRADATION_TOLERANCE
+    below the best tier seen so far, AND the very next tier ALSO fails to
+    recover to within that tolerance, do we stop. The tier selected is
+    always whichever had the best throughput measured overall, never simply
+    the highest N or the last one tried — a real "higher N is actually
+    worse" case must still be caught (that is the whole reason the old
+    design compared to the *previous* tier instead of the running best).
+
+    A tier with safety_ok=False is skipped for both the running-best
+    calculation and the bad-streak bookkeeping — choose_concurrency() itself
+    handles the actual fallback-on-backlog-failure return path (this
+    function never sees such levels in the real pipeline, since backlog
+    failure returns immediately without calling this at all; the skip here
+    is defensive, not load-bearing).
+
+    Mutation check run once by hand while implementing this (recorded here,
+    not a permanent test — see spec-09 §2 and the calibration test file for
+    the two things this actually proves):
+    - Revert to the OLD rule ("stop at the first tier whose gain vs. the
+      PREVIOUS tier is under a threshold") fed the OLD (wrong) measurement
+      values (256.9, 265.7 for N=16, N=24 — the wall-clock-bound numbers)
+      -> selects 16. Confirmed red against the real answer (32).
+    - Same OLD rule, fed the CORRECT sustained-load values (270.5, 342.4,
+      414.9) -> ALSO selects 32, same as the new rule. This is exactly why
+      the primary (decision) assertion alone cannot tell the old and new
+      CODE apart — the bug that actually bit real hardware was in the
+      MEASUREMENT (probe_wave()'s old wall-clock-bound metric), not
+      primarily in this selection rule; the calibration (magnitude) tests
+      are what actually discriminate between old and new probe_wave().
+    """
+    if not levels:
+        raise ValueError("choose_tier needs at least one level")
+    best_n = levels[0].n
+    best_tp = float("-inf")
+    bad_streak = 0
+    for level in levels:
+        if not level.safety_ok:
+            continue
+        is_low = level.steady_tok_per_s < best_tp * (1.0 - SATURATION_DEGRADATION_TOLERANCE)
+        if bad_streak >= 1 and is_low:
+            break  # this tier AND the one before it both failed to recover
+        if level.steady_tok_per_s > best_tp:
+            best_tp = level.steady_tok_per_s
+            best_n = level.n
+        bad_streak = bad_streak + 1 if is_low else 0
+    return best_n
+
+
 def choose_concurrency(
     requests_: list[dict[str, Any]],
     run_wave: Callable[[list[dict[str, Any]], int], dict[str, Any]],
@@ -396,10 +588,13 @@ def choose_concurrency(
     fetch_evidence: Callable[[], dict[str, Any]] = _default_fetch_evidence,
     candidates: tuple[int, ...] = CANDIDATES,
 ) -> tuple[int, list[dict[str, Any]], bool, float]:
-    """Climb `candidates` (default CANDIDATES) from the smallest, stopping at
-    the first tier that either backs up (a real straggler, not just an
-    average) or stops paying off (throughput gain under SATURATION_GAIN over
-    the previous tier). Returns (selected_n, waves, passed, derived_timeout_s).
+    """Climb `candidates` (default CANDIDATES) from the smallest. Selection
+    of the FINAL N is delegated to choose_tier() (see its docstring for the
+    asymmetric rule) — this function's own job is running each tier's
+    closed-loop wave, applying the (unchanged) safety gate, and stopping the
+    live climb as soon as choose_tier() would already know the answer (no
+    point spending money on more tiers once two consecutive have failed to
+    recover). Returns (selected_n, waves, passed, derived_timeout_s).
 
     `candidates` can be a filtered subset of CANDIDATES (see main()'s
     --effective-cap): spec-07's 3rd real trial found SGLang printing its own
@@ -408,12 +603,20 @@ def choose_concurrency(
     not real concurrency, so it must never even be tried once the cap is
     known.
 
+    `requests_` is divided into len(candidates) disjoint slices (one per
+    tier, in order) so no tier's closed loop reuses another tier's prompts —
+    each tier's own loop still cycles WITHIN its slice once it runs longer
+    than the slice has distinct prompts (see probe_wave()); a pool sized
+    with only a few repeats per tier is build_adaptive_probe_load.py's job,
+    not this function's.
+
     Every tier is bracketed by an evidence snapshot (fetch_evidence(), before
     and after) used two ways:
-    - backlog gate: prefers whether the server's own retract signal increased
-      during the wave; falls back to BACKLOG_FALLBACK_LATENCY_MULTIPLE x
-      median latency only when no retract signal is available in either
-      snapshot (see retract_signal()).
+    - backlog gate (UNCHANGED by the 2026-09-10 measurement/gate redesign):
+      prefers whether the server's own retract signal increased during the
+      wave; falls back to BACKLOG_FALLBACK_LATENCY_MULTIPLE x median latency
+      only when no retract signal is available in either snapshot (see
+      retract_signal()).
     - liveness: if run_wave() itself raises, the AFTER snapshot doubles as a
       liveness check. A response (any status) means the server is merely
       overloaded at this tier — a normal early stop, return normally with
@@ -422,20 +625,38 @@ def choose_concurrency(
     """
     if not candidates:
         raise ValueError("candidates must be non-empty")
-    required = sum(candidates)
-    if len(requests_) < required:
-        raise ValueError(f"probe load needs {required} distinct large chunks, got {len(requests_)}")
+    if len(requests_) < len(candidates):
+        raise ValueError(
+            f"probe load needs at least {len(candidates)} distinct prompts "
+            f"(one per candidate tier), got {len(requests_)}"
+        )
+    # Split PROPORTIONALLY by each candidate's own N, not evenly — a bigger
+    # tier's closed loop can complete far more requests in the same T seconds
+    # than a smaller tier's, so it needs a proportionally bigger disjoint
+    # slice to keep repeats rare (see REQUIRED's comment: 2.5x each tier's
+    # own N when the pool is exactly REQUIRED-sized). Cumulative rounding is
+    # absorbed into the LAST tier so the whole pool gets used.
+    total_weight = sum(candidates)
+    tier_bounds: list[tuple[int, int]] = []
+    cursor = 0
+    for n in candidates:
+        share = round(len(requests_) * n / total_weight)
+        tier_bounds.append((cursor, cursor + share))
+        cursor += share
+    last_start, _ = tier_bounds[-1]
+    tier_bounds[-1] = (last_start, len(requests_))
 
-    offset = 0
     waves: list[dict[str, Any]] = []
+    levels: list[LevelResult] = []
     selected_n = candidates[0]
     selected_wave: dict[str, Any] | None = None
     prev_wave: dict[str, Any] | None = None
     passed_any = False
+    best_tp = float("-inf")
+    bad_streak = 0
 
-    for n in candidates:
-        batch = requests_[offset : offset + n]
-        offset += n  # Every wave is cold with respect to earlier prompts.
+    for n, (start_i, end_i) in zip(candidates, tier_bounds):
+        batch = requests_[start_i:end_i]  # Every tier is cold with respect to the other tiers.
         evidence_before = fetch_evidence()
         try:
             wave = run_wave(batch, n)
@@ -451,7 +672,7 @@ def choose_concurrency(
                 "evidence_before": _slim_evidence(evidence_before),
                 "evidence_after": _slim_evidence(evidence_after),
                 "backlog_ok": False,
-                "saturation_ok": None,
+                "steady_state_tok_per_s": None,
                 "passed": False,
             }
             waves.append(failure_wave)
@@ -512,42 +733,59 @@ def choose_concurrency(
             backlog_ok = wave["max_latency_s"] <= backlog_threshold
         wave["backlog_ok"] = backlog_ok
 
+        # 舊的飽和數字（跟前一級比）不刪除，照算照記——只是不再拿它早停（2026-09-10
+        # 第二次重設計，orchestrator 指示）。真正驅動選擇的是下面的 steady_state_tok_per_s
+        # 與 choose_tier() 的不對稱規則。
         if prev_wave is None:
-            saturation_ok = True
             wave["throughput_gain"] = None
         else:
-            # Gate on AGGREGATE (whole-wave) throughput, not mean_single_tok_s.
-            # Per-request speed falls as N rises even on a server with plenty
-            # of headroom left — gating on it would make saturation_ok go
-            # negative on the very first step and freeze selection at the
-            # smallest candidate forever, regardless of real capacity.
             gain = wave["aggregate_tok_per_s"] / prev_wave["aggregate_tok_per_s"] - 1.0
             wave["throughput_gain"] = round(gain, 4)
-            saturation_ok = gain >= SATURATION_GAIN
-        wave["saturation_ok"] = saturation_ok
-        wave["passed"] = backlog_ok and saturation_ok
+        wave["steady_state_tok_per_s"] = round(float(wave["steady_state_tok_per_s"]), 3)
+        wave["passed"] = backlog_ok
         waves.append(wave)
 
         if not backlog_ok:
             # This tier backed up — a real straggler, not just a slow average.
-            # Fall back to the last tier that was actually safe, or (if even
-            # the smallest candidate backs up) to this failing tier itself.
+            # Fall back to the best tier confirmed so far, or (if even the
+            # smallest candidate backs up) to this failing tier itself.
             fallback_n = selected_n if passed_any else n
             fallback_wave = selected_wave if selected_wave is not None else wave
             return fallback_n, waves, passed_any, derive_timeout(max_tokens, fallback_wave)
-        if not saturation_ok:
-            # Safe, but climbing further stopped paying off — the previous
-            # tier (already confirmed safe) is the practical ceiling.
-            assert selected_wave is not None  # prev_wave set => a prior tier passed
-            return selected_n, waves, True, derive_timeout(max_tokens, selected_wave)
 
-        selected_n = n
-        selected_wave = wave
+        # ---- asymmetric saturation bookkeeping (see choose_tier()) ----
+        current_tp = wave["steady_state_tok_per_s"]
+        is_low = current_tp < best_tp * (1.0 - SATURATION_DEGRADATION_TOLERANCE)
+        wave["is_low_vs_best"] = is_low
+        stop_after_this = bad_streak >= 1 and is_low
+        if current_tp > best_tp:
+            best_tp = current_tp
+            selected_n = n
+            selected_wave = wave
+        wave["best_steady_state_tok_per_s_so_far"] = round(best_tp, 3)
         passed_any = True
         prev_wave = wave
+        levels.append(LevelResult(n=n, steady_tok_per_s=current_tp, safety_ok=True))
 
-    # Every candidate cleared both gates — take the top of the range.
+        if stop_after_this:
+            # This tier AND the one before it both failed to recover to
+            # within SATURATION_DEGRADATION_TOLERANCE of the best tier seen
+            # so far — one extra tier costs about a minute, so we only give
+            # up after two consecutive misses, never on the first (that is
+            # exactly what made the old design pick N=16 when N=32 was 53%
+            # faster). selected_wave/selected_n already point at the best
+            # tier overall, not necessarily the highest N or the last tried.
+            assert selected_wave is not None
+            assert choose_tier(levels) == selected_n
+            return selected_n, waves, True, derive_timeout(max_tokens, selected_wave)
+
+        bad_streak = bad_streak + 1 if is_low else 0
+
+    # Exhausted every candidate without two consecutive misses -- take
+    # whichever tier had the best steady-state throughput (choose_tier()
+    # would return the same answer given the same `levels`).
     assert selected_wave is not None
+    assert choose_tier(levels) == selected_n
     return selected_n, waves, True, derive_timeout(max_tokens, selected_wave)
 
 
@@ -649,8 +887,10 @@ def main() -> int:
                 args.endpoint, args.model, args.api_key, batch, n, args.max_tokens, args.timeout
             )
             print(
-                f"[adaptive-probe] N={n} per-request={wave['mean_single_tok_s']:.1f} tok/s "
-                f"aggregate={wave['aggregate_tok_per_s']:.1f} tok/s "
+                f"[adaptive-probe] N={n} duration={wave['duration_s']:.1f}s "
+                f"per-request={wave['mean_single_tok_s']:.1f} tok/s "
+                f"steady_state={wave['steady_state_tok_per_s']:.1f} tok/s "
+                f"(aggregate_ref={wave['aggregate_tok_per_s']:.1f} tok/s) "
                 f"median_latency={wave['median_latency_s']:.1f}s max_latency={wave['max_latency_s']:.1f}s",
                 file=sys.stderr,
                 flush=True,
