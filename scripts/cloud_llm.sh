@@ -22,7 +22,7 @@
 #   --gpu NAME               CLOUD_LLM_GPU（蓋掉 profile 的卡；Vast 寫法 "RTX 5090"，RunPod 寫法 "NVIDIA GeForce RTX 5090"）
 #   --max-dph X              CLOUD_LLM_MAX_DPH（Vast 價格上限，預設 int4 0.6 / fp8 1.2）
 #   CLOUD_LLM_ENGINE          vllm|sglang（預設 vllm）
-#   CLOUD_LLM_CONCURRENCY     client/server 共用併發寬度（預設 16；可明確調低或調高）
+#   CLOUD_LLM_CONCURRENCY     client 併發寬度；未明傳時由就緒後的真實大塊探針自動選 24/16/12/8
 #   CLOUD_LLM_CONCURRENT_CHAPTERS=0  關掉雲端預設的跨章併發，退回舊行為
 #   CLOUD_LLM_EXTRA_SERVER_ARGS  追加目前引擎的 server 參數；vllm 仍相容舊的 CLOUD_LLM_EXTRA_VLLM_ARGS
 #   --keep / --stop DIR      見上
@@ -48,10 +48,16 @@ ENGINE="${CLOUD_LLM_ENGINE:-vllm}"
 MODEL="${CLOUD_LLM_MODEL:-}"
 GPU="${CLOUD_LLM_GPU:-}"
 MAX_DPH="${CLOUD_LLM_MAX_DPH:-}"
-# RTX 6000 Ada 48GB int4 實測 N=16：420.3 tok/s、單筆 28.5 tok/s、品質訊號全 0。
-# 2048-token 跑飛約 72s，對 120s timeout 留 40% 餘裕；N=32 只留 18% 不合格。
-# N=24 在這張卡合格但預設要跨卡共用，N=16 換慢 30% 的卡仍可在 timeout 內結束。
-CONCURRENCY="${CLOUD_LLM_CONCURRENCY:-16}"
+# 16 是探針本身失敗時的全域 fallback。明傳值仍會跑探針留下證據，但 client 永遠尊重明傳值。
+if [[ -n "${CLOUD_LLM_CONCURRENCY+x}" ]]; then
+    CONCURRENCY="$CLOUD_LLM_CONCURRENCY"
+    CONCURRENCY_EXPLICIT=true
+else
+    CONCURRENCY=16
+    CONCURRENCY_EXPLICIT=false
+fi
+# Server 必須容納最高候選，否則用 16 開機送 24 筆只會量到 server queue，不是真 N=24。
+SERVER_CONCURRENCY=24
 CONCURRENT_CHAPTERS="${CLOUD_LLM_CONCURRENT_CHAPTERS:-1}"
 KEEP=false
 STOP_DIR=""
@@ -77,6 +83,9 @@ die()  { printf '[cloud-llm] 失敗：%s\n' "$*" >&2; exit 1; }
 case "$PROVIDER" in vast|runpod) ;; *) die "--provider 只能是 vast 或 runpod：$PROVIDER" ;; esac
 case "$ENGINE" in vllm|sglang) ;; *) die "CLOUD_LLM_ENGINE 只能是 vllm 或 sglang：$ENGINE" ;; esac
 [[ "$CONCURRENCY" =~ ^[1-9][0-9]*$ ]] || die "CLOUD_LLM_CONCURRENCY 必須是正整數：$CONCURRENCY"
+if [[ "$CONCURRENCY_EXPLICIT" == true && "$CONCURRENCY" -gt "$SERVER_CONCURRENCY" ]]; then
+    SERVER_CONCURRENCY="$CONCURRENCY"
+fi
 case "$CONCURRENT_CHAPTERS" in 0|1) ;; *) die "CLOUD_LLM_CONCURRENT_CHAPTERS 只能是 0 或 1：$CONCURRENT_CHAPTERS" ;; esac
 case "$PROFILE" in
     int4)
@@ -164,7 +173,7 @@ terminate_instance() {
         "$([[ "$PROVIDER" == vast ]] && echo 'bash ~/dev/srt-skill/scripts/vast_reap.sh' || echo 'bash ~/dev/srt-skill/scripts/runpod_reap.sh')" >&2
     return 1
 }
-trap 'terminate_instance || true' EXIT
+trap 'rc=$?; terminate_instance || true; exit "$rc"' EXIT
 trap 'terminate_instance || true; exit 130' INT
 trap 'terminate_instance || true; exit 143' TERM
 trap 'terminate_instance || true; exit 129' HUP
@@ -189,6 +198,31 @@ fi
 RUN_DIR="$REPO_ROOT/runs/cloud-llm-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 mkdir -p "$RUN_DIR"
 printf '%s\n' "$PROVIDER" >"$RUN_DIR/provider"
+# 在開始計費前，從本次要翻的第一本書建立 60 個 production-size prompt。正常長書四波
+# 互不重複；短書不得假裝有足量，builder 會重複並把事實記在 load.json。
+PROBE_BOOK=""
+_expect_book=false
+for _arg in "${TRANSLATE_ARGS[@]}"; do
+    if [[ "$_expect_book" == true ]]; then PROBE_BOOK="$_arg"; break; fi
+    if [[ "$_arg" == --book ]]; then _expect_book=true
+    elif [[ "$_arg" == --book=* ]]; then PROBE_BOOK="${_arg#--book=}"; break
+    fi
+done
+[[ -n "$PROBE_BOOK" ]] || die "找不到 --book，無法建立自適應併發 load.json"
+# 固定 load 只能給不租機的測試替身；正式流程永遠取本次 EPUB，避免 stale load 誤導探針。
+if [[ -n "${CLOUD_LLM_TEST_PROBE_CMD:-}" && -n "${CLOUD_LLM_PROBE_LOAD:-}" ]]; then
+    PROBE_LOAD="$CLOUD_LLM_PROBE_LOAD"
+    [[ -r "$PROBE_LOAD" ]] || die "讀不到測試用 CLOUD_LLM_PROBE_LOAD：$PROBE_LOAD"
+else
+    PROBE_LOAD="$RUN_DIR/load.json"
+    if [[ -n "${CLOUD_LLM_TEST_BUILD_LOAD_CMD:-}" ]]; then
+        read -r -a BUILD_LOAD_CMD <<<"$CLOUD_LLM_TEST_BUILD_LOAD_CMD"
+    else
+        BUILD_LOAD_CMD=(python3 "$SCRIPT_DIR/build_adaptive_probe_load.py")
+    fi
+    "${BUILD_LOAD_CMD[@]}" --book "$PROBE_BOOK" --out "$PROBE_LOAD" \
+        || die "無法從 $PROBE_BOOK 建立自適應併發 load.json（尚未租機）"
+fi
 API_KEY="$(python3 -c 'import secrets;print(secrets.token_urlsafe(24))')"
 LABEL="book-translator-$(date -u +%Y%m%dT%H%M%SZ)"
 log "平台 $PROVIDER / 引擎 $ENGINE / 卡 $GPU / 模型 $MODEL / 映像 $IMAGE / run $RUN_DIR"
@@ -198,28 +232,31 @@ if [[ "$ENGINE" == vllm ]]; then
     # vLLM 映像的 entrypoint 已是 `vllm serve`；模型是位置參數。
     SERVER_ARGS=("$MODEL" --served-model-name "$MODEL" --port "$PORT" --host 0.0.0.0
                  --api-key "$API_KEY" --max-model-len "$MAX_MODEL_LEN" --gpu-memory-utilization "$GPU_MEM_UTIL"
-                 --max-num-seqs "$CONCURRENCY")
+                 --max-num-seqs "$SERVER_CONCURRENCY")
 else
     # SGLang runtime 映像沒有 vLLM entrypoint；明確啟動 OpenAI-compatible server。
     # reasoning parser 是品質守衛的一部分，不能只靠 request 的 enable_thinking=false。
     SERVER_ARGS=(python3 -m sglang.launch_server --model-path "$MODEL" --port "$PORT" --host 0.0.0.0
                  --api-key "$API_KEY" --context-length "$MAX_MODEL_LEN" --mem-fraction-static "$GPU_MEM_UTIL"
-                 --max-running-requests "$CONCURRENCY" --reasoning-parser qwen3)
+                 --max-running-requests "$SERVER_CONCURRENCY" --reasoning-parser qwen3)
 fi
 if [[ -n "${CLOUD_LLM_EXTRA_SERVER_ARGS:-}" ]]; then
     read -r -a _extra <<<"$CLOUD_LLM_EXTRA_SERVER_ARGS"
-    if [[ "$ENGINE" == sglang ]]; then
-        for _arg in "${_extra[@]}"; do
-            case "$_arg" in
-                --reasoning-parser|--reasoning-parser=*)
-                    die "SGLang 的 --reasoning-parser qwen3 是強制品質守衛，不能由 CLOUD_LLM_EXTRA_SERVER_ARGS 覆蓋" ;;
-            esac
-        done
-    fi
-    SERVER_ARGS+=("${_extra[@]}")
 elif [[ "$ENGINE" == vllm && -n "${CLOUD_LLM_EXTRA_VLLM_ARGS:-}" ]]; then
     # Backward compatibility for existing vLLM benchmark commands only.
     read -r -a _extra <<<"$CLOUD_LLM_EXTRA_VLLM_ARGS"
+else
+    _extra=()
+fi
+for _arg in ${_extra[@]+"${_extra[@]}"}; do
+    case "$_arg" in
+        --max-num-seqs|--max-num-seqs=*|--max-running-requests|--max-running-requests=*)
+            die "server 併發上限由自適應探針守衛，不能由 extra server args 覆蓋" ;;
+        --reasoning-parser|--reasoning-parser=*)
+            [[ "$ENGINE" == sglang ]] && die "SGLang 的 --reasoning-parser qwen3 是強制品質守衛，不能由 CLOUD_LLM_EXTRA_SERVER_ARGS 覆蓋" ;;
+    esac
+done
+if [[ ${#_extra[@]} -gt 0 ]]; then
     SERVER_ARGS+=("${_extra[@]}")
 fi
 
@@ -331,6 +368,44 @@ log "${ENGINE} 就緒：${ENDPOINT}（模型 ${MODEL}），等了 $(( ( $(date +
         die "${ENGINE} thinking preflight content 含 think 標籤，未開始翻譯"
     fi
 log "${ENGINE} thinking preflight 通過：content 無 think 標籤、reasoning_content 為空"
+
+# ---------- 自適應併發探針 ----------
+# 每波使用不同、真實大小的大塊；小段會高估單筆速度而選到危險的 N。第一波 prefix
+# cache 是冷的，量測偏保守，方向安全。探針也會自然反映 cache preempt 的延遲成本。
+PROBE_RESULT="$RUN_DIR/adaptive-concurrency.json"
+if [[ -n "${CLOUD_LLM_TEST_PROBE_CMD:-}" ]]; then
+    read -r -a ADAPTIVE_PROBE_CMD <<<"$CLOUD_LLM_TEST_PROBE_CMD"
+else
+    ADAPTIVE_PROBE_CMD=(python3 "$SCRIPT_DIR/adaptive_concurrency_probe.py")
+fi
+set +e
+OMLX_API_KEY="$API_KEY" "${ADAPTIVE_PROBE_CMD[@]}" --endpoint "$ENDPOINT" --model "$MODEL" \
+    --load "$PROBE_LOAD" --out "$PROBE_RESULT" --gpu "$GPU" --profile "$PROFILE"
+PROBE_RC=$?
+set -e
+if [[ $PROBE_RC -eq 0 ]] && SAFE_CONCURRENCY="$(jq -er '.selected_concurrency | select(type == "number")' "$PROBE_RESULT" 2>/dev/null)"; then
+    PROBE_SUMMARY="$(jq -r '[.waves[] | "N=\(.n): \(.mean_single_tok_s) tok/s, max \(.max_latency_s)s"] | join("; ")' "$PROBE_RESULT")"
+    log "自適應探針：${PROBE_SUMMARY}；安全 N=${SAFE_CONCURRENCY}"
+    if [[ "$(jq -r '.passed' "$PROBE_RESULT")" != true ]]; then
+        log "⚠️  N=24/16/12/8 都未達 20% 跑飛餘裕，退到 8 繼續翻譯；請考慮換卡"
+    fi
+    if [[ "$CONCURRENCY_EXPLICIT" == true ]]; then
+        if (( CONCURRENCY > SAFE_CONCURRENCY )); then
+            log "⚠️  明傳併發 $CONCURRENCY 高於探針安全值 ${SAFE_CONCURRENCY}；依使用者指定繼續"
+        else
+            log "明傳併發 ${CONCURRENCY}（探針安全值 ${SAFE_CONCURRENCY}），依使用者指定"
+        fi
+    else
+        CONCURRENCY="$SAFE_CONCURRENCY"
+    fi
+else
+    log "⚠️  自適應併發探針失敗，無法取得可靠量測；併發退回全域預設 16，繼續翻譯"
+    if [[ "$CONCURRENCY_EXPLICIT" == false ]]; then
+        CONCURRENCY=16
+    else
+        log "明傳 CLOUD_LLM_CONCURRENCY=$CONCURRENCY 仍優先於 fallback"
+    fi
+fi
 
 printf 'OMLX_HOST=%s\nOMLX_MODEL=%s\nOMLX_API_KEY=%s\n' "$ENDPOINT" "$MODEL" "$API_KEY" >"$RUN_DIR/endpoint.env"
 chmod 600 "$RUN_DIR/endpoint.env"

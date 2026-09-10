@@ -1,6 +1,6 @@
 ---
 name: book-translator
-version: 1.0.3
+version: 1.0.4
 description: |-
   Translate full-length books (EPUB) to Traditional Chinese (Taiwan) with literary tone fidelity and cross-chapter coherence, preserving EPUB structure. Use when the user says "翻書", "翻電子書", "翻譯整本書", "book translate", "bilingual epub", or gives an .epub expecting literary translation. Main session extracts an OPF spine manifest plus a per-book glossary and style anchor, then dispatches parallel subagents (each gets glossary, style anchor, and last-paragraph carryover for coherence); the first item is previewed for tone confirmation before fanning out the rest. Produces a bilingual .epub (source + translation interleaved) with manifest/glossary/state for resume. Differs from translate-book (generic PDF/DOCX/EPUB, single-language, no coherence): book-translator targets literary works, uses Opus for the style-anchor pass and Sonnet for the parallel fan-out, and gates quality before shipping. Not for short articles (use polish) or SRT subtitles (use srt).
 allowed-tools:
@@ -105,8 +105,8 @@ The skill supports two providers:
 
   **併發（2026-09-10 起，雲端預設）**：本機 omlx 單一 GPU 維持循序。雲端 vLLM／SGLang
   由 `cloud_llm.sh` 預設帶 `--concurrent-chapters --max-concurrent-requests N`；直接跑 driver
-  時要同時加這兩個旗標，前者開跨章排程、後者控制全書總在途 request 上限。server 與 client
-  共用 `CLOUD_LLM_CONCURRENCY`（**預設 16**），不會膨脹成「章數 × 塊數」的無界 fan-out。
+  時要同時加這兩個旗標，前者開跨章排程、後者控制全書總在途 request 上限。server 以最高候選
+  24 開機，client 則由自適應探針選 24／16／12／8；不會膨脹成「章數 × 塊數」的無界 fan-out。
 
   預設 16 來自 RTX 6000 Ada 48GB、int4、真實 chunk＋seam 負載的補跑，不是拍腦袋：
 
@@ -118,9 +118,17 @@ The skill supports two providers:
 
   N=4 時估計每本約 **$0.30／20 分鐘**；N=16 約 **$0.16（含 19 分鐘開機）／7 分鐘**。
   24、32 在這張 48GB 卡更便宜且品質訊號仍全 0，但預設還要跨卡安全：32 的跑飛餘裕低於
-  20% 直接刷掉；24 換慢約 15% 的卡也會掉到 20% 以下。16 有 40% 餘裕，即使換慢 30%
-  的卡，2048-token 跑飛仍能在 120 秒 timeout 內乾淨結束。因此共用預設選 16，而不是舊的
-  4 或單卡最快的 32。可依已量過的卡明確覆蓋 `CLOUD_LLM_CONCURRENCY`，不要把 32 當通用值。
+  20% 直接刷掉。原本「24 換慢約 15% 就失守、16 換慢 30% 還守得住」的推論只適用於上述
+  **int4 曲線**；fp8 的曲線形狀不同，不能跨 profile／跨卡外推。因此 16 只保留為探針失敗時
+  的全域 fallback，不再假裝是所有卡的最佳值。
+
+  正式跑在 thinking preflight 通過後，會用 60 筆互不重複、真實大小的大塊分波直接量目標 N：
+  24 → 16 → 12 → 8。每波同時要求平均單筆速度達 `2048 ÷ (120 × 0.8)`，且最長延遲小於
+  60 秒；第一個合格值就是 client 併發。不同波使用不同 prompt，避免前波把 prefix cache
+  暖熱而讓後波偏樂觀；第一波 cache 冷、結果偏保守，方向安全。大塊也不能換成小段，否則會
+  高估速度並選到過大的 N。四級皆未過會警告後用 8 繼續；探針本身失敗則警告並 fallback 16。
+  每次結果寫入 run 目錄的 `adaptive-concurrency.json`（卡名只記錄、不參與決策）。明傳
+  `CLOUD_LLM_CONCURRENCY` 時探針仍照跑留證據，client 尊重明傳值；高於安全值會明顯警告。
 
   **術語表是併發的前提，不是加分項。** 開併發前先建立並人工確認
   `<book_dir>/spec_terms.json`。八趟 Mind-Gut 實測：有術語表的三種模式，人名都只剩單一形態，

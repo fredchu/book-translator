@@ -104,11 +104,25 @@ printf 'ARGS: %s\nKEY: %s\n' "$*" "${OMLX_API_KEY:-}" >"$FAKE_TRANSLATE_OUT"
 exit "${FAKE_TRANSLATE_RC:-0}"
 """
 
+FAKE_ADAPTIVE_PROBE = r'''#!/usr/bin/env bash
+out=""
+while [[ $# -gt 0 ]]; do
+    if [[ "$1" == --out ]]; then out="$2"; shift 2; else shift; fi
+done
+[[ "${FAKE_PROBE_FAIL:-0}" == 1 ]] && exit 7
+safe="${FAKE_SAFE_CONCURRENCY:-16}"
+passed="${FAKE_PROBE_PASSED:-true}"
+printf '{"status":"ok","selected_concurrency":%s,"passed":%s,"waves":[{"n":%s,"mean_single_tok_s":%s,"max_latency_s":%s}]}\n' \
+  "$safe" "$passed" "$safe" "${FAKE_PROBE_SPEED:-28.5}" "${FAKE_PROBE_LATENCY:-20}" >"$out"
+'''
+
 
 def _setup(tmp_path: Path, *, port: int, offers=None) -> dict[str, str]:
     fake = tmp_path / "vastai"; fake.write_text(FAKE_VASTAI, encoding="utf-8"); fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
     tr = tmp_path / "translate.sh"; tr.write_text(FAKE_TRANSLATE, encoding="utf-8"); tr.chmod(tr.stat().st_mode | stat.S_IXUSR)
+    probe = tmp_path / "probe.sh"; probe.write_text(FAKE_ADAPTIVE_PROBE, encoding="utf-8"); probe.chmod(probe.stat().st_mode | stat.S_IXUSR)
     calls = tmp_path / "calls.log"; calls.write_text("", encoding="utf-8")
+    probe_load = tmp_path / "load.json"; probe_load.write_text('{"requests":[]}', encoding="utf-8")
     offers = offers if offers is not None else [{"id": 1, "gpu_name": "RTX 5090", "dph_total": 0.4, "geolocation": "KR", "public_ipaddr": "180.1.1.1"}]
     record = {"id": 7001, "actual_status": "running", "public_ipaddr": "127.0.0.1", "ports": {"8000/tcp": [{"HostPort": str(port)}]}, "status_msg": "ok"}
     env = dict(os.environ)
@@ -117,6 +131,7 @@ def _setup(tmp_path: Path, *, port: int, offers=None) -> dict[str, str]:
         "BOOK_TRANSLATOR_CLOUD_LIB_DIR": str(LIB_DIR),
         "FAKE_OFFERS_JSON": json.dumps(offers), "FAKE_INSTANCE_JSON": json.dumps(record), "FAKE_INSTANCES_JSON": "[]",
         "CLOUD_LLM_TEST_TRANSLATE_CMD": str(tr), "FAKE_TRANSLATE_OUT": str(tmp_path / "translate.out"),
+        "CLOUD_LLM_TEST_PROBE_CMD": str(probe), "CLOUD_LLM_PROBE_LOAD": str(probe_load),
         "CLOUD_LLM_POLL_SECONDS": "1", "CLOUD_LLM_BOOT_WAIT_MIN": "1",
         # args 模式 vastai 的真實回應格式（Python 字典字串，不是 JSON）；預設放這裡，不放假指令的 ${:-} 裡（大括號會被截斷）
         "FAKE_CREATE_OUT": "Started. {'success': True, 'new_contract': 7001, 'instance_api_key': 'x'}",
@@ -161,32 +176,12 @@ def test_vast_happy_path_waits_for_models_then_translates_then_destroys(tmp_path
         create = next(c for c in calls if "create instance" in c)
         assert "--image vllm/vllm-openai:v0.28.0" in create and "--env -p 8000:8000" in create
         assert f"--raw --args {MODEL} --served-model-name {MODEL} --port 8000" in create and f"--api-key {key}" in create
-        assert "--max-num-seqs 16" in create
+        assert "--max-num-seqs 24" in create
         assert "--ssh" not in create and "--disable-log-requests" not in create and not create.endswith("--raw")
         assert "destroyed" in calls and calls.index("destroyed") > calls.index(create)
         assert "已確認 7001 不在清單中" in r.stderr
     finally:
         srv.shutdown()
-
-
-def test_cloud_default_concurrency_is_measured_cross_card_safe_value() -> None:
-    script = SCRIPT.read_text(encoding="utf-8")
-    assert 'CONCURRENCY="${CLOUD_LLM_CONCURRENCY:-16}"' in script
-    assert 'CONCURRENCY="${CLOUD_LLM_CONCURRENCY:-4}"' not in script
-    assert 'CONCURRENCY="${CLOUD_LLM_CONCURRENCY:-32}"' not in script
-
-    max_tokens = 2048
-    timeout = 120
-    n16_single_tok_s = 28.5
-    n24_single_tok_s = 24.0
-    n32_single_tok_s = 20.8
-    def margin(rate: float) -> float:
-        return (timeout - max_tokens / rate) / timeout
-
-    assert margin(n16_single_tok_s) >= 0.40
-    assert margin(n32_single_tok_s) < 0.20
-    assert max_tokens / (n16_single_tok_s * 0.70) < timeout
-    assert margin(n24_single_tok_s * 0.85) < 0.20
 
 
 def test_cloud_concurrency_one_knob_and_escape_hatch(tmp_path: Path) -> None:
@@ -199,7 +194,7 @@ def test_cloud_concurrency_one_knob_and_escape_hatch(tmp_path: Path) -> None:
         out = Path(env["FAKE_TRANSLATE_OUT"]).read_text(encoding="utf-8")
         assert "--concurrent-chapters --max-concurrent-requests 12" in out
         create = next(c for c in _calls(env) if "create instance" in c)
-        assert "--max-num-seqs 12" in create
+        assert "--max-num-seqs 24" in create
 
         off_dir = tmp_path / "off"
         off_dir.mkdir()
@@ -210,6 +205,55 @@ def test_cloud_concurrency_one_knob_and_escape_hatch(tmp_path: Path) -> None:
         out2 = Path(env2["FAKE_TRANSLATE_OUT"]).read_text(encoding="utf-8")
         assert "--concurrent-chapters" not in out2
         assert "--max-concurrent-requests" not in out2
+    finally:
+        srv.shutdown()
+
+
+@pytest.mark.parametrize("safe", [24, 16, 12, 8])
+def test_adaptive_probe_selects_each_candidate(tmp_path: Path, safe: int) -> None:
+    srv, port = _serve_models()
+    try:
+        env = _setup(tmp_path, port=port)
+        env["FAKE_SAFE_CONCURRENCY"] = str(safe)
+        env["FAKE_PROBE_PASSED"] = "false" if safe == 8 else "true"
+        r = _run(env, "--", "--book", "x.epub")
+        assert r.returncode == 0, r.stderr
+        out = Path(env["FAKE_TRANSLATE_OUT"]).read_text(encoding="utf-8")
+        assert f"--max-concurrent-requests {safe}" in out
+        assert f"安全 N={safe}" in r.stderr
+        if safe == 8:
+            assert "都未達 20% 跑飛餘裕" in r.stderr
+    finally:
+        srv.shutdown()
+
+
+def test_adaptive_probe_failure_falls_back_without_stopping_translation(tmp_path: Path) -> None:
+    srv, port = _serve_models()
+    try:
+        env = _setup(tmp_path, port=port)
+        env["FAKE_PROBE_FAIL"] = "1"
+        r = _run(env, "--", "--book", "x.epub")
+        assert r.returncode == 0, r.stderr
+        out = Path(env["FAKE_TRANSLATE_OUT"]).read_text(encoding="utf-8")
+        assert "--max-concurrent-requests 16" in out
+        assert "探針失敗" in r.stderr and "退回全域預設 16" in r.stderr
+    finally:
+        srv.shutdown()
+
+
+def test_explicit_concurrency_still_probes_warns_and_is_respected(tmp_path: Path) -> None:
+    srv, port = _serve_models()
+    try:
+        env = _setup(tmp_path, port=port)
+        env["CLOUD_LLM_CONCURRENCY"] = "32"
+        env["FAKE_SAFE_CONCURRENCY"] = "12"
+        r = _run(env, "--", "--book", "x.epub")
+        assert r.returncode == 0, r.stderr
+        out = Path(env["FAKE_TRANSLATE_OUT"]).read_text(encoding="utf-8")
+        assert "--max-concurrent-requests 32" in out
+        create = next(c for c in _calls(env) if "create instance" in c)
+        assert "--max-num-seqs 32" in create
+        assert "明傳併發 32 高於探針安全值 12" in r.stderr
     finally:
         srv.shutdown()
 
@@ -227,7 +271,7 @@ def test_sglang_engine_uses_native_args_and_passes_thinking_preflight(tmp_path: 
         assert f"--raw --args python3 -m sglang.launch_server --model-path {MODEL}" in create
         assert "--context-length 16384" in create
         assert "--mem-fraction-static 0.92" in create
-        assert "--max-running-requests 12" in create
+        assert "--max-running-requests 24" in create
         assert "--reasoning-parser qwen3" in create
         assert "--max-model-len" not in create
         assert "--gpu-memory-utilization" not in create
@@ -240,6 +284,22 @@ def test_sglang_engine_uses_native_args_and_passes_thinking_preflight(tmp_path: 
         assert "destroyed" in _calls(env)
     finally:
         srv.shutdown()
+
+
+@pytest.mark.parametrize(
+    ("engine", "extra"),
+    [("vllm", "--max-num-seqs=8"), ("sglang", "--max-running-requests 8")],
+)
+def test_rejects_server_ceiling_override_before_renting(
+    tmp_path: Path, engine: str, extra: str
+) -> None:
+    env = _setup(tmp_path, port=1)
+    env["CLOUD_LLM_ENGINE"] = engine
+    env["CLOUD_LLM_EXTRA_SERVER_ARGS"] = extra
+    r = _run(env, "--", "--book", "x.epub")
+    assert r.returncode != 0
+    assert "server 併發上限由自適應探針守衛" in r.stderr
+    assert _calls(env) == []
 
 
 def test_sglang_rejects_reasoning_parser_override_before_renting(tmp_path: Path) -> None:
