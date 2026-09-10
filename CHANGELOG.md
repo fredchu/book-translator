@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`cloud_llm.sh` reuses bookcast's Vast machine memory instead of learning from scratch**
+  (2026-09-10). bookcast already tracks which Vast machines boot reliably in a small sqlite3
+  ledger (`bookcast.vast_machine_memory`, an independent CLI with a `--db` path argument), and
+  `cloud_llm.sh`'s own stall detector (`BOOT_STALL_MIN`) already matched bookcast's logic line
+  for line — it just never fed the result back anywhere. Both tools rent from the same Vast
+  pool, so a machine bad for one is bad for the other; `CLOUD_LLM_MACHINE_MEMORY` now points at
+  bookcast's own database file by default, no changes to bookcast itself required (its CLI
+  already supported this).
+
+  Offer selection is now three independent-budget tiers — preferred (recently-good machines) →
+  general market excluding active-bad machines → an unfiltered emergency market if the general
+  tier was ever narrowed by the blocklist — each with its own full try count
+  (`CLOUD_LLM_WHITELIST_TRIES`, default 2; `CLOUD_LLM_MAX_OFFER_TRIES`, default 3, used by both
+  the general and emergency tiers). **The three budgets must never share a pool**: an earlier
+  design mistake in a sibling project let the preferred tier exhausting its offers eat into the
+  general tier's budget too, so when the whole preferred list got rented out first, ordinary
+  search never got a fair try at all. Tested by forcing every create attempt to fail and
+  counting exactly how many were attempted across tiers.
+
+  This is a runtime dependency on another repo, so every call into it is fail-soft by
+  contract: a missing `bookcast` module, an import error, or a corrupt database all print a
+  warning and continue with an empty preferred/blocked list — never `die()`. Machine identity
+  (`machine_id`) isn't available until after `create`, only `offer_id` is, so a bad machine is
+  captured via an instance-record lookup between create and terminate (same order bookcast
+  uses). Only the script's own `die()`-triggered exit records a failure; SIGINT/SIGTERM/SIGHUP
+  do not — the user interrupting a boot is not evidence the machine is bad. Success is recorded
+  once the server is ready and the thinking preflight passes, not at the end of a multi-hour
+  translation — a book failing for unrelated reasons (content, quota, Ctrl-C) shouldn't
+  penalize a perfectly good machine. Both event kinds share the fixed three-value schema
+  bookcast's table already enforces (`created` / `boot_failed` / `synth_ok`); `stage` is set to
+  `book-translator` to distinguish these rows from bookcast's own in the same shared table.
+
+  **Not done this round** (explicitly out of scope, see `spec-03-machine-memory-reuse.md`):
+  bookcast's own cloud-machine orphan detector still only recognizes `bookcast-` labels and
+  cannot see book-translator's machines — fixing that means changing bookcast, and the detector
+  only pushes a notification rather than terminating anything, so it can't replace "rent, then
+  verify termination on exit" as the actual safety net. Left as an open item, not fixed here.
+
 ## [1.1.0] - 2026-09-10
 
 ### Added

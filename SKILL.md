@@ -103,6 +103,21 @@ The skill supports two providers:
   `Jackrong/Qwopus3.6-27B-v2-FP8`（30.9 GB，要 ≥40 GB 卡，預設 L40S 約 0.80）。
   機器挑選、IP 排除、停滯偵測都沿用 srt-skill 的 `vast_instance_lib.sh`／`runpod_pod_lib.sh`。
 
+  **機器記憶（2026-09-10 起，沿用 bookcast，只用於 Vast）**：跟 bookcast 租同一個 Vast
+  機器池，好壞紀錄共用一份 sqlite3（`CLOUD_LLM_MACHINE_MEMORY`，預設
+  `~/.local/state/bookcast/vast-machine-memory.sqlite3`），bookcast 不用改一行。
+  挑報價分三層、**額度各自獨立**：白名單（近期成功機，`CLOUD_LLM_WHITELIST_TRIES` 預設 2）
+  → 排除有效黑名單的一般市場 → 若一般市場曾被黑名單限制過，再開一次無過濾的緊急市場
+  （後兩層各自都是完整的 `CLOUD_LLM_MAX_OFFER_TRIES`，預設 3，不共用同一個池）。
+  **跨 repo 執行期相依，一律軟性失敗**：bookcast 模組不在、import 失敗、資料庫壞掉都只印
+  警告、照常走一般搜尋，絕不會讓租機器停下來。壞機器的 `machine_id` 在 pick_offers 階段
+  拿不到，只有 `offer_id`——照抄 bookcast 的做法，在 create 之後、terminate 之前補抓。
+  只有腳本自己 `die()` 觸發的結束才記失敗；使用者 Ctrl-C 不算機器壞掉。成功則在伺服器就緒、
+  thinking preflight 通過時就記，不等一整本書翻完（書翻失敗多半跟機器好壞無關）。
+  **這一輪沒動**：bookcast 自己的雲端偵測器（`cloud_detector.py`）仍然只認 `bookcast-`
+  前綴，看不到 book-translator 開的機器——那要改另一個 repo，且它只推通知不砍機，
+  不能取代「跑完回查確認」，留在 OPEN-ITEMS。
+
   **併發（2026-09-10 起，雲端預設）**：本機 omlx 單一 GPU 維持循序。雲端 vLLM／SGLang
   由 `cloud_llm.sh` 預設帶 `--concurrent-chapters --max-concurrent-requests N`；直接跑 driver
   時要同時加這兩個旗標，前者開跨章排程、後者控制全書總在途 request 上限。server 以最高候選

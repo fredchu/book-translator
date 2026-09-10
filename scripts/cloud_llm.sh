@@ -59,6 +59,18 @@ fi
 # Server 必須容納最高候選，否則用 16 開機送 24 筆只會量到 server queue，不是真 N=24。
 SERVER_CONCURRENCY=24
 CONCURRENT_CHAPTERS="${CLOUD_LLM_CONCURRENT_CHAPTERS:-1}"
+# 機器記憶：沿用 bookcast 的 vast_machine_memory（同一個 Vast 機器池，同一份好/壞紀錄）。
+# 這是跨 repo 執行期相依，不是必要條件——bookcast 模組不在、資料庫壞掉都必須軟性失敗，
+# 見下面 machine_memory_candidates / machine_memory_record，不可以讓租機器停下來。
+MACHINE_MEMORY="${CLOUD_LLM_MACHINE_MEMORY:-$HOME/.local/state/bookcast/vast-machine-memory.sqlite3}"
+MACHINE_GOOD_TTL_DAYS="${CLOUD_LLM_MACHINE_GOOD_TTL_DAYS:-30}"
+MACHINE_BAD_TTL_DAYS="${CLOUD_LLM_MACHINE_BAD_TTL_DAYS:-10}"
+# 三層挑機的額度必須各自獨立（09-09 教訓）：白名單被搶走不能吃掉一般搜尋的預算，
+# 一般搜尋跟緊急搜尋各自都有完整的一份，不因白名單先試過而打折。
+MAX_OFFER_TRIES="${CLOUD_LLM_MAX_OFFER_TRIES:-3}"
+WHITELIST_TRIES="${CLOUD_LLM_WHITELIST_TRIES:-2}"
+GEO_EXCLUDE="${CLOUD_LLM_GEO_EXCLUDE:-CN,VN}"
+IP_EXCLUDE="${CLOUD_LLM_IP_EXCLUDE-137.175.,207.246.98.,144.202.115.}"
 KEEP=false
 STOP_DIR=""
 TRANSLATE_ARGS=()
@@ -138,6 +150,66 @@ if [[ -n "${CLOUD_LLM_TEST_HOOK_FILE:-}" ]] && declare -F cloud_llm_test_after_l
     cloud_llm_test_after_libs
 fi
 
+# ---------- 機器記憶（沿用 bookcast 的 vast_machine_memory，跨 repo 執行期相依） ----------
+# bookcast 是另一個 repo：模組不在、import 失敗、資料庫壞掉，一律印警告、照常租機器，
+# 絕不能讓這個擋住主流程（這是最佳化不是必要條件，也是路徑搬家會靜默打斷消費者那類風險）。
+if [[ -n "${CLOUD_LLM_TEST_MACHINE_MEMORY_CMD:-}" ]]; then
+    read -r -a MACHINE_MEMORY_CMD <<<"$CLOUD_LLM_TEST_MACHINE_MEMORY_CMD"
+else
+    MACHINE_MEMORY_CMD=(python3 -m bookcast.vast_machine_memory)
+fi
+
+machine_memory_candidates() {
+    local out
+    if ! out="$("${MACHINE_MEMORY_CMD[@]}" candidates --db "$MACHINE_MEMORY" \
+            --good-ttl-days "$MACHINE_GOOD_TTL_DAYS" --bad-ttl-days "$MACHINE_BAD_TTL_DAYS" 2>&1)"; then
+        log "⚠️  機器記憶（bookcast）讀取失敗，退回一般搜尋：$(printf '%s' "$out" | tr '\n' ' ' | cut -c1-200)"
+        printf '{"preferred_ids":[],"bad_ids":[]}\n'
+        return 0
+    fi
+    printf '%s\n' "$out"
+}
+
+machine_memory_record() {
+    local event="$1" reason="${2:-}"
+    [[ "$PROVIDER" == vast && "${MACHINE_ID:-}" =~ ^[0-9]+$ && "$MACHINE_ID" -gt 0 ]] || return 0
+    local -a args=("${MACHINE_MEMORY_CMD[@]}" record
+                   --db "$MACHINE_MEMORY" --machine-id "$MACHINE_ID"
+                   --event "$event" --stage "book-translator" --reason "$reason"
+                   --gpu-type "$GPU" --image "$IMAGE")
+    [[ "$INSTANCE_ID" =~ ^[0-9]+$ ]] && args+=(--instance-id "$INSTANCE_ID")
+    [[ "${MACHINE_OFFER_ID:-}" =~ ^[0-9]+$ ]] && args+=(--offer-id "$MACHINE_OFFER_ID")
+    if ! "${args[@]}" >/dev/null 2>&1; then
+        log "⚠️  機器記憶（bookcast）寫入 ${event} 失敗｜machine_id=${MACHINE_ID}｜主流程照常"
+    fi
+    return 0
+}
+
+# 壞機器的 machine_id 在 pick_offers 階段拿不到，只有 offer_id；要在 create 之後、
+# terminate 之前用 instance record 補抓（照抄 bookcast capture_vast_machine_identity）。
+capture_machine_identity() {
+    [[ "$PROVIDER" == vast ]] || return 1
+    local record mid
+    record="$(vast_lib_instance_record "$INSTANCE_ID" 2>/dev/null)" || return 1
+    mid="$(jq -r '.machine_id // .machineId // .machine.id // empty' <<<"$record" 2>/dev/null || true)"
+    [[ "$mid" =~ ^[0-9]+$ && "$mid" -gt 0 ]] || return 1
+    MACHINE_ID="$mid"
+    return 0
+}
+
+# 只在腳本自己的 die() 觸發 EXIT 時記失敗；使用者按 Ctrl-C（INT/TERM/HUP）不算機器壞掉。
+record_machine_failure_if_eligible() {
+    local rc="$1"
+    [[ "$PROVIDER" == vast && "$rc" -ne 0 && -n "${MACHINE_FAILURE_CLASS:-}" && -n "${INSTANCE_ID:-}" ]] || return 0
+    if [[ -z "${MACHINE_ID:-}" ]]; then
+        capture_machine_identity || {
+            log "❗ 機器記憶：壞機器沒記到｜instance=${INSTANCE_ID}｜terminate 前仍拿不到 machine_id"
+            return 0
+        }
+    fi
+    machine_memory_record boot_failed "$MACHINE_FAILURE_CLASS"
+}
+
 # ---------- --stop：砍掉 --keep 留下的那台 ----------
 INSTANCE_ID=""
 if [[ -n "$STOP_DIR" ]]; then
@@ -173,7 +245,7 @@ terminate_instance() {
         "$([[ "$PROVIDER" == vast ]] && echo 'bash ~/dev/srt-skill/scripts/vast_reap.sh' || echo 'bash ~/dev/srt-skill/scripts/runpod_reap.sh')" >&2
     return 1
 }
-trap 'rc=$?; terminate_instance || true; exit "$rc"' EXIT
+trap 'rc=$?; record_machine_failure_if_eligible "$rc" || true; terminate_instance || true; exit "$rc"' EXIT
 trap 'terminate_instance || true; exit 130' INT
 trap 'terminate_instance || true; exit 143' TERM
 trap 'terminate_instance || true; exit 129' HUP
@@ -261,27 +333,78 @@ if [[ ${#_extra[@]} -gt 0 ]]; then
 fi
 
 # ---------- 開機 ----------
+# 逐張試一層 offers，額度是這一層自己的（獨立於其他層，見 MAX_OFFER_TRIES/WHITELIST_TRIES 注解）。
+try_offer_rows() {
+    local rows="$1" max_tries="$2" tier="$3" offer_id offer_desc out adopted tries=0
+    while IFS=$'\t' read -r offer_id offer_desc; do
+        [[ -n "$offer_id" ]] || continue
+        tries=$(( tries + 1 )); (( tries <= max_tries )) || break
+        ANY_CREATE_ATTEMPT=true
+        log "${tier}試報價 ${offer_id}（第 ${tries}/${max_tries} 張）：$offer_desc"
+        if out="$(vast_lib_create_instance_args "$offer_id" "$IMAGE" "$DISK_GB" "$LABEL" "$ENV_STR" "${SERVER_ARGS[@]}")"; then
+            INSTANCE_ID="$out"; MACHINE_OFFER_ID="$offer_id"; return 0
+        fi
+        # 解析失敗≠沒開機（09-04 首跑就這樣連漏三台）。換下一張前先依 label 回查，有就認領。
+        if adopted="$(vast_lib_find_live_instance_by_label "$LABEL")" && [[ -n "$adopted" ]]; then
+            log "${tier}報價 ${offer_id} 回應看不懂但清單裡已有本次 label 的機器 ${adopted}，認領它"
+            INSTANCE_ID="$adopted"; MACHINE_OFFER_ID="$offer_id"; return 0
+        fi
+        log "${tier}報價 ${offer_id} 開不起來（${out}），換下一張"
+    done <<<"$rows"
+    return 1
+}
+
 if [[ "$PROVIDER" == vast ]]; then
     ENV_STR="-p ${PORT}:${PORT}"
     [[ -n "${HF_TOKEN:-}" ]] && ENV_STR="$ENV_STR -e HF_TOKEN=${HF_TOKEN}"
-    ROWS="$(vast_lib_pick_offers "$GPU" "$DISK_GB" "$MAX_DPH")" \
-        || die "Vast.ai 沒有符合條件的報價（${GPU}、≤${MAX_DPH} USD/h）。放寬 --max-dph 或換 --gpu"
-    TRIES=0
-    while IFS=$'\t' read -r OFFER_ID OFFER_DESC; do
-        [[ -n "$OFFER_ID" ]] || continue
-        TRIES=$((TRIES + 1)); (( TRIES <= 3 )) || break
-        log "試報價 ${OFFER_ID}（$TRIES/3）：$OFFER_DESC"
-        if OUT="$(vast_lib_create_instance_args "$OFFER_ID" "$IMAGE" "$DISK_GB" "$LABEL" "$ENV_STR" "${SERVER_ARGS[@]}")"; then
-            INSTANCE_ID="$OUT"; break
+
+    # 三層 fail-open：白名單（近期成功機）→ 排除有效黑名單的一般市場 → 無記憶緊急市場。
+    # candidates 讀取失敗一律回空清單（見 machine_memory_candidates），三層照跑，
+    # 只是白名單/黑名單都是空的，效果等同機器記憶完全沒接上。
+    ANY_CREATE_ATTEMPT=false
+    MEMORY_JSON="$(machine_memory_candidates)"
+    PREFERRED_IDS="$(jq -r '.preferred_ids | map(tostring) | join(",")' <<<"$MEMORY_JSON" 2>/dev/null || true)"
+    BAD_IDS="$(jq -r '.bad_ids | map(tostring) | join(",")' <<<"$MEMORY_JSON" 2>/dev/null || true)"
+    PREFERRED_N="$(jq -r '.preferred_ids | length' <<<"$MEMORY_JSON" 2>/dev/null || echo 0)"
+    BAD_N="$(jq -r '.bad_ids | length' <<<"$MEMORY_JSON" 2>/dev/null || echo 0)"
+
+    # A：白名單，額度 WHITELIST_TRIES。空白名單直接跳過，絕不送出 machine_id in []。
+    if [[ -n "$PREFERRED_IDS" ]]; then
+        PREFERRED_ROWS="$(vast_lib_pick_offers "$GPU" "$DISK_GB" "$MAX_DPH" "$GEO_EXCLUDE" "machine_id in [${PREFERRED_IDS}]" "$IP_EXCLUDE" 2>/dev/null || true)"
+        log "機器記憶白名單 ${PREFERRED_N} 台 → 命中 $(printf '%s\n' "$PREFERRED_ROWS" | grep -c . || true) 張"
+        if [[ -n "$PREFERRED_ROWS" ]]; then
+            try_offer_rows "$PREFERRED_ROWS" "$WHITELIST_TRIES" "白名單" || true
         fi
-        # 解析失敗≠沒開機（09-04 首跑就這樣連漏三台）。換下一張前先依 label 回查，有就認領。
-        if ADOPTED="$(vast_lib_find_live_instance_by_label "$LABEL")" && [[ -n "$ADOPTED" ]]; then
-            log "報價 ${OFFER_ID} 回應看不懂但清單裡已有本次 label 的機器 ${ADOPTED}，認領它"
-            INSTANCE_ID="$ADOPTED"; break
+    else
+        log "沒有有效機器記憶白名單，直接走一般搜尋（排除黑名單 ${BAD_N} 台）"
+    fi
+
+    # B：一般市場，額度 MAX_OFFER_TRIES（跟 A 分開的完整一份）。空黑名單不組 notin []。
+    if [[ -z "$INSTANCE_ID" ]]; then
+        GENERAL_EXTRA=""
+        [[ -n "$BAD_IDS" ]] && GENERAL_EXTRA="machine_id notin [${BAD_IDS}]"
+        GENERAL_ROWS="$(vast_lib_pick_offers "$GPU" "$DISK_GB" "$MAX_DPH" "$GEO_EXCLUDE" "$GENERAL_EXTRA" "$IP_EXCLUDE" 2>/dev/null || true)"
+        log "一般搜尋（排除黑名單 ${BAD_N} 台）→ 命中 $(printf '%s\n' "$GENERAL_ROWS" | grep -c . || true) 張"
+        if [[ -n "$GENERAL_ROWS" ]]; then
+            try_offer_rows "$GENERAL_ROWS" "$MAX_OFFER_TRIES" "一般" || true
         fi
-        log "報價 ${OFFER_ID} 開不起來（${OUT}），換下一張"
-    done <<<"$ROWS"
-    [[ -n "$INSTANCE_ID" ]] || die "Vast.ai 開機失敗（試了 $TRIES 張報價）"
+    fi
+
+    # C：只有 B 曾受黑名單限制時才有意義；額度同樣是完整的 MAX_OFFER_TRIES，不共用 B 的。
+    if [[ -z "$INSTANCE_ID" && -n "$BAD_IDS" ]]; then
+        EMERGENCY_ROWS="$(vast_lib_pick_offers "$GPU" "$DISK_GB" "$MAX_DPH" "$GEO_EXCLUDE" "" "$IP_EXCLUDE" 2>/dev/null || true)"
+        log "無記憶緊急搜尋 → 命中 $(printf '%s\n' "$EMERGENCY_ROWS" | grep -c . || true) 張"
+        if [[ -n "$EMERGENCY_ROWS" ]]; then
+            try_offer_rows "$EMERGENCY_ROWS" "$MAX_OFFER_TRIES" "緊急" || true
+        fi
+    fi
+
+    if [[ -z "$INSTANCE_ID" ]]; then
+        if [[ "$ANY_CREATE_ATTEMPT" != true ]]; then
+            die "Vast.ai 沒有符合條件的報價（${GPU}、≤${MAX_DPH} USD/h）。放寬 --max-dph 或換 --gpu"
+        fi
+        die "Vast.ai 開機失敗（三層報價都試過）"
+    fi
 else
     BODY="$(mktemp "${TMPDIR:-/tmp}/cloud_llm.XXXXXX")"
     ARGS_STR="$(printf '%q ' "${SERVER_ARGS[@]}")"
@@ -301,6 +424,13 @@ else
 fi
 printf '%s\n' "$INSTANCE_ID" >"$RUN_DIR/instance.id"
 log "已開機 ${INSTANCE_ID}（開始計費）"
+if [[ "$PROVIDER" == vast ]]; then
+    if capture_machine_identity; then
+        machine_memory_record created ""
+    else
+        log "⚠️ 機器記憶：capture machine_id 失敗｜instance=${INSTANCE_ID}｜將於失敗結束前重試"
+    fi
+fi
 
 # ---------- 等伺服器就緒（拉映像 → 下載模型 → 載入） ----------
 HOST=""; HPORT=""
@@ -308,15 +438,22 @@ boot_deadline=$(( $(date +%s) + BOOT_WAIT_MIN * 60 ))
 last_msg=""; stall_since=$(date +%s)
 while :; do
     now=$(date +%s)
-    (( now < boot_deadline )) || die "等了 ${BOOT_WAIT_MIN} 分鐘伺服器還沒就緒，已砍機（映像＋模型載入太慢，換一張報價或調 CLOUD_LLM_BOOT_WAIT_MIN）"
+    if (( now >= boot_deadline )); then
+        [[ "$PROVIDER" == vast ]] && MACHINE_FAILURE_CLASS=boot_wait_timeout
+        die "等了 ${BOOT_WAIT_MIN} 分鐘伺服器還沒就緒，已砍機（映像＋模型載入太慢，換一張報價或調 CLOUD_LLM_BOOT_WAIT_MIN）"
+    fi
     if [[ "$PROVIDER" == vast ]]; then
         record="$(vast_lib_instance_record "$INSTANCE_ID" 2>/dev/null || echo "")"
         # 空紀錄用 null 當預設：${var:-{}} 會被 } 截斷成壞 JSON（09-04 實測 status 印成「?」加換行）
         status="$(jq -r '(.actual_status // "null") | ascii_downcase' <<<"${record:-null}" 2>/dev/null || echo "?")"
-        vast_lib_status_is_dead "$status" && die "機器狀態 ${status}，不會再變成可用，已砍機"
+        if vast_lib_status_is_dead "$status"; then
+            MACHINE_FAILURE_CLASS=dead_status
+            die "機器狀態 ${status}，不會再變成可用，已砍機"
+        fi
         msg="$(jq -r '.status_msg // ""' <<<"${record:-null}" 2>/dev/null || echo "")"
         if [[ "$msg" != "$last_msg" ]]; then last_msg="$msg"; stall_since=$now
         elif [[ "$status" == loading && $(( now - stall_since )) -ge $(( BOOT_STALL_MIN * 60 )) ]]; then
+            MACHINE_FAILURE_CLASS=image_loading_stall
             die "拉映像進度 ${BOOT_STALL_MIN} 分鐘沒變，這台主機拉不到映像，已砍機"
         fi
         if [[ -n "$record" ]] && EP="$(vast_lib_port_endpoint_from_record "$record" "$PORT")"; then
@@ -368,6 +505,9 @@ log "${ENGINE} 就緒：${ENDPOINT}（模型 ${MODEL}），等了 $(( ( $(date +
         die "${ENGINE} thinking preflight content 含 think 標籤，未開始翻譯"
     fi
 log "${ENGINE} thinking preflight 通過：content 無 think 標籤、reasoning_content 為空"
+# 這是「機器好不好」的訊號，不是「這次翻譯有沒有成功」——開機成功、vLLM/SGLang 就緒且
+# 通過 preflight 就記成功；不等整本書翻完（翻譯內容失敗跟機器硬體無關，不該污染機器記憶）。
+machine_memory_record synth_ok ""
 
 # ---------- 自適應併發探針 ----------
 # 每波使用不同、真實大小的大塊；小段會高估單筆速度而選到危險的 N。第一波 prefix
