@@ -255,7 +255,20 @@ capture_machine_identity() {
     # spec-07 item 5（可重現性）：整份原始 instance record 落盤，不只是抽出 machine_id。
     # 映像 digest（如果 Vast 這個帳號的回應真的有這個欄位）就在這份原文裡——不猜欄位名，
     # 整份存起來讓人事後去找，跟 retract 計數同一套「不釘沒看過的欄位」的作法。
-    [[ -n "$RUN_DIR" && -n "$record" ]] && printf '%s\n' "$record" >"$RUN_DIR/vast-instance-record.json"
+    # 落盤前塗掉憑證：這份紀錄是證據檔（機器身分、卡、價、地點），不需要金鑰。
+    # 2026-09-10 安全審查發現 image_args 裡的 --api-key 與 jupyter_token 隨著
+    # snapshot 被複製進 git 倉庫。機器砍掉後金鑰即失效，但證據檔本來就不該帶它。
+    if [[ -n "$RUN_DIR" && -n "$record" ]]; then
+        printf '%s\n' "$record" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+if "jupyter_token" in d: d["jupyter_token"] = "<redacted>"
+a = d.get("image_args") or []
+for i, v in enumerate(a):
+    if v == "--api-key" and i + 1 < len(a): a[i + 1] = "<redacted>"
+json.dump(d, sys.stdout, ensure_ascii=False)
+' >"$RUN_DIR/vast-instance-record.json"
+    fi
     mid="$(jq -r '.machine_id // .machineId // .machine.id // empty' <<<"$record" 2>/dev/null || true)"
     [[ "$mid" =~ ^[0-9]+$ && "$mid" -gt 0 ]] || return 1
     MACHINE_ID="$mid"
@@ -439,7 +452,8 @@ fi
 # spec-07 item 5（可重現性）＋第四趟教訓（實效值跟啟動參數是兩回事，server_info
 # 那個欄位不能信）：完整伺服器啟動參數落盤，也印到 log 讓人開機當下就看得到，
 # 不用等事後去翻檔案才知道這次到底帶了哪些旗標。
-printf '%s\n' "${SERVER_ARGS[@]}" >"$RUN_DIR/server-args.txt"
+# 同上：啟動參數是證據檔，--api-key 的值塗掉（旗標本身留著，才看得出有帶）。
+printf '%s\n' "${SERVER_ARGS[@]}" | awk '/^--api-key$/{print; getline; print "<redacted>"; next} {print}' >"$RUN_DIR/server-args.txt"
 printf '%s\n' "$IMAGE" >"$RUN_DIR/image.txt"
 log "${ENGINE} 實際採用的伺服器啟動參數：$(printf '%q ' "${SERVER_ARGS[@]}")"
 
