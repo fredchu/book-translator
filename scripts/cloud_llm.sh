@@ -126,7 +126,42 @@ MAX_MODEL_LEN="${CLOUD_LLM_MAX_MODEL_LEN:-16384}"
 GPU_MEM_UTIL="${CLOUD_LLM_GPU_MEM_UTIL:-0.92}"
 BOOT_WAIT_MIN="${CLOUD_LLM_BOOT_WAIT_MIN:-25}"
 BOOT_STALL_MIN="${CLOUD_LLM_BOOT_STALL_MIN:-6}"
-MAX_HOURS="${CLOUD_LLM_MAX_HOURS:-6}"
+# --book 吃多本（nargs="+" 一次給好幾個、或重複 --book 旗標，兩種 BookPathAction 都會疊加）；
+# 看門狗預算原本是照一本估的，書一多、翻譯總時長跟著變長，固定 6 小時會在翻到一半被砍。
+# 只數緊跟在 --book／--book=X 後面的值，遇到下一個 --旗標就停止（避免把其他選項的參數誤算進去）。
+BOOK_COUNT=0
+_book_run=false
+for _arg in ${TRANSLATE_ARGS[@]+"${TRANSLATE_ARGS[@]}"}; do
+    case "$_arg" in
+        --book=*) BOOK_COUNT=$(( BOOK_COUNT + 1 )); _book_run=false ;;
+        --book)   _book_run=true ;;
+        --*)      _book_run=false ;;
+        *)        [[ "$_book_run" == true ]] && BOOK_COUNT=$(( BOOK_COUNT + 1 )) ;;
+    esac
+done
+# 這是本機端的 sleep+kill 看門狗：本機這個 shell 一死（機器睡眠、SSH 斷線、
+# 終端機關掉），遠端那台計費機器就沒有任何東西在管它了。額度加再多小時都不會讓
+# 遠端自己砍自己——那要另外做一個遠端自砍的機制，跟這裡的額度大小是兩回事。
+MAX_HOURS_BASE_MIN=360        # 6 小時，對應現有單本行為，不可再改小
+MAX_HOURS_STEP_MIN=30         # 每多一本書，多留半小時
+MAX_HOURS_AUTO_CAP_MIN=720    # 自動放大最多到 12 小時；超過這裡要求使用者明傳，不悄悄封頂
+                              # （書一多，光靠額度往上加，卡在遠端燒錢燒到用戶都不知道)
+if [[ -n "${CLOUD_LLM_MAX_HOURS+x}" ]]; then
+    MAX_HOURS="$CLOUD_LLM_MAX_HOURS"
+    MAX_HOURS_EXPLICIT=true
+    MAX_HOURS_SECONDS="$(awk -v h="$MAX_HOURS" 'BEGIN{printf "%d", h*3600}')"
+else
+    MAX_HOURS_EXPLICIT=false
+    _extra_min=0
+    [[ "$BOOK_COUNT" -gt 1 ]] && _extra_min=$(( (BOOK_COUNT - 1) * MAX_HOURS_STEP_MIN ))
+    _total_min=$(( MAX_HOURS_BASE_MIN + _extra_min ))
+    if [[ "$_total_min" -gt "$MAX_HOURS_AUTO_CAP_MIN" ]]; then
+        die "本次 ${BOOK_COUNT} 本書，自動算出的看門狗額度（$(awk -v m="$_total_min" 'BEGIN{printf "%.1f", m/60}') 小時）超過自動放大上限 12 小時，請明傳 CLOUD_LLM_MAX_HOURS 指定要用幾小時（尚未租機）"
+    fi
+    MAX_HOURS_SECONDS=$(( _total_min * 60 ))
+    MAX_HOURS="$(awk -v m="$_total_min" 'BEGIN{v=m/60; printf (v==int(v) ? "%d" : "%.1f"), v}')"
+fi
+log "看門狗上限 ${MAX_HOURS} 小時（${BOOK_COUNT} 本書，$([[ "$MAX_HOURS_EXPLICIT" == true ]] && echo "CLOUD_LLM_MAX_HOURS 明傳" || echo "依本數自動放大")）"
 POLL_SECONDS="${CLOUD_LLM_POLL_SECONDS:-20}"
 # 測試鉤子：source 一個檔，讓測試替換 CLI／transport，並用 CLOUD_LLM_TEST_TRANSLATE_CMD 取代翻譯器
 if [[ -n "${CLOUD_LLM_TEST_HOOK_FILE:-}" ]]; then
@@ -568,7 +603,7 @@ OMLX_API_KEY="$API_KEY" "${TRANSLATE_CMD[@]}" --engine omlx --omlx-host "$ENDPOI
 TPID=$!
 # 看門狗的輸出一定要導掉：它那個 sleep 若成了孤兒還握著 stdout/stderr，呼叫端（含測試的 subprocess）
 # 會等不到 EOF 一直掛著。收工時連 sleep 一起殺（pkill -P）。
-( sleep $(( MAX_HOURS * 3600 )); kill -TERM "$TPID" 2>/dev/null ) >/dev/null 2>&1 </dev/null &
+( sleep "$MAX_HOURS_SECONDS"; kill -TERM "$TPID" 2>/dev/null ) >/dev/null 2>&1 </dev/null &
 WATCHDOG=$!
 wait "$TPID"; TRC=$?
 pkill -P "$WATCHDOG" 2>/dev/null || true; kill "$WATCHDOG" 2>/dev/null || true; wait "$WATCHDOG" 2>/dev/null || true

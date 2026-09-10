@@ -183,7 +183,12 @@ scripts/cloud_llm.sh --stop runs/cloud-llm-<id>                     # 砍掉 --k
 - `--` 後面就是 `translate_book_ollama.py` 的參數（多本一次給多個 `--book` 也行）。
 - 憑證：`VAST_API_KEY`／`~/.config/vastai/vast_api_key`；`RUNPOD_API_KEY`／`~/.config/runpod/api_key`。
 - 錢的守衛：`CLOUD_LLM_BOOT_WAIT_MIN`（25，拉映像＋下載模型）、`CLOUD_LLM_BOOT_STALL_MIN`（6）、
-  `CLOUD_LLM_MAX_HOURS`（6，看門狗送 TERM 讓 trap 砍機）。收屍：`bash ~/dev/srt-skill/scripts/vast_reap.sh`／`runpod_reap.sh`。
+  `CLOUD_LLM_MAX_HOURS`（**2026-09-10 起隨 --book 本數放大**：6 小時＋每多一本＋0.5 小時，
+  一本仍是 6、兩本 6.5、13 本封頂 12 小時；**超過 12 小時自動放大上限直接 die，不悄悄放大**，
+  要明傳 `CLOUD_LLM_MAX_HOURS` 才會租機；明傳一律優先，本數算不出來也維持 6。
+  看門狗超時送 TERM 讓 trap 砍機——**這是本機端的 sleep+kill，不是遠端自砍**：
+  本機這個 shell 死了（睡眠、斷線、關終端機），遠端機器就沒人管，額度加再多小時
+  都不會讓遠端自己停下來）。收屍：`bash ~/dev/srt-skill/scripts/vast_reap.sh`／`runpod_reap.sh`。
 - 推論 server 可用 `CLOUD_LLM_ENGINE=vllm|sglang` 選擇；兩邊各自組原生參數，不用互塞不相容旗標。
   SGLang 強制 `--reasoning-parser qwen3`。兩個引擎在正式翻譯前都會送 thinking preflight，確認
   `enable_thinking:false` 生效、content 無 think tag、`reasoning_content` 為空，否則立即砍機。

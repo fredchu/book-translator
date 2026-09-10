@@ -16,7 +16,6 @@ Used by the per-chapter CLI and the local book driver when --engine=omlx.
 from __future__ import annotations
 
 import json
-import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -72,10 +71,28 @@ class OmlxProvider(TranslationProvider):
         # local omlx stays at the class default (1 -> supports_concurrency=False).
         self.max_concurrent_requests = max(1, max_concurrent_requests)
         self.supports_concurrency = self.max_concurrent_requests > 1
-        # requests.Session is not guaranteed thread-safe. Keep one Session per
-        # provider *and* worker thread so sequential calls reuse TCP/TLS while
-        # concurrent chapter/chunk workers never mutate the same Session.
-        self._thread_local = threading.local()
+        # One Session for the whole provider, shared across worker threads.
+        # requests.Session's own docs warn it isn't guaranteed thread-safe for
+        # concurrent *mutation* of session-level state (cookies, session.headers),
+        # but this class never does that: _req_kwargs() passes headers as a
+        # per-call argument to .post()/.get(), never onto self._session.headers,
+        # and urllib3's connection pool (what actually hands out sockets) has its
+        # own internal lock. A per-thread Session (the previous design) defeated
+        # the whole point of pooling: the outer per-chapter thread pool and inner
+        # per-chunk thread pool are both re-created per chapter, so each thread
+        # was short-lived and its Session — and the TCP connections in it — died
+        # with it. Measured on a simulated real run (6 chapters, 66 requests,
+        # N=4): 24 TCP connections for 66 requests with per-thread Sessions,
+        # vs. 4 connections with one shared Session — actual reuse only shows up
+        # once the Session outlives any single thread.
+        self._session = requests.Session()
+        adapter = HTTPAdapter(
+            pool_connections=self.max_concurrent_requests,
+            pool_maxsize=self.max_concurrent_requests,
+            pool_block=True,
+        )
+        self._session.mount("http://", adapter)
+        self._session.mount("https://", adapter)
 
     def translate(
         self,
@@ -111,7 +128,7 @@ class OmlxProvider(TranslationProvider):
         for attempt in range(self.max_retries):
             attempt_start = time.monotonic()
             try:
-                response = self._session_for_thread().post(
+                response = self._session.post(
                     url, json=payload, timeout=self.timeout, **self._req_kwargs()
                 )
                 response.raise_for_status()
@@ -186,24 +203,6 @@ class OmlxProvider(TranslationProvider):
             f"OmlxProvider({self.model}) failed after {self.max_retries} attempts: {last_err!r}"
         )
 
-    def _session_for_thread(self) -> requests.Session:
-        session = getattr(self._thread_local, "session", None)
-        if session is None:
-            session = requests.Session()
-            # Do not let urllib3's default pool size (10) become a hidden queue
-            # when cloud_llm selects N=16/24. Each thread owns its Session, but
-            # sizing both adapters to the configured budget keeps the invariant
-            # explicit and safe if a Session gains multiple in-flight calls.
-            adapter = HTTPAdapter(
-                pool_connections=self.max_concurrent_requests,
-                pool_maxsize=self.max_concurrent_requests,
-                pool_block=True,
-            )
-            session.mount("http://", adapter)
-            session.mount("https://", adapter)
-            self._thread_local.session = session
-        return session
-
     def _req_kwargs(self) -> dict[str, Any]:
         # 沒金鑰就完全不加 headers 參數，讓本機 omlx 的呼叫形狀跟以前一模一樣
         return {"headers": {"Authorization": f"Bearer {self.api_key}"}} if self.api_key else {}
@@ -211,7 +210,7 @@ class OmlxProvider(TranslationProvider):
     def ping(self) -> bool:
         """Quick health-check against the omlx server."""
         try:
-            r = self._session_for_thread().get(
+            r = self._session.get(
                 f"{self.host}/v1/models", timeout=5, **self._req_kwargs()
             )
             r.raise_for_status()

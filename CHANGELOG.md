@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **A shared `requests.Session` per provider — the per-thread design from the previous entry
+  never actually reused a connection** (2026-09-10). The real driver re-creates its thread pool
+  once per chapter (an outer per-chapter pool, an inner per-chunk pool inside it), so every
+  chapter's threads were new and every "reused" per-thread Session died with them. Simulating
+  the real shape (an outer/inner thread-pool pair, re-created per chapter) against a real local
+  HTTP/1.1 server and counting TCP `accept()`s, not requests: 24 connections for 66 requests at
+  N=4, 92 for 132 at N=8 — barely better than opening a new connection every time. Replacing the
+  per-thread Session with one Session for the whole provider brings both down to exactly N.
+  Re-examined the "not guaranteed thread-safe" warning that motivated the per-thread design in
+  the first place: `requests.Session` isn't safe for concurrent *mutation* of session-level state
+  (cookies, `session.headers`), but this provider never touches either — `_req_kwargs()` passes
+  headers as a per-call argument to `.post()`/`.get()`, never onto `self._session.headers` — and
+  the connection pool that actually hands out sockets is `urllib3`'s, which has its own internal
+  lock. A shared Session is safe here specifically because of that call shape, not in general.
+
+- **`cloud_llm.sh`'s translation watchdog no longer assumes one book** (2026-09-10). `--book`
+  accepts more than one path (`nargs="+"`, or the flag repeated), but `CLOUD_LLM_MAX_HOURS`
+  was a flat 6-hour budget sized for a single book; passing several meant the watchdog could
+  send `TERM` (and the exit trap would terminate the rented machine) partway through a run that
+  legitimately needed longer. The default now scales as `6h + 0.5h × (book_count - 1)`, capped
+  at 12h — one book is still exactly 6 (unchanged for every existing invocation), two books is
+  6.5, thirteen books hits the 12h cap exactly. **Past the cap the script refuses to guess and
+  dies before renting anything**, asking for an explicit `CLOUD_LLM_MAX_HOURS` instead of
+  silently scaling further — a large batch is exactly the case where a wrong guess burns the
+  most money unattended. Every path immediately following `--book` or `--book=` counts, stopping
+  at the next flag so an unrelated argument (e.g. the directory after `--out`) is never
+  miscounted as a book. An explicit `CLOUD_LLM_MAX_HOURS` always wins over the formula, even
+  when it's smaller than what the formula would pick, and may itself be fractional. The
+  effective value and book count are logged before anything is rented, same reasoning as the
+  earlier silent `max_tokens` mismatch: a difference nobody can see is the hardest one to debug.
+  **This watchdog is a local `sleep` + `kill`, not a remote safeguard**: it depends on this
+  machine's own shell staying alive: the rented instance itself doesn't self-terminate, and no
+  size of this budget changes that — see the permanent comment beside the constants.
+
 ### Documented
 - **fp8 is a different register, not higher quality** (2026-09-10, read by a human).
   Same chapter, same card model, same prompt and post-processing, quantization the only

@@ -181,6 +181,116 @@ def test_no_key_stops_before_any_offer(tmp_path: Path) -> None:
     assert _calls(env) == []
 
 
+def test_watchdog_hours_default_stays_six_for_single_book(tmp_path: Path) -> None:
+    """現有行為不能變：一本書時看門狗仍是 6 小時。"""
+    srv, port = _serve_models()
+    try:
+        env = _setup(tmp_path, port=port)
+        r = _run(env, "--", "--book", "x.epub")
+        assert r.returncode == 0, r.stderr[-1500:]
+        assert "看門狗上限 6 小時（1 本書，依本數自動放大）" in r.stderr
+    finally:
+        srv.shutdown()
+
+
+def test_watchdog_hours_scales_with_nargs_plus_book_count(tmp_path: Path) -> None:
+    """--book 一次給多本（nargs="+"）：6 + 0.5×(本數-1)，3 本＝7 小時。"""
+    srv, port = _serve_models()
+    try:
+        env = _setup(tmp_path, port=port)
+        r = _run(env, "--", "--book", "a.epub", "b.epub", "c.epub")
+        assert r.returncode == 0, r.stderr[-1500:]
+        assert "看門狗上限 7 小時（3 本書，依本數自動放大）" in r.stderr
+    finally:
+        srv.shutdown()
+
+
+def test_watchdog_hours_scales_with_repeated_book_flag(tmp_path: Path) -> None:
+    """--book 重複給旗標（BookPathAction 疊加）一樣要算進去：2 本＝6.5 小時
+    （半小時精度要顯示出來，不能被整數格式吃掉）。"""
+    srv, port = _serve_models()
+    try:
+        env = _setup(tmp_path, port=port)
+        r = _run(env, "--", "--book", "a.epub", "--book", "b.epub")
+        assert r.returncode == 0, r.stderr[-1500:]
+        assert "看門狗上限 6.5 小時（2 本書，依本數自動放大）" in r.stderr
+    finally:
+        srv.shutdown()
+
+
+def test_watchdog_hours_counts_equals_form_mixed_with_nargs(tmp_path: Path) -> None:
+    """--book=X 等號寫法混著 nargs="+" 一起也要算對：1（等號）+2（空格）＝3 本＝7 小時。"""
+    srv, port = _serve_models()
+    try:
+        env = _setup(tmp_path, port=port)
+        r = _run(env, "--", "--book=a.epub", "--book", "b.epub", "c.epub", "--out", "o")
+        assert r.returncode == 0, r.stderr[-1500:]
+        assert "看門狗上限 7 小時（3 本書，依本數自動放大）" in r.stderr
+    finally:
+        srv.shutdown()
+
+
+def test_watchdog_hours_caps_at_twelve_and_dies_above_without_explicit(tmp_path: Path) -> None:
+    """驗收：自動放大上限 12 小時。13 本剛好等於上限（放行），14 本超過就要求
+    使用者明傳，不悄悄封頂在 12——書一多光靠額度往上加會在遠端燒到用戶不知道。"""
+    srv, port = _serve_models()
+    try:
+        env = _setup(tmp_path, port=port)
+        books_13 = [f"b{i}.epub" for i in range(13)]
+        r = _run(env, "--", "--book", *books_13)
+        assert r.returncode == 0, r.stderr[-1500:]
+        assert "看門狗上限 12 小時（13 本書，依本數自動放大）" in r.stderr
+    finally:
+        srv.shutdown()
+
+    over_dir = tmp_path / "over"; over_dir.mkdir()
+    env2 = _setup(over_dir, port=1)
+    books_14 = [f"b{i}.epub" for i in range(14)]
+    r2 = _run(env2, "--", "--book", *books_14)
+    assert r2.returncode != 0
+    assert "超過自動放大上限 12 小時" in r2.stderr
+    assert "請明傳 CLOUD_LLM_MAX_HOURS" in r2.stderr
+    assert _calls(env2) == []  # 死在租機器之前，一張報價都沒試
+
+
+def test_explicit_max_hours_accepts_fractional_value(tmp_path: Path) -> None:
+    """使用者明傳也可以是小數（跟自動算式的半小時精度一致），驗證 awk 換算不會截斷。"""
+    srv, port = _serve_models()
+    try:
+        env = _setup(tmp_path, port=port)
+        env["CLOUD_LLM_MAX_HOURS"] = "6.5"
+        r = _run(env, "--", "--book", "x.epub")
+        assert r.returncode == 0, r.stderr[-1500:]
+        assert "看門狗上限 6.5 小時（1 本書，CLOUD_LLM_MAX_HOURS 明傳）" in r.stderr
+    finally:
+        srv.shutdown()
+
+
+def test_watchdog_hours_stops_counting_at_next_flag(tmp_path: Path) -> None:
+    """--book a.epub --out dir：dir 不是書，不能被誤算成第二本。"""
+    srv, port = _serve_models()
+    try:
+        env = _setup(tmp_path, port=port)
+        r = _run(env, "--", "--book", "a.epub", "--out", "some-dir")
+        assert r.returncode == 0, r.stderr[-1500:]
+        assert "看門狗上限 6 小時（1 本書，依本數自動放大）" in r.stderr
+    finally:
+        srv.shutdown()
+
+
+def test_explicit_max_hours_always_respected_even_with_many_books(tmp_path: Path) -> None:
+    """使用者明傳 CLOUD_LLM_MAX_HOURS 一律尊重，不被本數放大蓋掉——即使明傳值比算式小。"""
+    srv, port = _serve_models()
+    try:
+        env = _setup(tmp_path, port=port)
+        env["CLOUD_LLM_MAX_HOURS"] = "2"
+        r = _run(env, "--", "--book", "a.epub", "b.epub", "c.epub", "d.epub", "e.epub")
+        assert r.returncode == 0, r.stderr[-1500:]
+        assert "看門狗上限 2 小時（5 本書，CLOUD_LLM_MAX_HOURS 明傳）" in r.stderr
+    finally:
+        srv.shutdown()
+
+
 def test_vast_happy_path_waits_for_models_then_translates_then_destroys(tmp_path: Path) -> None:
     srv, port = _serve_models()
     try:

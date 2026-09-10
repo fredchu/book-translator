@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import concurrent.futures as cf
+import http.server
 import json
 import sys
 import threading
@@ -65,10 +66,10 @@ def test_omlx_max_concurrent_requests_enables_supports_concurrency() -> None:
     assert provider.supports_concurrency is True
 
 
-def test_omlx_same_thread_reuses_session_and_pool_matches_concurrency() -> None:
+def test_omlx_session_is_shared_and_pool_matches_concurrency() -> None:
     provider = OmlxProvider("model-a", max_concurrent_requests=24)
-    first = provider._session_for_thread()
-    second = provider._session_for_thread()
+    first = provider._session
+    second = provider._session
 
     assert first is second
     for scheme in ("http://", "https://"):
@@ -78,20 +79,102 @@ def test_omlx_same_thread_reuses_session_and_pool_matches_concurrency() -> None:
         assert adapter._pool_block is True
 
 
-def test_omlx_worker_threads_do_not_share_sessions() -> None:
+def test_omlx_worker_threads_share_the_same_session() -> None:
+    """The whole point of a shared Session is that it does NOT die with a
+    thread. The real driver's thread pools are short-lived (a new pool per
+    chapter), so a per-thread Session (the previous design) never actually
+    got reused — see test_shared_session_reuses_tcp_connections_across_
+    short_lived_thread_pools below for the connection-level proof."""
     provider = OmlxProvider("model-a", max_concurrent_requests=4)
     barrier = threading.Barrier(4)
 
     def get_twice() -> tuple[requests.Session, requests.Session]:
-        first = provider._session_for_thread()
+        first = provider._session
         barrier.wait(timeout=5)
-        return first, provider._session_for_thread()
+        return first, provider._session
 
     with cf.ThreadPoolExecutor(max_workers=4) as pool:
         pairs = list(pool.map(lambda _: get_twice(), range(4)))
 
     assert all(first is second for first, second in pairs)
-    assert len({id(first) for first, _ in pairs}) == 4
+    assert len({id(first) for first, _ in pairs}) == 1
+
+
+class _AcceptCountingServer(http.server.ThreadingHTTPServer):
+    """Counts TCP accept()s, not requests — that's what proves keep-alive
+    connection reuse rather than a fresh handshake per call."""
+
+    daemon_threads = True
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.accept_count = 0
+        self._lock = threading.Lock()
+
+    def get_request(self):  # noqa: D102 — socketserver override
+        conn, addr = super().get_request()
+        with self._lock:
+            self.accept_count += 1
+        return conn, addr
+
+
+class _KeepAliveHandler(http.server.BaseHTTPRequestHandler):
+    # HTTP/1.0 (the default) closes the connection after every response —
+    # keep-alive, and therefore connection reuse, only shows up on 1.1.
+    protocol_version = "HTTP/1.1"
+
+    def do_POST(self) -> None:  # noqa: N802
+        length = int(self.headers.get("Content-Length", "0"))
+        self.rfile.read(length)
+        body = json.dumps(
+            {"choices": [{"message": {"content": "譯文"}, "finish_reason": "stop"}]}
+        ).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format, *args) -> None:  # noqa: A002 — quiet
+        pass
+
+
+@pytest.mark.parametrize(("n", "chapters", "chunks_per_chapter"), [(4, 6, 11), (8, 12, 11)])
+def test_shared_session_reuses_tcp_connections_across_short_lived_thread_pools(
+    n: int, chapters: int, chunks_per_chapter: int
+) -> None:
+    """Reproduces the real driver's shape: an OUTER thread pool re-created
+    per chapter (short-lived threads) and an INNER per-chunk pool inside it.
+    With a Session tied to the thread (the previous design), each chapter's
+    fresh threads meant a fresh Session and a fresh TCP handshake — measured
+    24 connections for 66 requests at N=4, 92 for 132 at N=8, barely better
+    than no pooling at all. A Session shared for the provider's whole
+    lifetime must keep the connection count at or under N regardless of how
+    many chapters' worth of short-lived threads call through it.
+    """
+    server = _AcceptCountingServer(("127.0.0.1", 0), _KeepAliveHandler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        port = server.server_address[1]
+        provider = OmlxProvider("model-a", host=f"http://127.0.0.1:{port}", max_concurrent_requests=n)
+        for chapter in range(chapters):
+            # A new ThreadPoolExecutor per chapter == brand-new, short-lived
+            # threads every time, exactly like the real per-chapter/per-chunk
+            # pools in translate_book_ollama.py.
+            with cf.ThreadPoolExecutor(max_workers=n) as pool:
+                list(
+                    pool.map(
+                        lambda i: provider.translate(f"p{i}", request_id=f"ch{chapter}_ck{i}"),
+                        range(chunks_per_chapter),
+                    )
+                )
+        total_requests = chapters * chunks_per_chapter
+        assert server.accept_count <= n, (
+            f"{server.accept_count} TCP connections for {total_requests} requests "
+            f"at N={n} — connections were not being reused"
+        )
+    finally:
+        server.shutdown()
 
 
 def test_omlx_consecutive_requests_reuse_same_session(monkeypatch: pytest.MonkeyPatch) -> None:
