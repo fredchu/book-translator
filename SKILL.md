@@ -1,6 +1,6 @@
 ---
 name: book-translator
-version: 1.1.0
+version: 1.2.0
 description: |-
   Translate full-length books (EPUB) to Traditional Chinese (Taiwan) with literary tone fidelity and cross-chapter coherence, preserving EPUB structure. Use when the user says "翻書", "翻電子書", "翻譯整本書", "book translate", "bilingual epub", or gives an .epub expecting literary translation. Main session extracts an OPF spine manifest plus a per-book glossary and style anchor, then dispatches parallel subagents (each gets glossary, style anchor, and last-paragraph carryover for coherence); the first item is previewed for tone confirmation before fanning out the rest. Produces a bilingual .epub (source + translation interleaved) with manifest/glossary/state for resume. Differs from translate-book (generic PDF/DOCX/EPUB, single-language, no coherence): book-translator targets literary works, uses Opus for the style-anchor pass and Sonnet for the parallel fan-out, and gates quality before shipping. Not for short articles (use polish) or SRT subtitles (use srt).
 allowed-tools:
@@ -108,7 +108,12 @@ The skill supports two providers:
   > 但讀者的判斷是**各有優缺點、適合不同內容**：
   > **int4 用詞白話口語、句子較短；fp8 用詞精練書面，有「嚴謹、正式」的感覺。**
   > 所以這是**按書選語域**，不是「重要的書就升級」。
-  > **成本：fp8 每本貴約 31%**（同價格、同開機時間歸一化，最新一次更正，見下）。
+  > **成本：fp8 每本貴約 18%**（同價格、同開機時間歸一化。**第四次更正，2026-09-10 真機**）。
+  >
+  > 前三次都用探針選到的 N 算，而**探針本身在低估**：它選 16，三級持續負載實測
+  > 安全上限是 **32**（16/24/32 → 270.5/342.4/414.9 tok/s，各 160/240/320 筆零錯誤）。
+  > 用 N=32 重算：SGLang fp8 每本 0.153 對 vLLM int4 N=32 的 0.130 是 **1.18 倍**。
+  > 「貴 83%（1.8 倍）」那版是用被錯誤閘門壓到併發 8 算的，**整條錯**。
   >
   > **這個數字改過三次，第三次改對了才是現在這句**（spec-05，2026-09-10）：
   > 第一版「貴 31%」是拿併發 16 算的；第二版改成「貴 83%（1.8 倍）」，理由是探針的
@@ -152,13 +157,28 @@ The skill supports two providers:
   matched reality」；tok/s 跟每本執行費那幾欄是真量測，還能參考，只是不能再拿「餘裕」
   那欄的百分比做任何判斷。
 
-  **現在的判準是兩個相對指標，探針從 8 開始往上量，不設絕對門檻**：
-  - **落後者**：這一波最長延遲不能超過這一波自己中位數的 3 倍（抓 cache 被排擠、
-    某一筆卡住的情況，不是看平均值）
-  - **飽和**：這一波的吞吐要比上一級（更小的 N）高至少 10%，沒有就代表加大 N 沒好處
-  - 兩個都過就繼續往上試下一級候選 (8→12→16→24→32)，任一個沒過就停在**上一級**
-    （落後者沒過是這一級本身不安全；飽和沒過是這一級沒有比上一級更好，兩種都退回
-    已經驗證安全的那一級）
+  **v1.2.0 起的判準（2026-09-10 真機重做，舊的「飽和要贏上一級 10%」已廢）**：
+
+  舊判準用「該波總 token ÷ 該波牆鐘」算增幅，而**牆鐘由該波最長那一筆決定**。
+  併發越高越容易抽到長塊 → 越容易被誤判成飽和。真機實測：N=24 實際 +26.6%，
+  舊量法只算出 **+3.4%** → 早停選 16，**藏掉 53% 效能**（32 比 16 快 53%）。
+
+  - **量法改成閉環中段窗口**：每級 N 槽持續補送 T 秒（T=max(60, 3×中位延遲)），
+    一筆完成立刻補一筆讓在途數整段維持 N，只算中段窗口內完成的 token ÷ 窗口長。
+    進場坡在窗口前、沒有尾巴、窗口內在途數恆為 N。
+  - **落後者**：不變，最長延遲不超過該波中位的 3 倍。
+  - **門檻改成不對稱**：早停一次藏掉 53%，多爬一級只多約一分鐘——代價不對稱，
+    門檻就不該對稱。安全閘過就繼續爬；連兩級都掉超過 5% 才停；
+    **選整段吞吐最好的那級，不一定是最高 N**（「更高實際更差」的保護還在）。
+  - **邊際效率門檻**：新最好要 > 最好 × (1 + 0.2 × (N/N_best − 1))。
+    真機六級效率 1.10/0.37/0.70/0.37/**0.07**——真級最低 0.37、排隊高原 0.07，
+    中間空一大段，門檻 0.20 是從資料推的。**沒有這道會選到排隊高原**：
+    真機第一次跑新規則就選了 48（伺服器上限 32、多的在排隊），
+    換到 3.5% 吞吐卻付出中位延遲 +40%。
+  - **KV 夾（算術事實，零成本）**：候選 N ≤ `max_total_num_tokens` ÷ 3700。
+    真機 129,742 → **35**，所以 48 根本不該進候選。前者是統計判斷，後者是算術。
+  - 🔴 **探針的值只用來排序與選 N。成本與配方數字一律取自 10×N 持續負載**——
+    探針對持續負載系統性高估約一成（塊對塊 +9%；含接縫的全書負載約 +15%）。
   - **逾時不再是探針的輸入，是探針的輸出**：`derive_timeout()` 用「選中那一級」自己量到的
     數字算——`max(3 × 那一級最長延遲, max_tokens ÷ 那一級平均單筆速度 ÷ 0.8)`——
     `cloud_llm.sh` 把這個算出來的秒數直接餵給翻譯器的 `--timeout`，兩邊天生同一個來源，
