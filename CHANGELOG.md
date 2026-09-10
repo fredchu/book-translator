@@ -7,6 +7,141 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-10
+
+### Added
+- **Whole-book chapter concurrency, opt-in, with the safe request width measured on the
+  rented machine instead of guessed** (2026-09-10). The last sequential dependency between
+  chapters was the cross-chapter carryover — each chapter's first chunk carried the previous
+  chapter's final 200 translated characters. New `--concurrent-chapters` drops it and lets
+  chapters overlap; `cloud_llm.sh` passes it by default (local single-GPU gains nothing from
+  concurrency, so the flag stays off there and nothing changes for the 27 books already
+  translated). **This closes the "Not done this round" item below.**
+
+  **The two gates are deliberately independent.** `--max-concurrent-requests` controls
+  chunk fan-out *within* a chapter; `--concurrent-chapters` controls whether the *cross*-chapter
+  dependency exists. Reusing one gate for both — the natural implementation — would have
+  overturned the review-15 regression test added the day before; kept separate, that test is
+  unchanged and still green.
+
+  **Why dropping the carryover is safe, and what it was actually doing.** Same chapter, same
+  model, same term table, same post-processing: clearing the cross-chapter carryover leaves
+  88.3% character-level similarity to the original translation, while *rerunning with nothing
+  changed* leaves 88.2%. Term consistency likewise: 7 of 328 glossary terms rendered
+  differently after clearing, versus 8 after a plain rerun. Three independent re-measurements
+  by a peer session (per-paragraph 3-gram cosine with a 20,000-sample bootstrap interval that
+  straddles zero, bidirectional n-gram drift, punctuation-density distance) found no effect
+  either. A natural experiment on a second book explains why: chapter 29 predominantly used
+  one transliteration of a character's name (45 vs 8), but its final 200 characters happened
+  to use the minority form — and chapter 30 followed the *minority* form throughout, the
+  dominant one dropping to zero. **The carryover does not pin names; it propagates whatever
+  form is in the last 200 characters, right or wrong.**
+
+  **Concurrency requires a term table — this is the important operational finding.** Eight
+  runs on one chapter of a memoir, counting how many transliterations of one name appear:
+  with a term table, sequential / carryover-cleared / concurrent all produced exactly one form
+  (61/61/60). Without one, four of five runs produced three forms, and the concurrent run was
+  the worst, inventing a fifth. Concurrency makes an un-tabled book *worse*, because the
+  within-chapter carry becomes source-based, so each chunk decides names independently. The
+  driver now warns on stderr (warn only, never blocks) when concurrency is on and the book has
+  no `spec_terms.json`.
+
+- **`CLOUD_LLM_ENGINE=vllm|sglang`** with each engine composing its own server arguments.
+  The previous claim that swapping engines only needed two environment variables did not hold:
+  `VLLM_ARGS` hard-coded vLLM-specific flags (positional model, `--max-model-len`,
+  `--gpu-memory-utilization`, `--max-num-seqs`) and the extra-args variable only appends.
+  Tests assert negatively that vLLM-only flags never appear in the SGLang invocation.
+
+- **Thinking-leak preflight on both engines** — the first completion request after boot
+  asserts non-empty content, no `<think>` tag (newlines stripped first, so `<think\n>` is
+  caught) and empty `reasoning_content`; any failure destroys the instance before translation
+  starts. The risk is model-level, not engine-level: this is a fine-tune whose chat template
+  may silently ignore `enable_thinking=false`, and vLLM is the default engine. SGLang
+  additionally forces `--reasoning-parser qwen3`, and an attempt to override it aborts
+  *before* renting.
+
+### Changed
+- **`max_tokens` 8192 → 2048 on the omlx path** (2026-09-10). The 8192 ceiling was
+  unreachable: measured single-request throughput is 26.6–46.4 tok/s, so the 120 s request
+  timeout caps output at 3,192–5,568 tokens. Every long generation therefore hit the timeout
+  first and was retried at temperature 0.5 — GPU burned, and the sampling temperature silently
+  changed. Real full-size 3,000-character chunks emit 509–534 tokens (660 cloud requests
+  averaged 350), so the legitimate ceiling is ~650 and 2048 leaves 3x headroom while capping a
+  runaway at ~77 s, inside the timeout. **Changing the provider default alone was a no-op** —
+  both CLIs pass `--num-predict` explicitly (4096 and 8192); they now resolve after engine
+  selection, omlx to 2048, Ollama keeping its previous values (different models, different
+  output profiles), an explicit value always honoured and the effective value printed.
+
+- **Cloud concurrency is measured, not configured** (2026-09-10). After the server is ready,
+  a wave of 24 disjoint production-sized chunks from the book being translated is issued
+  simultaneously (`threading.Barrier`); if the wave fails it retries at 16, then 12, then 8.
+  A wave passes only when mean single-request throughput clears `max_tokens / (timeout × 0.8)`
+  = 21.33 tok/s **and** the slowest request finishes inside `timeout / 2`. The second criterion
+  is what makes the probe cover memory pressure: an undersized cache shows up as preemption
+  and recompute, i.e. a straggler, not as truncation.
+
+  Earlier attempts to tier by GPU are recorded here because they are all wrong in instructive
+  ways. VRAM is not the constraint — VRAM minus weights is, and the same 32 GB card leaves
+  13 GB under int4 but under 1 GB under fp8. Tiering by *remaining* space needs a threshold
+  that cannot be derived on paper: `--gpu-memory-utilization` is 0.92 and CUDA context plus
+  workspace take ~1.5 GB, so a 48 GB card really has ~24 GB, and the first threshold drafted
+  this way excluded the very card that had been measured. Vast reports `gpu_ram` in MB and
+  below nominal — RTX 6000 Ada 49140 (47.99 GiB), 5090 32607, 4090 24564, and **L40S 46068
+  (44.99 GiB against a nominal 48)** — so nominal thresholds demote real cards. And extrapolating
+  a high-N rate from an N=1 probe fails on the same card: relative single-request throughput at
+  N=16 is 0.62 under int4 but 0.88 under fp8 (fp8 *rises* from N=1 to N=8), so the int4 ratio
+  predicts 12.7 tok/s for fp8 where 18.0 was measured.
+
+  `CLOUD_LLM_CONCURRENCY` still overrides, but the probe runs anyway and warns when the
+  explicit value exceeds the measured-safe one. If all four levels fail the run continues at 8
+  with a loud warning — the bar is "a runaway can finish inside the timeout", not "legitimate
+  output cannot" — and a probe error falls back to 16 without aborting. The server's own cap is
+  pinned to the highest candidate independently of the client value: leaving them coupled meant
+  a 24-wide probe against a 16-wide server measured the queue, not the concurrency.
+
+### Fixed
+- **`finish_reason` was never checked anywhere in the repository.** A response truncated at
+  `max_tokens` was passed to marker validation and took its chances; it now raises immediately
+  so the driver's existing temperature-0.5 retry handles it, and the value is recorded in the
+  request log.
+
+- **`load_fixed_terms` silently treated well-formed JSON with a non-object root
+  (`[]`, `null`, `42`) as an empty term table.** Given the measured cost of translating without
+  one, that silent downgrade is now a hard error. The stderr warning probe stays warn-only so a
+  damaged file cannot block a run before the real load reports it.
+
+- **A bash 3.2 portability break in the escape hatch.** `cloud_llm.sh` runs under
+  `set -euo pipefail`, and macOS ships bash 3.2, where expanding an empty array aborts. The
+  array is empty exactly when `CLOUD_LLM_CONCURRENT_CHAPTERS=0` — the path taken when something
+  has gone wrong and you want the old behaviour back.
+
+### Measured
+
+Real hardware, RTX 6000 Ada 48 GB on Vast.ai, int4, the 503-request Mind-Gut workload:
+
+| requests in flight | throughput | single-request | book translation | cost/book |
+|---|---|---|---|---|
+| 4 (previous default) | 144.0 tok/s | 12.6 s | 20.3 min | ~0.30 USD |
+| 8 | 248.4 | 13.8 s | 11.7 min | ~0.21 |
+| 16 | 420.3 | 17.1 s | 7.2 min | **~0.16** |
+| 24 | 517.3 | 23.2 s | — | — |
+| 32 | 582.4 | — | — | — |
+
+All quality signals were zero at every width. Boot took 5–11 minutes, not the 19 previously
+assumed, which makes boot the dominant cost at high concurrency — at 16 the machine spends
+longer starting than translating. fp8 on the same card runs 1.6–2.2x slower; normalised to one
+price and boot time it costs 31% more per book at N=16 and 111% more at N=1, so **the price of
+the higher-precision profile falls as concurrency rises**. Its translation quality was not
+compared this round.
+
+An earlier draft of these numbers reported N=24 as a hardware ceiling. It was not: a single
+runaway generation hit the token cap and dragged the batch metric down. Same request count at
+both widths, total output differed by exactly +7,818 tokens while every other width averaged
+349–353 tokens per request against N=24's 415. The measurement scripts now replay an identical
+request count at every width and send the production `max_tokens`.
+
+---
+
 ### Fixed
 - **A blank line inside one paragraph's own translation no longer desyncs the paragraph
   count** (2026-09-09). `parse_marker_output()` only stripped each marker body's leading/
@@ -65,7 +200,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   attribute-less `supports_concurrency=True` provider (e.g. `AnthropicProvider`) to 1
   worker, not an unbounded job count. **Not done this round**: actual cross-chapter
   concurrent dispatch (chapters remain sequential), and no live-server throughput
-  measurement (the task rules out loading the 27B model). The theoretical speedup is
+  measurement (the task rules out loading the 27B model). **Both were done on 2026-09-10 — see the 1.1.0 entry above; the ~5.9x figure below is a
+  theoretical ceiling that the real measurement replaced.** The theoretical speedup is
   **not** "chunks per chapter" — it's bounded by the server's own concurrency cap
   (`~/.omlx/settings.json`'s `scheduler.max_concurrent_requests`, 8 on this machine as of
   2026-08-15 — **that is the configured value; nobody has issued concurrent requests to

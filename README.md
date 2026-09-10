@@ -8,7 +8,13 @@ A Claude Code skill that turns literary EPUBs into **full-fidelity bilingual EPU
 
 ## Cloud GPU (Vast.ai / RunPod)
 
-`scripts/cloud_llm.sh -- --book X.epub` rents a GPU, serves the Qwopus model with vLLM, translates through the omlx engine and destroys the instance. See SKILL.md "Cloud mode".
+`scripts/cloud_llm.sh -- --book X.epub` rents a GPU, serves the Qwopus model with vLLM (or SGLang via `CLOUD_LLM_ENGINE=sglang`), translates through the omlx engine and destroys the instance. See SKILL.md "Cloud mode".
+
+Chapters are dispatched concurrently and the safe request width is **measured on the machine you actually rented** — a wave of production-sized chunks is timed at 24, then 16, 12, 8 until one clears both a throughput floor and a slowest-request bound. No GPU model names or VRAM thresholds are involved; `CLOUD_LLM_CONCURRENCY` overrides it.
+
+Measured on an RTX 6000 Ada 48 GB (int4, a 503-request book): **7 minutes and about 0.16 USD per book** at 16 in flight, versus 20 minutes and 0.30 USD at the previous default of 4. Boot is 5–11 minutes and is the dominant cost at that width.
+
+> **Concurrency needs a term table.** Without `spec_terms.json`, concurrent chunks each pick their own transliteration for names — measured worse than sequential, not just no better. The driver warns; it does not block.
 
 ## Why this exists
 
