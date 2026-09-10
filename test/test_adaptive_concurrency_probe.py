@@ -618,6 +618,59 @@ def test_fetch_endpoint_text_alive_false_on_connection_refused() -> None:
     assert result["body"] == ""
 
 
+def test_looks_like_server_info_requires_model_path() -> None:
+    assert probe._looks_like_server_info('{"model_path": "X", "context_length": 16384}') is True
+
+
+def test_looks_like_server_info_rejects_real_401_capture() -> None:
+    """Regression for the exact false positive on the 4th real SGLang fp8
+    trial: a missing --api-key made every request 401, and the body
+    {"error": "Unauthorized"} is valid JSON and an object -- a shape-blind
+    check ("did this parse, is it a dict") would wrongly call this alive."""
+    assert probe._looks_like_server_info('{"error": "Unauthorized"}') is False
+
+
+def test_looks_like_server_info_rejects_non_json_body() -> None:
+    assert probe._looks_like_server_info("<html>404 Not Found</html>") is False
+
+
+def test_looks_like_metrics_requires_a_real_prometheus_sample() -> None:
+    assert probe._looks_like_metrics('sglang:num_retracted_reqs{engine="0"} 0.0') is True
+
+
+def test_looks_like_metrics_rejects_json_error_body() -> None:
+    assert probe._looks_like_metrics('{"error": "Unauthorized"}') is False
+
+
+def test_fetch_evidence_snapshot_downgrades_alive_when_body_shape_is_wrong() -> None:
+    """"Got a response" only proves liveness when the response's shape is
+    right -- 401/403/404, or an HTML error page, can all avoid a connection-
+    level exception while carrying none of the shape either endpoint should
+    have. Real HTTP server standing in for the actual 401 capture."""
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            body = b'{"error": "Unauthorized"}'
+            self.send_response(401)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, _format, *_args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        snapshot = probe.fetch_evidence_snapshot(f"http://127.0.0.1:{server.server_address[1]}", "")
+        # A connection-level exception did NOT happen (status_code is present),
+        # yet the shape check must still call this not-alive.
+        assert snapshot["server_info"]["status_code"] == 401
+        assert snapshot["server_info"]["alive"] is False
+        assert snapshot["metrics"]["alive"] is False
+    finally:
+        server.shutdown()
+
+
 def test_choose_concurrency_respects_a_filtered_candidates_subset() -> None:
     """spec-07, 3rd real trial: a candidate above a hard server-side ceiling
     measures queuing behind that ceiling, not real concurrency. Only

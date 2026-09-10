@@ -206,10 +206,11 @@ def probe_wave(
 def fetch_endpoint_text(url: str, api_key: str, timeout: float = DIAGNOSTIC_TIMEOUT_S) -> dict[str, Any]:
     """GET a diagnostic endpoint and keep its raw body verbatim — used both as
     the post-failure liveness check and as before/after evidence for the
-    backlog gate. Getting ANY response (any status code) means the HTTP
-    frontend process is still alive; only a connection-level failure
-    (refused/reset/timed out) means it is not — a 500 with a body is a
-    process that is up and complaining, not a dead one (spec-07 review)."""
+    backlog gate. `alive` here only means "a connection-level failure
+    (refused/reset/timed out) did NOT happen" — it does NOT mean the response
+    is actually the endpoint it claims to be; see fetch_evidence_snapshot(),
+    which layers a shape check on top before anything downstream trusts this
+    as evidence the server process is healthy."""
     try:
         response = requests.get(
             url, headers={"Authorization": f"Bearer {api_key}"} if api_key else {}, timeout=timeout
@@ -219,15 +220,54 @@ def fetch_endpoint_text(url: str, api_key: str, timeout: float = DIAGNOSTIC_TIME
     return {"alive": True, "status_code": response.status_code, "body": response.text, "error": None}
 
 
+def _looks_like_server_info(body: str) -> bool:
+    """A genuine /get_server_info response is a JSON object carrying the
+    server's own config, always including model_path. Corrected after a real
+    capture (spec-07 4th real trial): a 401 body ({"error": "Unauthorized"})
+    is valid JSON, is an object, and would satisfy a naive "did we get
+    something parseable" check — but it is not server info. "Got a response"
+    only proves the frontend answered; it does not prove the answer has the
+    shape it claims to (orchestrator review, 2026-09-10: 401/403/404, or an
+    HTML error page, would all pass a shape-blind check the same way)."""
+    try:
+        data = json.loads(body)
+    except (ValueError, TypeError):
+        return False
+    return isinstance(data, dict) and "model_path" in data
+
+
+def _looks_like_metrics(body: str) -> bool:
+    """A genuine /metrics response is Prometheus exposition text. Reuse the
+    same strict sample parser the retract gate already trusts (real metric
+    lines, not an error page or a JSON error blob) instead of inventing a
+    second, looser heuristic for "is this actually metrics"."""
+    return bool(_prometheus_samples({"metrics": {"body": body}}))
+
+
 def fetch_evidence_snapshot(endpoint: str, api_key: str, timeout: float = DIAGNOSTIC_TIMEOUT_S) -> dict[str, Any]:
     """One evidence snapshot = both diagnostic endpoints, fetched independently
     (one being down doesn't hide the other). /get_server_info needs no special
-    server flag; /metrics does on SGLang (--enable-metrics) but not on vLLM."""
+    server flag; /metrics does on SGLang (--enable-metrics) but not on vLLM.
+
+    `alive` in the returned entries is downgraded to False when a response
+    DID come back (no connection-level exception) but its BODY doesn't have
+    the shape that endpoint should have — a real 4th-trial capture proved
+    this matters: a missing/wrong API key made every request 401, and
+    "alive" was true because the frontend answered, even though the answer
+    was an auth rejection, not server info (orchestrator review, 2026-09-10:
+    "有回應等於活著只在回應形狀正確時才成立" — a response only proves
+    liveness when its shape is right, never merely because something came
+    back)."""
     base = endpoint.rstrip("/")
-    return {
-        "server_info": fetch_endpoint_text(f"{base}/get_server_info", api_key, timeout),
-        "metrics": fetch_endpoint_text(f"{base}/metrics", api_key, timeout),
-    }
+    server_info = fetch_endpoint_text(f"{base}/get_server_info", api_key, timeout)
+    metrics = fetch_endpoint_text(f"{base}/metrics", api_key, timeout)
+    if server_info["alive"] and not _looks_like_server_info(server_info["body"]):
+        server_info = {**server_info, "alive": False,
+                        "error": "response received but not shaped like /get_server_info (missing model_path)"}
+    if metrics["alive"] and not _looks_like_metrics(metrics["body"]):
+        metrics = {**metrics, "alive": False,
+                   "error": "response received but not shaped like Prometheus /metrics text"}
+    return {"server_info": server_info, "metrics": metrics}
 
 
 _EXACT_BACKLOG_METRICS = {
