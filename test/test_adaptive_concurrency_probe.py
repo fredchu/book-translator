@@ -4,8 +4,8 @@ import http.server
 import importlib.util
 import json
 from pathlib import Path
+import statistics
 import threading
-import time
 from typing import Any
 
 import pytest
@@ -115,15 +115,18 @@ def test_real_http_wave_measures_completion_tokens_latency_and_parallelism() -> 
         active = 0
         max_active = 0
         lock = threading.Lock()
+        all_requests_arrived = threading.Barrier(4)
 
         def do_POST(self):  # noqa: N802
             size = int(self.headers.get("Content-Length", "0"))
             body = json.loads(self.rfile.read(size))
-            user = body["messages"][1]["content"]
+            assert body["messages"][1]["content"].startswith("chunk-")
             with self.lock:
                 self.__class__.active += 1
                 self.__class__.max_active = max(self.__class__.max_active, self.__class__.active)
-            time.sleep(0.08 if user.endswith("3") else 0.02)
+            # Deterministic overlap: no response may leave until all four handlers
+            # have arrived. This tests real parallel requests without scheduler timing.
+            self.__class__.all_requests_arrived.wait(timeout=5)
             with self.lock:
                 self.__class__.active -= 1
             payload = json.dumps({
@@ -146,8 +149,13 @@ def test_real_http_wave_measures_completion_tokens_latency_and_parallelism() -> 
             f"http://127.0.0.1:{server.server_address[1]}", "model", "key", rows, 4, 2048, 2
         )
         assert Handler.max_active == 4
-        assert wave["max_latency_s"] >= 0.07
-        assert wave["mean_single_tok_s"] > 40
+        samples = wave["samples"]
+        assert all(row["out_tokens"] == 4 for row in samples)
+        expected_speed = statistics.mean(
+            row["out_tokens"] / row["elapsed_s"] for row in samples
+        )
+        assert wave["mean_single_tok_s"] == pytest.approx(expected_speed, rel=1e-9)
+        assert wave["max_latency_s"] == max(row["elapsed_s"] for row in samples)
     finally:
         server.shutdown()
 

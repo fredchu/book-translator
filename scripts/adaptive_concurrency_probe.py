@@ -82,6 +82,9 @@ def probe_wave(
         "requests": n,
         "mean_single_tok_s": statistics.mean(row["tok_per_s"] for row in rows),
         "max_latency_s": max(row["elapsed_s"] for row in rows),
+        # Keep raw measurements in telemetry so aggregation can be audited without
+        # asserting anything about the runner's absolute wall-clock performance.
+        "samples": rows,
     }
 
 
