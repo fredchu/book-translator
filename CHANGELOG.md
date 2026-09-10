@@ -103,6 +103,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   handles it), and SGLang's loader does not recognise this checkpoint's parameter names
   either. The scheduler then takes a sigquit and the container enters a restart loop.
 
+  **Corrected 2026-09-10 after searching upstream: the checkpoint is the primary problem,
+  not SGLang.** Its quantization tool skipped `in_proj_a`/`in_proj_b` (2 per linear-attention
+  layer × 48 layers = the 96 missing parameters) but never recorded that in the config: the
+  `dynamic` rules only exclude embed/lm_head/mtp/norm/vision. SGLang therefore builds those
+  layers as quantized, finds no `qweight`, and then repacks an unloaded 96-wide layer.
+  SGLang's share is secondary: its `linear_attn` quantization guard (upstream `#22618`,
+  already in v0.5.19) recognises an `ignore` list but **not GPTQModel's `dynamic` format**.
+  vLLM handles it. Searching three keyword sets found no existing issue covering the
+  `dynamic` format — reporting it upstream is a candidate deliverable, and the failing log
+  plus the config/weight-index mismatch are the evidence.
+
   **`Using gptq_marlin kernel` is not a pass.** Both the implementer and the reviewer read
   that line as "GPTQ works". It only announces the *intent* to use marlin; the constraint is
   checked later, during repack, which is exactly where it died.

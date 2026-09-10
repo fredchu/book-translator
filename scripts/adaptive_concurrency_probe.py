@@ -25,6 +25,44 @@ externally-supplied timeout at all:
 timeout DERIVED from whichever tier gets selected (see derive_timeout()),
 which cloud_llm.sh then hands to both this probe's own future runs and the
 real translator — one measurement, one number, fed to both call sites.
+
+spec-07 (2026-09-10, SGLang fp8 real-machine trial): two corrections on top
+of the above, both found in review before any money was spent on a live run.
+
+1. "Gate failed" and "the server process died" are different events and must
+   never be reported the same way. A wave's HTTP call can fail (500,
+   connection refused, timeout) for two very different reasons: the server
+   is still up but this concurrency level overloaded it (a normal, USEFUL
+   early stop — exactly what this probe exists to find), or the whole
+   process crashed (nothing further should run against it, least of all a
+   real book). So on any wave failure this module now calls
+   fetch_evidence() — a GET to /get_server_info and /metrics — as a liveness
+   check: a response (any status code) means the frontend is alive and this
+   was a normal gate failure, retreat to the last confirmed-safe tier and
+   return normally (`passed=True`, no exception); no response at all
+   (connection-level failure) means the process is gone, raise
+   ServerDiedError so the caller refuses to translate against a dead server.
+   The earlier version treated every failure identically as "probe broke,
+   fall back to a hardcoded default and translate anyway" — which is
+   precisely how the first real SGLang trial ran 120 prompts against an
+   already-dead server.
+
+2. The backlog gate's LATENCY_MULTIPLE (3.0) was too loose to catch a real
+   observed straggler (2.44x its own median) on real hardware. Rather than
+   just lowering that shared constant (which would also shrink
+   derive_timeout()'s unrelated safety margin — a different concern that
+   happens to reuse the same wave measurements), the backlog gate now
+   prefers a DIRECT signal when available: whether the server's own retract
+   counter increased during the wave (fetched via the same fetch_evidence()
+   snapshot, before and after). Falls back to a latency multiple — now a
+   SEPARATE, tighter BACKLOG_FALLBACK_LATENCY_MULTIPLE (2.0) — only when no
+   retract-shaped line can be found in either diagnostic endpoint's raw text.
+   The field/endpoint that actually carries a retract counter on a given
+   SGLang build has never been directly observed, so nothing pins one: both
+   endpoints' raw bodies are scanned for any line containing "retract" and
+   every number on it is summed, per spec-07 review ("machine_id 那次是運氣
+   好，這次不要賭" — getting away with guessing a field name once is not a
+   reason to do it again).
 """
 
 from __future__ import annotations
@@ -33,6 +71,7 @@ import argparse
 import concurrent.futures as cf
 import json
 import os
+import re
 import statistics
 import sys
 import threading
@@ -55,8 +94,32 @@ CANDIDATES = (8, 12, 16, 24, 32)
 # exists to avoid.
 DEFAULT_PROBE_TIMEOUT = 120.0
 TIMEOUT_HEADROOM = 0.8
+# Used ONLY by derive_timeout()'s production-timeout safety margin — NOT the
+# backlog gate below. Keeping these as two separate constants (spec-07
+# review) means tightening the gate never silently shrinks the timeout
+# margin, and vice versa; they measure different things that happen to both
+# read wave["max_latency_s"].
 LATENCY_MULTIPLE = 3.0
+# Used ONLY as the backlog gate's FALLBACK when no retract signal is
+# available (see choose_concurrency()). Tighter than LATENCY_MULTIPLE above
+# on purpose: a real observed straggler on SGLang fp8 hit 2.44x its wave's
+# own median, which the old shared 3.0x constant would have let through.
+BACKLOG_FALLBACK_LATENCY_MULTIPLE = 2.0
 SATURATION_GAIN = 0.10
+DIAGNOSTIC_TIMEOUT_S = 10.0
+_RETRACT_NUMBER_RE = re.compile(r"-?\d+(?:\.\d+)?")
+
+
+class ServerDiedError(RuntimeError):
+    """A wave's HTTP call failed AND a liveness check afterward (GET to both
+    /get_server_info and /metrics) also failed to get any response at all.
+    Distinct from a normal gate failure (see choose_concurrency() docstring)
+    — callers must NOT fall back to a default concurrency and keep
+    translating when this is raised; the server process itself is gone."""
+
+    def __init__(self, message: str, *, waves: list[dict[str, Any]]):
+        super().__init__(message)
+        self.waves = waves  # evidence gathered so far, for the caller to persist even though this raised
 
 
 def probe_one(
@@ -86,7 +149,15 @@ def probe_one(
         timeout=timeout,
     )
     elapsed = time.monotonic() - started
-    response.raise_for_status()
+    try:
+        response.raise_for_status()
+    except requests.HTTPError as exc:
+        # spec-07: raise_for_status() alone discards the response body, and
+        # SGLang puts the actual failure reason there — losing it is exactly
+        # what made the first real trial's 500s undiagnosable after the fact.
+        raise requests.HTTPError(
+            f"{exc} | body[:500]={response.text[:500]!r}", response=response
+        ) from exc
     payload = response.json()
     content = payload["choices"][0]["message"]["content"]
     tokens = (payload.get("usage") or {}).get("completion_tokens")
@@ -136,6 +207,63 @@ def probe_wave(
     }
 
 
+def fetch_endpoint_text(url: str, api_key: str, timeout: float = DIAGNOSTIC_TIMEOUT_S) -> dict[str, Any]:
+    """GET a diagnostic endpoint and keep its raw body verbatim — used both as
+    the post-failure liveness check and as before/after evidence for the
+    backlog gate. Getting ANY response (any status code) means the HTTP
+    frontend process is still alive; only a connection-level failure
+    (refused/reset/timed out) means it is not — a 500 with a body is a
+    process that is up and complaining, not a dead one (spec-07 review)."""
+    try:
+        response = requests.get(
+            url, headers={"Authorization": f"Bearer {api_key}"} if api_key else {}, timeout=timeout
+        )
+    except requests.RequestException as exc:
+        return {"alive": False, "status_code": None, "body": "", "error": f"{type(exc).__name__}: {exc}"}
+    return {"alive": True, "status_code": response.status_code, "body": response.text, "error": None}
+
+
+def fetch_evidence_snapshot(endpoint: str, api_key: str, timeout: float = DIAGNOSTIC_TIMEOUT_S) -> dict[str, Any]:
+    """One evidence snapshot = both diagnostic endpoints, fetched independently
+    (one being down doesn't hide the other). /get_server_info needs no special
+    server flag; /metrics does on SGLang (--enable-metrics) but not on vLLM."""
+    base = endpoint.rstrip("/")
+    return {
+        "server_info": fetch_endpoint_text(f"{base}/get_server_info", api_key, timeout),
+        "metrics": fetch_endpoint_text(f"{base}/metrics", api_key, timeout),
+    }
+
+
+def _retract_lines(text: str) -> list[str]:
+    return [line.strip() for line in text.splitlines() if "retract" in line.lower()]
+
+
+def retract_signal(snapshot: dict[str, Any]) -> float | None:
+    """Sum every number on every line mentioning "retract" across BOTH
+    endpoints in one snapshot. Returns None — never 0 — when no such line
+    exists anywhere: we have never directly observed which endpoint or field
+    name actually carries a retract counter on a given SGLang build, so
+    finding nothing means "unknown", not "zero retracts happened". The
+    caller (choose_concurrency()) must fall back to the latency gate on
+    None, not treat it as a clean bill of health (spec-07 review: "machine_id
+    那次是運氣好，這次不要賭" — don't pin a field nobody has actually seen)."""
+    found = False
+    total = 0.0
+    for entry in snapshot.values():
+        for line in _retract_lines(entry.get("body") or ""):
+            found = True
+            total += sum(float(m) for m in _RETRACT_NUMBER_RE.findall(line))
+    return total if found else None
+
+
+def _slim_evidence(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Drop the (potentially large) raw body before a snapshot goes into the
+    JSON output — the raw text is persisted separately by whoever wired
+    fetch_evidence (main() writes it to sibling files); the wave record only
+    needs enough to audit the decision (alive/status/error), not re-derive it."""
+    return {key: {k: v for k, v in entry.items() if k != "body"} for key, entry in snapshot.items()}
+
+
 def derive_timeout(
     max_tokens: int,
     wave: dict[str, Any],
@@ -160,16 +288,42 @@ def derive_timeout(
     return max(from_latency, from_speed)
 
 
+def _default_fetch_evidence() -> dict[str, Any]:
+    """No-op evidence source: always "alive", never any retract signal. This
+    is the default when a caller doesn't wire a real one (e.g. vLLM, or any
+    test that isn't specifically exercising the liveness/retract logic) — it
+    makes every wave failure look like ServerDiedError territory... except it
+    can't, because reporting "alive" unconditionally means the liveness
+    branch always takes the "server answered" path, never the death path.
+    Silent, deliberately conservative: no evidence available reads as "can't
+    prove it's dead", not as "confirmed dead"."""
+    empty = {"alive": True, "status_code": None, "body": "", "error": None}
+    return {"server_info": dict(empty), "metrics": dict(empty)}
+
+
 def choose_concurrency(
     requests_: list[dict[str, Any]],
     run_wave: Callable[[list[dict[str, Any]], int], dict[str, Any]],
     *,
     max_tokens: int = DEFAULT_MAX_TOKENS,
+    fetch_evidence: Callable[[], dict[str, Any]] = _default_fetch_evidence,
 ) -> tuple[int, list[dict[str, Any]], bool, float]:
     """Climb CANDIDATES from the smallest, stopping at the first tier that
     either backs up (a real straggler, not just an average) or stops paying
     off (throughput gain under SATURATION_GAIN over the previous tier).
     Returns (selected_n, waves, passed, derived_timeout_s).
+
+    Every tier is bracketed by an evidence snapshot (fetch_evidence(), before
+    and after) used two ways:
+    - backlog gate: prefers whether the server's own retract signal increased
+      during the wave; falls back to BACKLOG_FALLBACK_LATENCY_MULTIPLE x
+      median latency only when no retract signal is available in either
+      snapshot (see retract_signal()).
+    - liveness: if run_wave() itself raises, the AFTER snapshot doubles as a
+      liveness check. A response (any status) means the server is merely
+      overloaded at this tier — a normal early stop, return normally with
+      the last confirmed-safe tier. No response at all means the process is
+      gone — raise ServerDiedError; the caller must NOT translate against it.
     """
     required = sum(CANDIDATES)
     if len(requests_) < required:
@@ -185,15 +339,66 @@ def choose_concurrency(
     for n in CANDIDATES:
         batch = requests_[offset : offset + n]
         offset += n  # Every wave is cold with respect to earlier prompts.
-        wave = run_wave(batch, n)
+        evidence_before = fetch_evidence()
+        try:
+            wave = run_wave(batch, n)
+        except Exception as exc:
+            evidence_after = fetch_evidence()
+            server_alive = bool(evidence_after["server_info"]["alive"] or evidence_after["metrics"]["alive"])
+            failure_wave = {
+                "n": n,
+                "requests": n,
+                "request_failed": True,
+                "request_error": f"{type(exc).__name__}: {exc}",
+                "server_alive_after_failure": server_alive,
+                "evidence_before": _slim_evidence(evidence_before),
+                "evidence_after": _slim_evidence(evidence_after),
+                "backlog_ok": False,
+                "saturation_ok": None,
+                "passed": False,
+            }
+            waves.append(failure_wave)
+            if not server_alive:
+                raise ServerDiedError(
+                    f"N={n} 波失敗（{failure_wave['request_error']}），"
+                    "伺服器判活（/get_server_info、/metrics）也連不上：行程可能已死，不可進翻譯",
+                    waves=waves,
+                ) from exc
+            # Server still answers — a normal early stop (gate failed), not a
+            # crash. Retreat exactly like a backlog/saturation failure would:
+            # select the last confirmed-safe tier, touch nothing else.
+            if selected_wave is None:
+                # Even the smallest candidate couldn't complete, yet the
+                # server is alive — there is no measured wave anywhere to
+                # derive a timeout from. Surface this distinctly instead of
+                # fabricating one; the caller falls back to its own
+                # conservative default (see cloud_llm.sh's non-"ok" branch).
+                raise RuntimeError(
+                    f"N={n} 是最小候選也失敗，但伺服器仍活著：沒有任何一波成功量到數字，"
+                    "探針無法給出安全併發或逾時"
+                ) from exc
+            return selected_n, waves, True, derive_timeout(max_tokens, selected_wave)
+
+        evidence_after = fetch_evidence()
+        wave["evidence_before"] = _slim_evidence(evidence_before)
+        wave["evidence_after"] = _slim_evidence(evidence_after)
         wave["mean_single_tok_s"] = round(float(wave["mean_single_tok_s"]), 3)
         wave["aggregate_tok_per_s"] = round(float(wave["aggregate_tok_per_s"]), 3)
         wave["max_latency_s"] = round(float(wave["max_latency_s"]), 3)
         wave["median_latency_s"] = round(float(wave["median_latency_s"]), 3)
 
-        backlog_threshold = LATENCY_MULTIPLE * wave["median_latency_s"]
-        backlog_ok = wave["max_latency_s"] <= backlog_threshold
-        wave["backlog_threshold_s"] = round(backlog_threshold, 3)
+        retract_before = retract_signal(evidence_before)
+        retract_after = retract_signal(evidence_after)
+        wave["retract_before"] = retract_before
+        wave["retract_after"] = retract_after
+        if retract_before is not None and retract_after is not None:
+            wave["backlog_gate_used"] = "retract"
+            backlog_ok = retract_after <= retract_before
+        else:
+            wave["backlog_gate_used"] = "latency_fallback"
+            backlog_threshold = BACKLOG_FALLBACK_LATENCY_MULTIPLE * wave["median_latency_s"]
+            wave["backlog_threshold_s"] = round(backlog_threshold, 3)
+            backlog_ok = wave["max_latency_s"] <= backlog_threshold
         wave["backlog_ok"] = backlog_ok
 
         if prev_wave is None:
@@ -258,8 +463,35 @@ def main() -> int:
         "profile": args.profile,
         "model": args.model,
         "max_tokens": args.max_tokens,
+        # spec-07 item 5 (reproducibility): this probe's OWN measurement ceiling,
+        # separate from derived_timeout_s below (that one is the OUTPUT fed to
+        # the real translator; this one is what bounded THIS run's own calls).
+        "probe_timeout_s": args.timeout,
         "candidates": list(CANDIDATES),
     }
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+
+    def write_result() -> None:
+        args.out.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    evidence_calls = 0
+
+    def real_fetch_evidence() -> dict[str, Any]:
+        # spec-07 item (d)/2: raw bodies land on disk verbatim (untruncated,
+        # unparsed) beside --out; the wave record in the JSON keeps only the
+        # slimmed metadata (see _slim_evidence) plus these file paths, so a
+        # human can go read exactly what the server said without re-running
+        # anything.
+        nonlocal evidence_calls
+        evidence_calls += 1
+        tag = f"{evidence_calls:03d}"
+        snapshot = fetch_evidence_snapshot(args.endpoint, args.api_key)
+        for key, entry in snapshot.items():
+            out_path = args.out.parent / f"{args.out.stem}-evidence-{tag}-{key}.txt"
+            out_path.write_text(entry.get("body") or "", encoding="utf-8")
+            entry["file"] = str(out_path)
+        return snapshot
+
     try:
         payload = json.loads(args.load.read_text(encoding="utf-8"))
         requests_ = [req for req in payload["requests"] if req.get("kind") == "chunk"]
@@ -284,7 +516,7 @@ def main() -> int:
             return wave
 
         selected, waves, passed, derived_timeout = choose_concurrency(
-            requests_, run_wave, max_tokens=args.max_tokens
+            requests_, run_wave, max_tokens=args.max_tokens, fetch_evidence=real_fetch_evidence
         )
         result.update(
             status="ok",
@@ -293,13 +525,21 @@ def main() -> int:
             waves=waves,
             derived_timeout_s=round(derived_timeout, 3),
         )
-        args.out.parent.mkdir(parents=True, exist_ok=True)
-        args.out.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+        write_result()
         return 0
+    except ServerDiedError as exc:
+        # Distinct from generic "error" on purpose (spec-07 item 1): the
+        # caller (cloud_llm.sh) must refuse to fall back to a default
+        # concurrency and translate anyway when THIS status comes back —
+        # that fallback is exactly how the first real trial ran 120 prompts
+        # against an already-dead server.
+        result.update(status="server_died", error=str(exc), waves=exc.waves)
+        write_result()
+        print(f"[adaptive-probe] server died: {exc}", file=sys.stderr)
+        return 1
     except Exception as exc:
         result.update(status="error", error=f"{type(exc).__name__}: {exc}")
-        args.out.parent.mkdir(parents=True, exist_ok=True)
-        args.out.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+        write_result()
         print(f"[adaptive-probe] failed: {result['error']}", file=sys.stderr)
         return 1
 

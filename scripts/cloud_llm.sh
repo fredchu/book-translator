@@ -117,6 +117,16 @@ if [[ "$ENGINE" == vllm ]]; then
 else
     IMAGE="${CLOUD_LLM_IMAGE:-lmsysorg/sglang:latest-runtime}"
 fi
+# spec-07 決策樹第 4 條是這趟的最終交付物：量出 SGLang fp8 能撐住持續負載的
+# 伺服器併發上限（N_safe），寫進這裡。量到之前先跟全域候選頂端一樣（32），
+# 不代表已知安全——上一趟就是在這個組合下，伺服器在合理負載下整個死掉。
+# 上限必須 ≥ 探針候選頂端，否則探針量到的是這個上限造成的排隊，不是真併發。
+if [[ "$ENGINE" == sglang && "$PROFILE" == fp8 ]]; then
+    SGLANG_FP8_MAX_RUNNING_REQUESTS="${CLOUD_LLM_SGLANG_FP8_MAX_RUNNING_REQUESTS:-32}"
+    [[ "$SGLANG_FP8_MAX_RUNNING_REQUESTS" -ge "$SERVER_CONCURRENCY" ]] \
+        || die "CLOUD_LLM_SGLANG_FP8_MAX_RUNNING_REQUESTS(${SGLANG_FP8_MAX_RUNNING_REQUESTS}) 小於探針候選頂端 ${SERVER_CONCURRENCY}，探針量不到（尚未租機）"
+    SERVER_CONCURRENCY="$SGLANG_FP8_MAX_RUNNING_REQUESTS"
+fi
 # 挑報價用預估總費用排序：這條流程流量最重——每次拉 10 GB 映像＋ int4 19 GB／fp8 31 GB 模型，
 # 流量費常高過 GPU 費（Vast 單價 0 到 0.039 美元／GB）。時數預設 1.5 小時（一本 47 萬字約 1 小時），可用環境變數改。
 export VAST_LIB_EST_HOURS="${VAST_LIB_EST_HOURS:-1.5}"
@@ -228,6 +238,10 @@ capture_machine_identity() {
     [[ "$PROVIDER" == vast ]] || return 1
     local record mid
     record="$(vast_lib_instance_record "$INSTANCE_ID" 2>/dev/null)" || return 1
+    # spec-07 item 5（可重現性）：整份原始 instance record 落盤，不只是抽出 machine_id。
+    # 映像 digest（如果 Vast 這個帳號的回應真的有這個欄位）就在這份原文裡——不猜欄位名，
+    # 整份存起來讓人事後去找，跟 retract 計數同一套「不釘沒看過的欄位」的作法。
+    [[ -n "$RUN_DIR" && -n "$record" ]] && printf '%s\n' "$record" >"$RUN_DIR/vast-instance-record.json"
     mid="$(jq -r '.machine_id // .machineId // .machine.id // empty' <<<"$record" 2>/dev/null || true)"
     [[ "$mid" =~ ^[0-9]+$ && "$mid" -gt 0 ]] || return 1
     MACHINE_ID="$mid"
@@ -258,6 +272,38 @@ fi
 # ---------- 砍機（任何退出路徑） ----------
 RUN_DIR=""
 TERMINATED=false
+
+# spec-07 (a)：任何砍機路徑（正常結尾、die()、INT/TERM/HUP trap）在真的砍掉
+# 機器之前，先把完整容器 log 落盤。terminate_instance() 是所有路徑共用的唯一
+# 入口（見下面四個 trap 與腳本正常結尾都呼叫它），放這裡一次到位不必在每條
+# 路徑各寫一次。上一趟 SGLang fp8 真機試驗就是缺這個，崩潰原因永遠拿不到；
+# 崩了但撈得到 log 是這趟的產出，不是損失。
+capture_final_container_log() {
+    [[ "$PROVIDER" == vast && -n "$RUN_DIR" && -n "$INSTANCE_ID" ]] || return 0
+    if ! vast_lib_cli logs "$INSTANCE_ID" --tail 20000 >"$RUN_DIR/vastai-logs-final.txt" 2>&1; then
+        log "⚠️  終態容器 log 撈取失敗，${RUN_DIR}/vastai-logs-final.txt 可能是空的"
+    fi
+}
+
+# spec-07 (b)：輪詢中把容器 log 尾巴的新行持續追加落盤，不是只印。以前只印
+# 最後 3 行到 stderr，一旦人沒盯著終端機那些行就永遠不見了。行雜湊去重存在
+# RUN_DIR 底下（跟著這次 run 走，不用另外清），不然同一行會每圈重複寫一次。
+append_container_log_tail() {
+    [[ "$PROVIDER" == vast && -n "$RUN_DIR" && -n "$INSTANCE_ID" ]] || return 0
+    local tail_n="${1:-200}" raw seen logfile line h
+    raw="$(vast_lib_cli logs "$INSTANCE_ID" --tail "$tail_n" 2>/dev/null)" || return 0
+    [[ -n "$raw" ]] || return 0
+    seen="$RUN_DIR/.vastai-logs-tail.seen"; logfile="$RUN_DIR/vastai-logs-tail.log"
+    touch "$seen"
+    while IFS= read -r line; do
+        [[ -n "$line" ]] || continue
+        h="$(printf '%s' "$line" | shasum | cut -d' ' -f1)"
+        grep -qxF "$h" "$seen" 2>/dev/null && continue
+        printf '%s\n' "$h" >>"$seen"
+        printf '%s\n' "$line" >>"$logfile"
+    done <<<"$raw"
+}
+
 terminate_instance() {
     [[ -n "$INSTANCE_ID" ]] || return 0
     [[ "$TERMINATED" == true ]] && return 0
@@ -265,6 +311,7 @@ terminate_instance() {
         log "--keep：機器 $INSTANCE_ID 留著（GPU 持續計費）。砍：$0 --stop $RUN_DIR"
         return 0
     fi
+    capture_final_container_log
     log "砍機 $INSTANCE_ID"
     local rc=0 err=""
     if [[ "$PROVIDER" == vast ]]; then
@@ -345,9 +392,11 @@ if [[ "$ENGINE" == vllm ]]; then
 else
     # SGLang runtime 映像沒有 vLLM entrypoint；明確啟動 OpenAI-compatible server。
     # reasoning parser 是品質守衛的一部分，不能只靠 request 的 enable_thinking=false。
+    # --enable-metrics 開 /metrics（spec-07 證據落盤要看這個端點；vLLM 的 /metrics 預設就有，
+    # 不用旗標。/get_server_info 兩邊都不需要旗標）。
     SERVER_ARGS=(python3 -m sglang.launch_server --model-path "$MODEL" --port "$PORT" --host 0.0.0.0
                  --api-key "$API_KEY" --context-length "$MAX_MODEL_LEN" --mem-fraction-static "$GPU_MEM_UTIL"
-                 --max-running-requests "$SERVER_CONCURRENCY" --reasoning-parser qwen3)
+                 --max-running-requests "$SERVER_CONCURRENCY" --reasoning-parser qwen3 --enable-metrics)
 fi
 if [[ -n "${CLOUD_LLM_EXTRA_SERVER_ARGS:-}" ]]; then
     read -r -a _extra <<<"$CLOUD_LLM_EXTRA_SERVER_ARGS"
@@ -368,6 +417,9 @@ done
 if [[ ${#_extra[@]} -gt 0 ]]; then
     SERVER_ARGS+=("${_extra[@]}")
 fi
+# spec-07 item 5（可重現性）：完整伺服器啟動參數落盤，不用事後從記憶重建。
+printf '%s\n' "${SERVER_ARGS[@]}" >"$RUN_DIR/server-args.txt"
+printf '%s\n' "$IMAGE" >"$RUN_DIR/image.txt"
 
 # ---------- 開機 ----------
 # 逐張試一層 offers，額度是這一層自己的（獨立於其他層，見 MAX_OFFER_TRIES/WHITELIST_TRIES 注解）。
@@ -511,6 +563,7 @@ while :; do
         # 每五輪印一次容器紀錄尾巴：server 參數錯會反覆重啟，不印的話只看得到「還在載入」直到預算用完
         POLLS=$(( ${POLLS:-0} + 1 ))
         if [[ "$PROVIDER" == vast && $(( POLLS % 5 )) -eq 0 ]]; then
+            append_container_log_tail 200  # spec-07 (b)：新行落盤去重，不只印給人看
             vast_lib_cli logs "$INSTANCE_ID" --tail 5 2>/dev/null | grep -v '^$' | tail -3 | sed 's/^/[cloud-llm]   容器: /' >&2 || true
         fi
     else

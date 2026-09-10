@@ -203,11 +203,17 @@ scripts/cloud_llm.sh --stop runs/cloud-llm-<id>                     # 砍掉 --k
   本機這個 shell 死了（睡眠、斷線、關終端機），遠端機器就沒人管，額度加再多小時
   都不會讓遠端自己停下來）。收屍：`bash ~/dev/srt-skill/scripts/vast_reap.sh`／`runpod_reap.sh`。
 - 推論 server 可用 `CLOUD_LLM_ENGINE=vllm|sglang` 選擇；兩邊各自組原生參數，不用互塞不相容旗標。
-  > **⚠️ SGLang 目前載不了預設的 int4 GPTQ 模型**（2026-09-10 真機試過）。
-  > `gptq_marlin_repack.cuh:311: size_n = 96 is not divisible by tile_n_size = 64`——
-  > GDN 線性注意力層有寬度 96 的投影權重，SGLang 的 marlin 重打包要 64 的倍數，
-  > vLLM 的走得過。另有 96 次 `linear_attn.in_proj_ba.weight not found in params_dict`。
-  > **要用 SGLang 得換 fp8 或 bf16 版的模型。** 細節見 CHANGELOG 2026-09-10。
+  > **⚠️ 預設的 int4 GPTQ 模型在 SGLang 上載不起來，但主要責任在 checkpoint 不在 SGLang**
+  > （2026-09-10 真機試過 + 查上游）。
+  > **真因**：那份 GPTQ checkpoint 的量化工具**跳過了 `in_proj_a`／`in_proj_b`
+  > （48 個線性注意力層各 2 個，共 96 個），卻沒寫進設定檔的排除規則**——
+  > 設定裡的 `dynamic` 只排了 embed／lm_head／mtp／norm／vision。
+  > 所以 SGLang 照設定把那些層當量化層建，找不到 `qweight` → 96 次
+  > `not found in params_dict` → 再對沒載到的 96 寬層做 marlin 重打包 → 崩。
+  > 次要責任在 SGLang：它的 `linear_attn` 量化 guard（上游 `#22618`，v0.5.19 已含）
+  > 只認 `ignore` 清單格式，**沒認 GPTQModel 的 `dynamic` 格式**。vLLM 走得過。
+  > **要用 SGLang 就用 fp8 版**（它的 `modules_to_not_convert` 有 882 條逐層明列，
+  > 已實測載入成功）。細節見 CHANGELOG 2026-09-10。
   >
   > 讀 log 時注意：`Using gptq_marlin kernel` **不代表通過**，那只是宣告要用 marlin，
   > 真正的檢查在重打包時才跑。

@@ -9,6 +9,7 @@ import threading
 from typing import Any
 
 import pytest
+import requests
 
 REPO = Path(__file__).resolve().parent.parent
 MODULE_PATH = REPO / "scripts" / "adaptive_concurrency_probe.py"
@@ -284,6 +285,229 @@ def test_real_http_wave_measures_completion_tokens_latency_and_parallelism() -> 
         assert wave["aggregate_tok_per_s"] == pytest.approx(expected_aggregate, rel=1e-9)
     finally:
         server.shutdown()
+
+
+def _evidence_from_bodies(steps: list[tuple[str, str, bool]]):
+    """steps: (server_info_body, metrics_body, alive) consumed in call order
+    (one call per fetch_evidence() invocation — before/after each wave, and
+    again after any failed wave for the liveness check). Once exhausted,
+    repeats the last step — most tests only care about the first few calls."""
+    remaining = list(steps)
+
+    def fetch() -> dict[str, Any]:
+        si_body, m_body, alive = remaining.pop(0) if len(remaining) > 1 else remaining[0]
+        entry = lambda body: {  # noqa: E731
+            "alive": alive,
+            "status_code": 200 if alive else None,
+            "body": body,
+            "error": None if alive else "connection refused",
+        }
+        return {"server_info": entry(si_body), "metrics": entry(m_body)}
+
+    return fetch
+
+
+def test_retract_signal_sums_numbers_on_any_line_mentioning_retract() -> None:
+    """Field/endpoint name is deliberately not pinned (spec-07 review) — any
+    line containing 'retract' anywhere in either endpoint's raw text counts."""
+    snapshot = {
+        "server_info": {"alive": True, "body": "num_retracted_reqs: 3\nqueue_len: 99"},
+        "metrics": {"alive": True, "body": 'sglang:num_retract_total{gpu="0"} 7'},
+    }
+    assert probe.retract_signal(snapshot) == 10.0
+
+
+def test_retract_signal_returns_none_not_zero_when_nothing_matches() -> None:
+    """None (unknown), not 0 (confirmed no retracts) — the caller must fall
+    back to the latency gate rather than trust an endpoint that may not even
+    expose this counter on this SGLang build."""
+    snapshot = {
+        "server_info": {"alive": True, "body": "queue_len: 3"},
+        "metrics": {"alive": True, "body": ""},
+    }
+    assert probe.retract_signal(snapshot) is None
+
+
+def test_backlog_gate_prefers_retract_signal_over_latency() -> None:
+    """The retract signal must OVERRIDE a latency reading that would have
+    passed on its own — this is the whole point of preferring a direct
+    signal over a proxy (spec-07)."""
+    seen: list[tuple[int, list[str]]] = []
+    metrics = {8: _m(32.0, 240.0, 10.0, 10.0), 12: _m(28.0, 280.0, 10.0, 10.0)}
+    evidence = _evidence_from_bodies([
+        ("num_retracted: 0", "", True),  # before N=8
+        ("num_retracted: 0", "", True),  # after N=8
+        ("num_retracted: 0", "", True),  # before N=12
+        ("num_retracted: 3", "", True),  # after N=12 -- retract count rose during the wave
+    ])
+    selected, waves, passed, _timeout = probe.choose_concurrency(
+        _requests(), _fake_wave(metrics, seen), fetch_evidence=evidence
+    )
+    assert selected == 8
+    assert passed is True
+    assert waves[1]["backlog_gate_used"] == "retract"
+    assert waves[1]["backlog_ok"] is False
+    assert waves[1]["retract_before"] == 0.0
+    assert waves[1]["retract_after"] == 3.0
+
+
+def test_backlog_gate_falls_back_to_latency_when_no_retract_signal_anywhere() -> None:
+    seen: list[tuple[int, list[str]]] = []
+    # Full candidate set, all latencies flat at 10.0 (well within any multiple
+    # of their own median) so every tier's backlog gate passes purely on the
+    # latency fallback -- and aggregate throughput keeps climbing >=10% so
+    # saturation never stops it early either, all the way to the top.
+    metrics = {8: _m(32.0, 240.0, 10.0, 10.0), 12: _m(28.0, 280.0, 10.0, 10.0),
+               16: _m(24.0, 320.0, 10.0, 10.0), 24: _m(21.0, 370.0, 10.0, 10.0),
+               32: _m(19.0, 430.0, 10.0, 10.0)}
+    selected, waves, passed, _timeout = probe.choose_concurrency(
+        _requests(), _fake_wave(metrics, seen)  # default fetch_evidence -> empty bodies, no signal
+    )
+    assert selected == 32
+    assert passed is True
+    assert all(w["backlog_gate_used"] == "latency_fallback" for w in waves)
+
+
+def test_backlog_latency_fallback_tightened_to_2x_not_3x() -> None:
+    """A real observed straggler on SGLang fp8 hit 2.44x its wave's own
+    median. The old shared 3.0x constant would have let it through; the
+    fallback must now be 2.0x. 25.0/10.0 = 2.5x: fails at 2x, would have
+    passed at the old 3x."""
+    seen: list[tuple[int, list[str]]] = []
+    metrics = {8: _m(32.0, 240.0, 10.0, 10.0), 12: _m(28.0, 280.0, 25.0, 10.0)}
+    selected, waves, passed, _timeout = probe.choose_concurrency(
+        _requests(), _fake_wave(metrics, seen)
+    )
+    assert selected == 8
+    assert passed is True
+    assert waves[1]["backlog_gate_used"] == "latency_fallback"
+    assert waves[1]["backlog_ok"] is False
+
+
+def test_wave_failure_with_server_alive_retreats_to_last_good_tier_normally() -> None:
+    """spec-07 discrimination table row C: a wave failing while the server
+    still answers is a normal early stop, not an error — must return
+    normally (passed=True), not raise."""
+    seen: list[tuple[int, list[str]]] = []
+    metrics = {8: _m(32.0, 240.0, 10.0, 10.0)}
+
+    def run(batch: list[dict[str, Any]], n: int) -> dict[str, Any]:
+        if n == 8:
+            return _fake_wave(metrics, seen)(batch, n)
+        raise requests.HTTPError("500 Server Error")
+
+    evidence = _evidence_from_bodies([("", "", True)])
+    selected, waves, passed, timeout = probe.choose_concurrency(
+        _requests(), run, fetch_evidence=evidence
+    )
+    assert selected == 8
+    assert passed is True
+    assert waves[-1]["request_failed"] is True
+    assert waves[-1]["server_alive_after_failure"] is True
+    assert timeout == probe.derive_timeout(probe.DEFAULT_MAX_TOKENS, waves[0])
+
+
+def test_wave_failure_at_smallest_candidate_with_server_alive_raises_plain_error() -> None:
+    """No prior successful wave exists to retreat to, yet the server is
+    alive -- this must NOT be reported as ServerDiedError (it isn't dead)."""
+
+    def run(_batch: list[dict[str, Any]], _n: int) -> dict[str, Any]:
+        raise requests.HTTPError("500 Server Error")
+
+    evidence = _evidence_from_bodies([("", "", True)])
+    with pytest.raises(RuntimeError) as exc_info:
+        probe.choose_concurrency(_requests(), run, fetch_evidence=evidence)
+    assert not isinstance(exc_info.value, probe.ServerDiedError)
+
+
+def test_wave_failure_with_no_liveness_response_raises_server_died_error() -> None:
+    """spec-07 discrimination table row E: no response from either
+    diagnostic endpoint means the process is gone -- must raise
+    ServerDiedError specifically, carrying the evidence gathered so far."""
+
+    def run(_batch: list[dict[str, Any]], _n: int) -> dict[str, Any]:
+        raise ConnectionError("Connection refused")
+
+    evidence = _evidence_from_bodies([("", "", False)])
+    with pytest.raises(probe.ServerDiedError) as exc_info:
+        probe.choose_concurrency(_requests(), run, fetch_evidence=evidence)
+    assert exc_info.value.waves[-1]["server_alive_after_failure"] is False
+    assert exc_info.value.waves[-1]["request_failed"] is True
+
+
+def test_wave_failure_after_partial_success_with_server_dead_keeps_prior_waves() -> None:
+    seen: list[tuple[int, list[str]]] = []
+    metrics = {8: _m(32.0, 240.0, 10.0, 10.0), 12: _m(28.0, 280.0, 10.0, 10.0)}
+
+    def run(batch: list[dict[str, Any]], n: int) -> dict[str, Any]:
+        if n in metrics:
+            return _fake_wave(metrics, seen)(batch, n)
+        raise ConnectionError("Connection refused")
+
+    # Alive through N=8 and N=12 (2 calls each); dies exactly when checked
+    # after N=16's request fails (5th call).
+    evidence = _evidence_from_bodies([("", "", True)] * 5 + [("", "", False)])
+    with pytest.raises(probe.ServerDiedError) as exc_info:
+        probe.choose_concurrency(_requests(), run, fetch_evidence=evidence)
+    assert len(exc_info.value.waves) == 3
+    assert exc_info.value.waves[0]["n"] == 8 and exc_info.value.waves[0].get("request_failed") is None
+    assert exc_info.value.waves[1]["n"] == 12 and exc_info.value.waves[1].get("request_failed") is None
+    assert exc_info.value.waves[2]["n"] == 16 and exc_info.value.waves[2]["request_failed"] is True
+
+
+def test_probe_one_http_error_includes_response_body_not_just_status() -> None:
+    """spec-07 item (c): raise_for_status() alone discards the body, and
+    SGLang puts the real failure reason there."""
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            self.send_response(500)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"error": "linear_attn assert failed: seq_lens mismatch"}')
+
+        def log_message(self, _format, *_args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        with pytest.raises(requests.HTTPError) as exc_info:
+            probe.probe_one(
+                f"http://127.0.0.1:{server.server_address[1]}", "model", "key",
+                {"system": "s", "user": "u"}, 2048, 5, threading.Barrier(1),
+            )
+        assert "linear_attn assert failed" in str(exc_info.value)
+    finally:
+        server.shutdown()
+
+
+def test_fetch_endpoint_text_alive_true_on_any_status_code() -> None:
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            self.send_response(500)
+            self.end_headers()
+            self.wfile.write(b"oom")
+
+        def log_message(self, _format, *_args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        result = probe.fetch_endpoint_text(f"http://127.0.0.1:{server.server_address[1]}/x", "")
+        assert result["alive"] is True
+        assert result["status_code"] == 500
+        assert result["body"] == "oom"
+    finally:
+        server.shutdown()
+
+
+def test_fetch_endpoint_text_alive_false_on_connection_refused() -> None:
+    # Nothing listens on this port -- a real connection-level failure, not a status code.
+    result = probe.fetch_endpoint_text("http://127.0.0.1:1", "", timeout=1.0)
+    assert result["alive"] is False
+    assert result["body"] == ""
 
 
 def test_probe_own_default_max_tokens_matches_translator_single_source() -> None:
