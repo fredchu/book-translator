@@ -128,6 +128,20 @@ def check_ready_summary(lines: list[str]) -> tuple[RowResult, RowResult]:
     )
 
 
+def extract_max_total_num_tokens(text: str) -> int | None:
+    """Raw extraction only, no PASS/FAIL/MARGINAL judgment (2026-09-10, 5th
+    real trial) -- for callers that need the NUMBER itself, not a verdict
+    about it (adaptive_concurrency_probe.py's --max-total-num-tokens derives
+    the KV-cache candidate ceiling from this). None if the line never
+    appeared; the caller decides what "unknown" means for its own purpose,
+    same discipline as the rest of this file."""
+    hit = _find_last(READY_SUMMARY_RE, text.splitlines())
+    if hit is None:
+        return None
+    _, m = hit
+    return int(m.group(1))
+
+
 def check_memory_pool_end(lines: list[str]) -> RowResult:
     hit = _find_last(MEMORY_POOL_END_RE, lines)
     if hit is None:
@@ -180,8 +194,26 @@ def run_health_check(text: str) -> tuple[list[RowResult], str]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--log", type=Path, required=True, help="path to the container's boot log text")
+    parser.add_argument(
+        "--print-max-total-num-tokens",
+        action="store_true",
+        help=(
+            "print only the ready-summary's max_total_num_tokens value (5th real trial: feeds "
+            "adaptive_concurrency_probe.py's --max-total-num-tokens); does NOT run the six-row "
+            "health check and returns plain 0/1 (found/not found), never VERDICT_EXIT_CODES, so "
+            "this mode's exit code can never be confused with a PASS/FAIL/UNKNOWN verdict"
+        ),
+    )
     args = parser.parse_args(argv)
     text = args.log.read_text(encoding="utf-8", errors="replace")
+
+    if args.print_max_total_num_tokens:
+        value = extract_max_total_num_tokens(text)
+        if value is None:
+            return 1
+        print(value)
+        return 0
+
     rows, verdict = run_health_check(text)
     for row in rows:
         print(f"[{row.status:8s}] {row.label}：{row.detail}")

@@ -63,6 +63,7 @@ of the above, both found in review before any money was spent on a live run.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import itertools
 import json
 import os
@@ -146,6 +147,34 @@ MIN_WAVE_DURATION_S = 60.0
 WAVE_DURATION_LATENCY_MULTIPLE = 3.0
 STEADY_STATE_RAMP_FRACTION = 0.25
 SATURATION_DEGRADATION_TOLERANCE = 0.05
+
+# ---------- 2026-09-10 third redesign: marginal-efficiency gate on "new best" ----------
+# 5th real SGLang fp8 trial (candidates 8/12/16/24/32/48, 48 deliberately above the
+# server's own --max-running-requests=32 to force a real queuing plateau): steady-state
+# climbed 178.5/276.6/310.5/418.9/470.7/487.1. 48 is a genuine queuing plateau (container
+# log: running-req peaked at 32 all through the 48 tier, queue-req peaked at 38) -- but
+# the asymmetric rule above has NO concept of a plateau, only "did it drop >5% below the
+# best". 487.1 is +3.5% over 470.7, so it became the new "best" and got selected, even
+# though reaching it meant paying with median latency going from 36s to 50.5s for that 3.5%.
+# Fix: a tier only counts as a new best if its gain justifies its OWN increase in N -- the
+# MARGINAL EFFICIENCY of adding concurrency, not just the raw sign of the gain. Efficiency
+# per step here was 1.10/0.37/0.70/0.37/0.07 (8->12/12->16/16->24/24->32/32->48): a real
+# clear floor among the five genuine tiers (0.37) and the queuing plateau (0.07) sitting far
+# below it with a wide gap between them -- 0.2 sits in that gap, so it has discriminating
+# power on this data and doesn't false-reject a real (if diminishing) genuine gain. See
+# choose_tier()'s docstring for the exact formula and the real 517.8 threshold this produced.
+MARGINAL_EFFICIENCY_THRESHOLD = 0.2
+
+# ---------- 2026-09-10, same trial: KV-cache candidate ceiling ----------
+# A candidate above what the server's own KV cache can hold for that many CONCURRENT
+# requests is queuing behind a hard resource limit before it even starts, the same failure
+# shape --effective-cap (spec-07) exists to filter out, just derived from a different signal
+# (context budget, not a printed "capped to" line). 3700 tokens/request is this fp8 recipe's
+# assumed per-request context+generation budget (review-mem-budget.md); this trial's own
+# max_total_num_tokens=129742 // 3700 = 35, which would have excluded the wasteful N=48
+# candidate before ever spending a wave on it -- zero cost, an arithmetic fact from the
+# server's own boot log, not a statistical judgment like MARGINAL_EFFICIENCY_THRESHOLD above.
+KV_CACHE_TOKENS_PER_REQUEST = 3700
 DIAGNOSTIC_TIMEOUT_S = 10.0
 # ---------- warm-up request (2026-09-10, orchestrator-reported) ----------
 # Every tier's closed loop is the FIRST traffic that tier's own slots ever
@@ -185,7 +214,7 @@ def probe_one(
     request: dict[str, Any],
     max_tokens: int,
     timeout: float,
-) -> dict[str, float]:
+) -> dict[str, Any]:
     """One request, fire-and-measure. No synchronized-start barrier any more
     (2026-09-10 redesign) -- probe_wave() is now a closed loop where each
     slot dispatches its own replacement the instant it frees up, so there is
@@ -221,7 +250,29 @@ def probe_one(
     tokens = (payload.get("usage") or {}).get("completion_tokens")
     if not isinstance(content, str) or not content or not isinstance(tokens, int) or tokens <= 0:
         raise ValueError("completion must contain non-empty content and positive completion_tokens")
-    return {"elapsed_s": elapsed, "out_tokens": float(tokens), "tok_per_s": tokens / elapsed}
+    return {
+        "elapsed_s": elapsed,
+        "out_tokens": float(tokens),
+        "tok_per_s": tokens / elapsed,
+        # 2026-09-10 (5th real trial follow-up): identifies WHICH prompt this
+        # completion used, without persisting the prompt text itself into
+        # every wave's JSON. Exists so per-tier prompt-hash-set disjointness
+        # -- a criterion this whole redesign already claimed to guarantee --
+        # can be verified straight from the probe's own output instead of
+        # reconstructed after the fact from a container log (fable had to do
+        # exactly that for the 5th trial's acceptance check: "判準寫了但資料
+        # 沒收").
+        "prompt_hash": _prompt_hash(request),
+    }
+
+
+def _prompt_hash(request: dict[str, Any]) -> str:
+    """Short, stable identity for a (system, user) prompt pair."""
+    digest = hashlib.sha256()
+    digest.update(request["system"].encode("utf-8"))
+    digest.update(b"\x00")
+    digest.update(request["user"].encode("utf-8"))
+    return digest.hexdigest()[:16]
 
 
 def probe_wave(
@@ -282,9 +333,16 @@ def probe_wave(
     duration_s = min_duration_s
     start = time.monotonic()
     counter = itertools.count()
+    # 2026-09-10 (5th real trial): event-based, not sampled -- incremented the
+    # instant a request is dispatched, decremented the instant it resolves
+    # (success or failure), both under the same lock as everything else here.
+    # A per-second poll would miss an instantaneous over-N spike during
+    # replacement dispatch; this cannot, by construction.
+    in_flight = 0
+    max_in_flight = 0
 
     def worker() -> None:
-        nonlocal duration_s
+        nonlocal duration_s, in_flight, max_in_flight
         while True:
             with lock:
                 if failure:
@@ -292,15 +350,19 @@ def probe_wave(
                 if time.monotonic() - start >= duration_s:
                     return
                 req = requests_[next(counter) % len(requests_)]
+                in_flight += 1
+                max_in_flight = max(max_in_flight, in_flight)
             try:
                 row = probe_one(endpoint, model, api_key, req, max_tokens, timeout)
             except Exception as exc:  # noqa: BLE001 -- must propagate, matches the old pool.map() behavior
                 with lock:
+                    in_flight -= 1
                     if not failure:
                         failure.append(exc)
                 return
             row["end_t"] = time.monotonic() - start
             with lock:
+                in_flight -= 1
                 completions.append(row)
                 med = statistics.median(c["elapsed_s"] for c in completions)
                 duration_s = max(min_duration_s, duration_latency_multiple * med)
@@ -319,6 +381,11 @@ def probe_wave(
     return {
         "n": n,
         "requests": len(completions),
+        "max_in_flight": max_in_flight,
+        # 2026-09-10: each tier's own set of distinct prompts actually used,
+        # by hash -- the direct evidence for "tiers never share/repeat
+        # prompts unsafely", not reconstructed after the fact.
+        "distinct_prompt_hashes": sorted({c["prompt_hash"] for c in completions}),
         **metrics,
         # Keep raw measurements in telemetry so aggregation can be audited without
         # asserting anything about the runner's absolute wall-clock performance.
@@ -341,16 +408,20 @@ def _wave_metrics_from_completions(
     test_wave_metrics_excludes_ramp_up_tokens_from_steady_state."""
     window_start_s = final_duration_s * ramp_fraction
     window_length_s = final_duration_s - window_start_s
-    window_tokens = sum(
-        c["out_tokens"] for c in completions
-        if window_start_s <= c["end_t"] <= final_duration_s
-    )
+    window_completions = [
+        c for c in completions if window_start_s <= c["end_t"] <= final_duration_s
+    ]
+    window_tokens = sum(c["out_tokens"] for c in window_completions)
     latencies = [c["elapsed_s"] for c in completions]
     total_out_tokens = sum(c["out_tokens"] for c in completions)
     wall_clock_s = max((c["end_t"] for c in completions), default=0.0)
     return {
         "duration_s": round(final_duration_s, 3),
         "window_start_s": round(window_start_s, 3),
+        # 2026-09-10 (5th real trial): recorded directly instead of forcing a
+        # reader to reconstruct it from raw samples -- proves the exclusion
+        # actually excluded SOME completions without excluding ALL of them.
+        "window_completions": len(window_completions),
         # Per-REQUEST speed. Naturally DECREASES as concurrency rises (more
         # requests sharing the same GPU/scheduler) even when the server is
         # doing strictly more total work — never use this to judge whether
@@ -568,19 +639,37 @@ class LevelResult(NamedTuple):
 
 
 def choose_tier(levels: list[LevelResult]) -> int:
-    """Pure selection logic (spec-09): given the tiers tried IN ORDER (as if
-    this were the live climb), return the N to select.
+    """Pure selection logic (spec-09, amended by the 5th trial): given the
+    tiers tried IN ORDER (as if this were the live climb), return the N to
+    select.
 
-    Asymmetric rule (2026-09-10 redesign; a real observed case picked N=16
-    when N=32 was actually 53% faster in sustained use): climbing never
-    stops just because a tier failed to set a new best — only when a tier's
-    steady-state throughput falls more than SATURATION_DEGRADATION_TOLERANCE
-    below the best tier seen so far, AND the very next tier ALSO fails to
-    recover to within that tolerance, do we stop. The tier selected is
-    always whichever had the best throughput measured overall, never simply
-    the highest N or the last one tried — a real "higher N is actually
-    worse" case must still be caught (that is the whole reason the old
-    design compared to the *previous* tier instead of the running best).
+    Asymmetric STOPPING rule (2026-09-10 second redesign; a real observed
+    case picked N=16 when N=32 was actually 53% faster in sustained use):
+    climbing never stops just because a tier failed to set a new best — only
+    when a tier's steady-state throughput falls more than
+    SATURATION_DEGRADATION_TOLERANCE below the best tier seen so far, AND the
+    very next tier ALSO fails to recover to within that tolerance, do we
+    stop. This governs WHEN to give up early; it is unchanged by the rule
+    below, which governs something different.
+
+    Marginal-efficiency "NEW BEST" rule (2026-09-10 third redesign; the 5th
+    trial's candidate 48 -- deliberately above the server's own
+    --max-running-requests=32 -- beat 32 by +3.5% purely by queuing behind
+    that cap, and the old rule ("any positive gain over the running best
+    counts") had no way to tell that apart from a real improvement). A new
+    tier only replaces the running best if it clears a bar that scales with
+    how much MORE concurrency it's spending to get there:
+
+        required = best_tp * (1 + MARGINAL_EFFICIENCY_THRESHOLD * (n / best_n - 1))
+
+    For the 5th trial's real numbers this makes 48 (487.1, n_ratio 48/32=1.5)
+    need 470.7 * (1 + 0.2*0.5) = 517.8 to qualify -- it doesn't, so 32 stays
+    selected. The first tier tried always becomes the initial best
+    unconditionally (there is nothing yet to compare a ratio against).
+
+    The tier selected is always whichever had the best throughput measured
+    overall under this rule, never simply the highest N or the last one
+    tried — a real "higher N is actually worse" case must still be caught.
 
     A tier with safety_ok=False is skipped for both the running-best
     calculation and the bad-streak bookkeeping — choose_concurrency() itself
@@ -589,20 +678,21 @@ def choose_tier(levels: list[LevelResult]) -> int:
     failure returns immediately without calling this at all; the skip here
     is defensive, not load-bearing).
 
-    Mutation check run once by hand while implementing this (recorded here,
+    Mutation checks run once by hand while implementing this (recorded here,
     not a permanent test — see spec-09 §2 and the calibration test file for
     the two things this actually proves):
-    - Revert to the OLD rule ("stop at the first tier whose gain vs. the
-      PREVIOUS tier is under a threshold") fed the OLD (wrong) measurement
-      values (256.9, 265.7 for N=16, N=24 — the wall-clock-bound numbers)
-      -> selects 16. Confirmed red against the real answer (32).
-    - Same OLD rule, fed the CORRECT sustained-load values (270.5, 342.4,
-      414.9) -> ALSO selects 32, same as the new rule. This is exactly why
-      the primary (decision) assertion alone cannot tell the old and new
-      CODE apart — the bug that actually bit real hardware was in the
-      MEASUREMENT (probe_wave()'s old wall-clock-bound metric), not
-      primarily in this selection rule; the calibration (magnitude) tests
-      are what actually discriminate between old and new probe_wave().
+    - Revert the STOPPING rule to the OLD one ("stop at the first tier whose
+      gain vs. the PREVIOUS tier is under a threshold") fed the OLD (wrong)
+      measurement values (256.9, 265.7 for N=16, N=24 — the wall-clock-bound
+      numbers) -> selects 16. Confirmed red against the real answer (32).
+      Same OLD rule fed the CORRECT sustained-load values (270.5, 342.4,
+      414.9) -> ALSO selects 32, same as the new rule -- proving the primary
+      (decision) assertion alone cannot tell old and new MEASUREMENT code
+      apart; the calibration (magnitude) tests do that.
+    - Revert the NEW-BEST rule to plain `steady_tok_per_s > best_tp` (no
+      efficiency gate) fed the 5th trial's real six-tier numbers -> selects
+      48. Confirmed red against the real answer (32); the efficiency gate
+      above is what turns this back to 32.
     """
     if not levels:
         raise ValueError("choose_tier needs at least one level")
@@ -615,11 +705,23 @@ def choose_tier(levels: list[LevelResult]) -> int:
         is_low = level.steady_tok_per_s < best_tp * (1.0 - SATURATION_DEGRADATION_TOLERANCE)
         if bad_streak >= 1 and is_low:
             break  # this tier AND the one before it both failed to recover
-        if level.steady_tok_per_s > best_tp:
+        if _clears_marginal_efficiency_bar(level.n, level.steady_tok_per_s, best_n, best_tp):
             best_tp = level.steady_tok_per_s
             best_n = level.n
         bad_streak = bad_streak + 1 if is_low else 0
     return best_n
+
+
+def _clears_marginal_efficiency_bar(
+    n: int, steady_tok_per_s: float, best_n: int, best_tp: float
+) -> bool:
+    """Would `n`/`steady_tok_per_s` replace the running best? The very first
+    tier (best_tp still -inf) always clears this -- there is nothing yet to
+    compare a concurrency ratio against."""
+    if best_tp == float("-inf"):
+        return True
+    required = best_tp * (1.0 + MARGINAL_EFFICIENCY_THRESHOLD * (n / best_n - 1.0))
+    return steady_tok_per_s > required
 
 
 def choose_concurrency(
@@ -800,7 +902,9 @@ def choose_concurrency(
         is_low = current_tp < best_tp * (1.0 - SATURATION_DEGRADATION_TOLERANCE)
         wave["is_low_vs_best"] = is_low
         stop_after_this = bad_streak >= 1 and is_low
-        if current_tp > best_tp:
+        is_new_best = _clears_marginal_efficiency_bar(n, current_tp, selected_n, best_tp)
+        wave["clears_marginal_efficiency_bar"] = is_new_best
+        if is_new_best:
             best_tp = current_tp
             selected_n = n
             selected_wave = wave
@@ -848,6 +952,23 @@ def candidates_within_cap(
     # all; the caller can see candidates[0] > effective_cap in the output and
     # know the server is far more constrained than usual.
     return (candidates[0],)
+
+
+def kv_cache_candidate_cap(
+    max_total_num_tokens: int, tokens_per_request: int = KV_CACHE_TOKENS_PER_REQUEST
+) -> int:
+    """Arithmetic candidate ceiling from the server's own KV-cache budget
+    (5th real trial): a candidate N whose concurrent requests wouldn't all
+    fit in max_total_num_tokens is queuing behind a resource limit before it
+    even starts, exactly like a printed "capped to" line (--effective-cap)
+    -- just derived from a different, zero-cost signal instead of a
+    statistical judgment call. Integer division on purpose: a fractional
+    request doesn't fit."""
+    if max_total_num_tokens <= 0:
+        raise ValueError(f"max_total_num_tokens must be positive, got {max_total_num_tokens}")
+    if tokens_per_request <= 0:
+        raise ValueError(f"tokens_per_request must be positive, got {tokens_per_request}")
+    return max_total_num_tokens // tokens_per_request
 
 
 def parse_candidates_override(raw: str) -> tuple[int, ...] | None:
@@ -916,11 +1037,30 @@ def main() -> int:
             "the PROBE_CANDIDATES env var; --effective-cap still filters whichever ladder is used)"
         ),
     )
+    parser.add_argument(
+        "--max-total-num-tokens",
+        type=int,
+        default=None,
+        help=(
+            "the ready-summary's max_total_num_tokens (5th real trial: derive it from the "
+            "container log via sglang_boot_health_check.py --print-max-total-num-tokens) — "
+            "candidates above max_total_num_tokens // KV_CACHE_TOKENS_PER_REQUEST are never "
+            "tried, an arithmetic fact about the server's own KV-cache budget, not a "
+            "statistical judgment; combined with --effective-cap by taking the tighter of the two"
+        ),
+    )
     args = parser.parse_args()
 
     candidates_base = parse_candidates_override(args.candidates)
+    kv_cache_cap = (
+        kv_cache_candidate_cap(args.max_total_num_tokens)
+        if args.max_total_num_tokens is not None
+        else None
+    )
+    caps = [c for c in (args.effective_cap, kv_cache_cap) if c is not None]
+    combined_cap = min(caps) if caps else None
     candidates = candidates_within_cap(
-        args.effective_cap, candidates_base if candidates_base is not None else CANDIDATES
+        combined_cap, candidates_base if candidates_base is not None else CANDIDATES
     )
 
     result: dict[str, Any] = {
@@ -933,6 +1073,8 @@ def main() -> int:
         # the real translator; this one is what bounded THIS run's own calls).
         "probe_timeout_s": args.timeout,
         "effective_cap": args.effective_cap,
+        "max_total_num_tokens": args.max_total_num_tokens,
+        "kv_cache_candidate_cap": kv_cache_cap,
         "candidates": list(candidates),
     }
     args.out.parent.mkdir(parents=True, exist_ok=True)

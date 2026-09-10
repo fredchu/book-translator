@@ -86,14 +86,19 @@ def _m(
         (32, 5, {8: _m(32.0, 240.0, 10.0, 10.0), 12: _m(28.0, 280.0, 10.0, 10.0),
                  16: _m(24.0, 320.0, 10.0, 10.0), 24: _m(21.0, 370.0, 10.0, 10.0),
                  32: _m(19.0, 430.0, 10.0, 10.0)}),
-        # 16 dips >5% below the best (280) -- asymmetric rule tolerates ONE bad
-        # tier without stopping. 24 recovers (290 > 280, a new best), so the
-        # climb continues all the way to 32. This is the exact shape that
-        # burned real hardware: an early-stop-on-first-non-gain design would
-        # have frozen at 12 here, missing that 32 goes on to be the real best.
+        # 16 dips slightly below the best (280) -- within the 5% stopping
+        # tolerance (not "is_low") but ALSO too small a gain over 12 to clear
+        # the marginal-efficiency bar for a new best, so it's simply a
+        # plateau: best stays 12. 24 then posts a real, big-enough gain to
+        # clear the (now steeper, since it's jumping from N=12) efficiency
+        # bar and retakes best; 32 does the same again from 24. This is the
+        # shape that burned real hardware: an early-stop-on-first-non-gain
+        # design would have frozen at 12, missing that 32 goes on to be the
+        # real best -- recovering past a stale anchor is still possible
+        # here, it just needs a big enough real gain, not just any positive one.
         (32, 5, {8: _m(32.0, 240.0, 10.0, 10.0), 12: _m(28.0, 280.0, 10.0, 10.0),
-                 16: _m(24.0, 260.0, 10.0, 10.0), 24: _m(21.0, 290.0, 10.0, 10.0),
-                 32: _m(19.0, 310.0, 10.0, 10.0)}),
+                 16: _m(24.0, 270.0, 10.0, 10.0), 24: _m(21.0, 380.0, 10.0, 10.0),
+                 32: _m(19.0, 430.0, 10.0, 10.0)}),
         # 16 AND 24 both stay >5% below the best (280) -- two consecutive
         # misses that never recover -> stop after 24, select 12 (the best
         # measured), never even try 32.
@@ -371,6 +376,11 @@ def test_real_http_wave_measures_completion_tokens_latency_and_parallelism() -> 
         # every real completion lands at ~0.08s, past the 0.02s window close --
         # the steady-state filter must exclude all of them, not just some.
         assert wave["steady_state_tok_per_s"] == 0.0
+        assert wave["window_completions"] == 0
+        # 2026-09-10 (5th real trial): first-class fields, not reconstructed
+        # after the fact from a container log.
+        assert wave["max_in_flight"] == 4  # matches Handler.max_active, event-counted independently
+        assert len(wave["distinct_prompt_hashes"]) == 4  # one per distinct chunk-N prompt, no repeats
     finally:
         server.shutdown()
 
@@ -439,6 +449,7 @@ def test_wave_metrics_excludes_ramp_up_tokens_from_steady_state() -> None:
     assert probe.STEADY_STATE_RAMP_FRACTION == 0.25
     excluding_ramp = probe._wave_metrics_from_completions(completions, 100.0)
     assert excluding_ramp["window_start_s"] == 25.0
+    assert excluding_ramp["window_completions"] == 3  # not 0, not all 5
     # Only the 3 in-window completions (150 tokens over 75s) count -- the two
     # 100_000-token ramp-up outliers must be fully excluded, not diluted in.
     assert excluding_ramp["steady_state_tok_per_s"] == pytest.approx(150.0 / 75.0)
@@ -956,6 +967,55 @@ def test_probe_selects_same_tier_as_sustained_sweep_on_fixture() -> None:
     assert probe.choose_tier(levels) == 32
 
 
+def test_probe_rejects_queuing_plateau_via_marginal_efficiency_5th_trial_fixture() -> None:
+    """5th real trial (review-probe-v2-cloud-acceptance.md): candidates
+    8/12/16/24/32/48 on a server whose own --max-running-requests=32, 48
+    deliberately above that to force a real queuing plateau. Real steady-
+    state: 178.5/276.6/310.5/418.9/470.7/487.1. 48 beats 32 by +3.5% purely
+    by queuing (container log: running-req peaked at 32 throughout the 48
+    tier, queue-req peaked at 38) -- the OLD "any positive gain is a new
+    best" rule selected 48 for exactly this reason.
+
+    Mutation check (run once, recorded here): reverting to plain
+    `steady_tok_per_s > best_tp` (no marginal-efficiency gate) fed these SAME
+    real numbers selects 48. Confirmed red against the real answer (32).
+    """
+    levels = [
+        probe.LevelResult(n=8, steady_tok_per_s=178.5, safety_ok=True),
+        probe.LevelResult(n=12, steady_tok_per_s=276.6, safety_ok=True),
+        probe.LevelResult(n=16, steady_tok_per_s=310.5, safety_ok=True),
+        probe.LevelResult(n=24, steady_tok_per_s=418.9, safety_ok=True),
+        probe.LevelResult(n=32, steady_tok_per_s=470.7, safety_ok=True),
+        probe.LevelResult(n=48, steady_tok_per_s=487.1, safety_ok=True),
+    ]
+    assert probe.choose_tier(levels) == 32
+
+
+def test_clears_marginal_efficiency_bar_matches_real_517_8_threshold() -> None:
+    """Locks in the exact formula/threshold value the orchestrator quoted
+    from the 5th trial: 470.7 * (1 + 0.2 * (48/32 - 1)) = 517.8."""
+    required = 470.7 * (1.0 + probe.MARGINAL_EFFICIENCY_THRESHOLD * (48 / 32 - 1.0))
+    assert required == pytest.approx(517.8, abs=0.05)
+    assert not probe._clears_marginal_efficiency_bar(48, 487.1, 32, 470.7)  # 487.1 < 517.8
+    assert probe._clears_marginal_efficiency_bar(48, 520.0, 32, 470.7)  # a real win clears it
+    # The very first tier always becomes best unconditionally (best_tp is
+    # still -inf; there is nothing yet to compute a ratio against).
+    assert probe._clears_marginal_efficiency_bar(8, 1.0, 8, float("-inf"))
+
+
+def test_kv_cache_candidate_cap_matches_5th_trial_arithmetic() -> None:
+    """129742 // 3700 = 35 (5th trial's own ready-summary max_total_num_tokens)
+    -- an arithmetic fact, not a statistical judgment; N=48 exceeds it and
+    N=32 doesn't, so this alone would have excluded 48 before spending a
+    single wave on it."""
+    assert probe.kv_cache_candidate_cap(129_742) == 35
+    assert probe.candidates_within_cap(35, (8, 12, 16, 24, 32, 48)) == (8, 12, 16, 24, 32)
+    with pytest.raises(ValueError):
+        probe.kv_cache_candidate_cap(0)
+    with pytest.raises(ValueError):
+        probe.kv_cache_candidate_cap(129_742, tokens_per_request=0)
+
+
 def test_probe_selects_best_not_highest_when_higher_tier_is_worse() -> None:
     """Locks in "asymmetric + select best" (spec-09 S2, second case)."""
     # 32 is the LAST tier tried and is 11.8% below the best (24) -- past the
@@ -966,15 +1026,19 @@ def test_probe_selects_best_not_highest_when_higher_tier_is_worse() -> None:
         probe.LevelResult(n=32, steady_tok_per_s=300.0, safety_ok=True),
     ]
     assert probe.choose_tier(levels_a) == 24
-    # 32's 4.4% dip below 24's 340 does NOT cross the 5% tolerance, so the
-    # climb is not even considered a miss -- 48 (a new best) is returned.
+    # 2026-09-10 (5th real trial, review-probe-v2-cloud-acceptance.md): 32's
+    # 4.4% dip below 24's 340 does NOT cross the 5% stopping tolerance, so
+    # the climb is not even considered a miss -- but 48's +1.5% over 24
+    # (345 vs 340) also fails to clear the marginal-efficiency bar for a new
+    # best (needs 340*(1+0.2*(48/24-1))=408), so the queuing-plateau shape
+    # this fixture models must select 24, not 48.
     levels_b = [
         probe.LevelResult(n=16, steady_tok_per_s=300.0, safety_ok=True),
         probe.LevelResult(n=24, steady_tok_per_s=340.0, safety_ok=True),
         probe.LevelResult(n=32, steady_tok_per_s=325.0, safety_ok=True),
         probe.LevelResult(n=48, steady_tok_per_s=345.0, safety_ok=True),
     ]
-    assert probe.choose_tier(levels_b) == 48
+    assert probe.choose_tier(levels_b) == 24
 
 
 def test_probe_steady_estimate_within_20pct_of_sweep__TRANSITIONAL_tolerance_until_closed_loop_fixture_exists() -> None:

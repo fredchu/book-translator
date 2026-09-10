@@ -214,3 +214,41 @@ def test_margin_bucket_does_not_block_overall_pass() -> None:
     pool_row = next(r for r in rows if r.label.startswith("4 "))
     assert pool_row.status == "MARGINAL"
     assert verdict == "PASS"
+
+
+def test_extract_max_total_num_tokens_reads_the_real_trial3_value() -> None:
+    """5th real trial: this raw number (no PASS/FAIL judgment) is what feeds
+    adaptive_concurrency_probe.py's --max-total-num-tokens / KV-cache
+    candidate cap."""
+    assert check.extract_max_total_num_tokens(REAL_TRIAL3_LOG) == 125_292
+
+
+def test_extract_max_total_num_tokens_returns_none_not_zero_when_missing() -> None:
+    """None (unknown), not 0 -- same discipline as retract_signal() in the
+    probe: a missing signal must never look like a confirmed measurement."""
+    assert check.extract_max_total_num_tokens(_truncated_log()) is None
+
+
+def test_print_max_total_num_tokens_mode_exits_0_and_prints_the_number(tmp_path: Path) -> None:
+    log_path = tmp_path / "boot.log"
+    log_path.write_text(REAL_TRIAL3_LOG, encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(MODULE_PATH), "--log", str(log_path), "--print-max-total-num-tokens"],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0
+    assert result.stdout.strip() == "125292"
+
+
+def test_print_max_total_num_tokens_mode_exits_1_when_missing_not_verdict_codes(tmp_path: Path) -> None:
+    """This mode's own 0/1 must never be read against VERDICT_EXIT_CODES --
+    it never runs the six-row health check at all, so 1 here means "not
+    found", not "FAIL"."""
+    log_path = tmp_path / "boot.log"
+    log_path.write_text(_truncated_log(), encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(MODULE_PATH), "--log", str(log_path), "--print-max-total-num-tokens"],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 1
+    assert result.stdout.strip() == ""
