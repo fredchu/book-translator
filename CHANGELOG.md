@@ -7,6 +7,87 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Corrected — the v1.1.0 concurrency probe's absolute threshold never matched reality
+- **(2026-09-10) The "measured, not configured" gate from v1.1.0 was checking a timeout the
+  real system never used.** It computed `max_tokens / (timeout × 0.8) = 21.33 tok/s` from
+  `adaptive_concurrency_probe.py`'s own hardcoded `timeout=120` — a number `cloud_llm.sh` never
+  passed to the translator. The translator's real timeout was (and is) `translate_book_ollama.py`'s
+  own `--timeout` default, 1800, fifteen times larger. Nobody caught this while writing it,
+  reviewing it, or documenting it — the same wrong constant appeared in this CHANGELOG's own
+  `max_tokens` entry above, in `omlx_provider.py`'s comment, and in the probe's threshold math.
+  It surfaced when a worker went to wire the probe's constants and the translator's `--timeout`
+  through one shared value and noticed the two paths already disagreed by 15x — a discrepancy
+  that couldn't be "fixed" by picking either existing number without changing real behavior on
+  one side or the other, which is what should have been true all along and wasn't.
+
+  **The math also proves the gate was never needed**: once a request's timeout comfortably
+  exceeds `max_tokens / single-request-speed`, a runaway generation ends cleanly at `max_tokens`
+  regardless of how much larger the timeout is — the timeout stops bounding anything past that
+  point. So `adaptive_concurrency_probe.py` now selects concurrency with two gates relative to
+  the measurement run itself, needing no externally-supplied timeout at all:
+  - **backlog**: a wave's worst latency must stay within 3x its own median (catches a request
+    stuck behind cache eviction/preemption — a real straggler, not just a slow average)
+  - **saturation**: a wave's *aggregate* (whole-wave) throughput must beat the previous (smaller)
+    tier by ≥10% (catches "a bigger N stopped helping") — see the correction entry directly below;
+    the first cut of this gate compared mean per-request speed instead, which is wrong
+
+  The **timeout is now an output, not an input**: `derive_timeout()` computes it from whichever
+  tier gets selected — `max(3 × that wave's max latency, max_tokens / that wave's mean speed / 0.8)`
+  — and `cloud_llm.sh` passes that one number straight to the translator's `--timeout`. Single
+  source by construction: both numbers come from the same measurement run, not two independent
+  constants that can drift apart again. `max_tokens` itself is unchanged (2048) but no longer
+  gates anything during selection — `adaptive_concurrency_probe.py` now imports it from
+  `providers.omlx_provider.DEFAULT_MAX_TOKENS`, the same binding the translator resolves,
+  instead of keeping its own separate copy of the number.
+
+  **Voided by this fix** (do not cite these without re-deriving):
+  - *"N=32 has no margin"* — the 18%-margin claim came from the same wrong 120s timeout. Under
+    the relative gates, whether 32 is selected depends on whether it beats 24 by ≥10% throughput
+    while staying within 3x its own median latency — a different question with a different
+    answer.
+  - *"fp8 costs 83% more (1.8x) than int4"* — that number came from fp8 being pushed down to
+    N=8 by the same broken gate. Under the relative gates fp8 clears a higher tier (measured:
+    N=16), putting the real gap back near the original ~31% estimate — a different number for a
+    different reason, not a reversion to trusting the earlier claim as-is.
+  - `omlx_provider.DEFAULT_TIMEOUT = 120` was already dead code on the cloud path (the caller
+    always passes its own `--timeout`); the comment that used to justify `DEFAULT_MAX_TOKENS` by
+    citing "the unchanged 120s request timeout" is corrected in place.
+  - `CANDIDATES` grows to `(8, 12, 16, 24, 32)` (32 added) — `SERVER_CONCURRENCY` in
+    `cloud_llm.sh` must be ≥ the top candidate or the probe measures the server's own queue
+    instead of real concurrency (see the existing comment above `SERVER_ARGS`), so it moves from
+    24 to 32 too. `build_adaptive_probe_load.py`'s prompt-pool size now imports `CANDIDATES`
+    from the probe instead of hardcoding its own copy of `24+16+12+8` — the exact duplication
+    shape this whole entry is about, caught in the adjacent file before it could cause the same
+    kind of drift.
+  - **Not voided, unchanged**: `--max-concurrent-requests` default 16 as the probe-failure
+    fallback. Its justification changes (it is now simply "the smallest measured-safe value on
+    the one card measured, kept conservative because smaller/untested cards default here too" —
+    not tied to any margin percentage), but the value itself does not move just because its
+    reasoning changed.
+
+### Corrected — the new saturation gate itself compared the wrong speed
+- **(2026-09-10, caught in review before this landed) The first cut of the saturation gate above
+  compared `mean_single_tok_s` (per-request speed) across tiers.** Per-request speed *falls* as
+  concurrency rises even on a server with plenty of headroom left — more requests sharing the same
+  GPU/scheduler always slows each individual one down, that is not the same signal as "is a bigger
+  N still worth it". Gating on it made `throughput_gain` negative on the very first climb (N=8 →
+  N=12) on every real workload, so the probe would always fail saturation immediately and freeze
+  at the smallest candidate (8) regardless of how much real capacity the server had — silently
+  undoing the whole point of climbing `CANDIDATES` in the first place. It shipped past unit tests
+  because every fixture had `mean_single_tok_s` *increasing* with N, which is not the shape real
+  measurements take (per-request speed down, whole-wave throughput up) — the tests never exercised
+  the case they were meant to guard.
+
+  Fixed by adding `aggregate_tok_per_s` to `probe_wave()` (total output tokens for the wave ÷ the
+  wave's own wall-clock time) and gating saturation on that instead; `mean_single_tok_s` is kept
+  only for `derive_timeout()`, which legitimately needs per-request speed to bound a single
+  request's worst case, not whether a bigger batch of them together is worth running. Test
+  fixtures were rewritten with the realistic shape (per-request speed falling every tier while
+  aggregate throughput rises) plus a dedicated regression test asserting the probe still climbs
+  under that shape; mutation-reverting the fix (aggregate → mean_single_tok_s again) turns that
+  test and two of the parametrized climb cases red, confirming they would have caught this before
+  it shipped.
+
 ### Verified on real hardware
 - **SGLang cannot load the default int4 GPTQ checkpoint** (2026-09-10, first real-machine
   trial, ~0.18 USD). `lmsysorg/sglang:latest-runtime` (v0.5.19, digest `sha256:710bc114…`)

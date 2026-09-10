@@ -56,8 +56,10 @@ else
     CONCURRENCY=16
     CONCURRENCY_EXPLICIT=false
 fi
-# Server 必須容納最高候選，否則用 16 開機送 24 筆只會量到 server queue，不是真 N=24。
-SERVER_CONCURRENCY=24
+# Server 必須容納最高候選，否則量出來的是 server queue 不是真的併發。
+# 32 = adaptive_concurrency_probe.py 的 CANDIDATES 最大值（spec-05 起含 32）；
+# 那邊的候選集一變，這裡也要跟著動——兩處目前沒有做成同一個來源（範圍比 spec-05 大）。
+SERVER_CONCURRENCY=32
 CONCURRENT_CHAPTERS="${CLOUD_LLM_CONCURRENT_CHAPTERS:-1}"
 # 機器記憶：沿用 bookcast 的 vast_machine_memory（同一個 Vast 機器池，同一份好/壞紀錄）。
 # 這是跨 repo 執行期相依，不是必要條件——bookcast 模組不在、資料庫壞掉都必須軟性失敗，
@@ -558,11 +560,12 @@ OMLX_API_KEY="$API_KEY" "${ADAPTIVE_PROBE_CMD[@]}" --endpoint "$ENDPOINT" --mode
     --load "$PROBE_LOAD" --out "$PROBE_RESULT" --gpu "$GPU" --profile "$PROFILE"
 PROBE_RC=$?
 set -e
+DERIVED_TIMEOUT_ARGS=()  # 探針失敗時保持空陣列——翻譯器用它自己的 --timeout 預設，行為不變
 if [[ $PROBE_RC -eq 0 ]] && SAFE_CONCURRENCY="$(jq -er '.selected_concurrency | select(type == "number")' "$PROBE_RESULT" 2>/dev/null)"; then
     PROBE_SUMMARY="$(jq -r '[.waves[] | "N=\(.n): \(.mean_single_tok_s) tok/s, max \(.max_latency_s)s"] | join("; ")' "$PROBE_RESULT")"
     log "自適應探針：${PROBE_SUMMARY}；安全 N=${SAFE_CONCURRENCY}"
     if [[ "$(jq -r '.passed' "$PROBE_RESULT")" != true ]]; then
-        log "⚠️  N=24/16/12/8 都未達 20% 跑飛餘裕，退到 8 繼續翻譯；請考慮換卡"
+        log "⚠️  N=8 這一級本身就撐不住（落後者或吞吐都不合格），退到 8 繼續翻譯；請考慮換卡"
     fi
     if [[ "$CONCURRENCY_EXPLICIT" == true ]]; then
         if (( CONCURRENCY > SAFE_CONCURRENCY )); then
@@ -572,6 +575,16 @@ if [[ $PROBE_RC -eq 0 ]] && SAFE_CONCURRENCY="$(jq -er '.selected_concurrency | 
         fi
     else
         CONCURRENCY="$SAFE_CONCURRENCY"
+    fi
+    # 逾時是這次探針量出來的，不是常數——探針算給自己用的門檻早就拿掉了，
+    # 這裡直接把同一個數字轉給翻譯器，兩邊天生同一個來源（spec-05）。
+    # 秒數無條件進位：寧可多留一點餘裕，也不要因為捨去小數而卡在剛好不夠的邊界上。
+    if DERIVED_TIMEOUT_RAW="$(jq -er '.derived_timeout_s | select(type == "number")' "$PROBE_RESULT" 2>/dev/null)"; then
+        DERIVED_TIMEOUT="$(awk -v t="$DERIVED_TIMEOUT_RAW" 'BEGIN{v=int(t); print (v==t)?v:v+1}')"
+        DERIVED_TIMEOUT_ARGS=(--timeout "$DERIVED_TIMEOUT")
+        log "翻譯逾時：${DERIVED_TIMEOUT} 秒（探針在 N=${SAFE_CONCURRENCY} 量出來的，餵給翻譯器）"
+    else
+        log "⚠️  探針沒有回傳可用的逾時值，翻譯器用它自己的 --timeout 預設"
     fi
 else
     log "⚠️  自適應併發探針失敗，無法取得可靠量測；併發退回全域預設 16，繼續翻譯"
@@ -597,9 +610,9 @@ if [[ "$CONCURRENT_CHAPTERS" == 1 ]]; then
 fi
 # Bash 3.2 + set -u 不能直接展開空陣列；${A[@]+"${A[@]}"} 在空陣列時給 0 個參數，
 # 非空時仍保留每個參數的邊界。macOS 沒 Homebrew bash 或 launchd PATH 常會走 /bin/bash 3.2。
-log "開始翻譯：${TRANSLATE_CMD[*]} --engine omlx --omlx-host $ENDPOINT --omlx-model $MODEL ${CONCURRENCY_ARGS[@]+"${CONCURRENCY_ARGS[@]}"} ${TRANSLATE_ARGS[*]}"
+log "開始翻譯：${TRANSLATE_CMD[*]} --engine omlx --omlx-host $ENDPOINT --omlx-model $MODEL ${CONCURRENCY_ARGS[@]+"${CONCURRENCY_ARGS[@]}"} ${DERIVED_TIMEOUT_ARGS[@]+"${DERIVED_TIMEOUT_ARGS[@]}"} ${TRANSLATE_ARGS[*]}"
 set +e
-OMLX_API_KEY="$API_KEY" "${TRANSLATE_CMD[@]}" --engine omlx --omlx-host "$ENDPOINT" --omlx-model "$MODEL" ${CONCURRENCY_ARGS[@]+"${CONCURRENCY_ARGS[@]}"} "${TRANSLATE_ARGS[@]}" &
+OMLX_API_KEY="$API_KEY" "${TRANSLATE_CMD[@]}" --engine omlx --omlx-host "$ENDPOINT" --omlx-model "$MODEL" ${CONCURRENCY_ARGS[@]+"${CONCURRENCY_ARGS[@]}"} ${DERIVED_TIMEOUT_ARGS[@]+"${DERIVED_TIMEOUT_ARGS[@]}"} "${TRANSLATE_ARGS[@]}" &
 TPID=$!
 # 看門狗的輸出一定要導掉：它那個 sleep 若成了孤兒還握著 stdout/stderr，呼叫端（含測試的 subprocess）
 # 會等不到 EOF 一直掛著。收工時連 sleep 一起殺（pkill -P）。

@@ -15,10 +15,11 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 import dispatch  # noqa: E402
+from adaptive_concurrency_probe import CANDIDATES  # noqa: E402  single source with the probe
 from chunker import chunk_paragraphs  # noqa: E402
 from content_blocks import extract_paragraphs  # noqa: E402
 
-REQUIRED = 24 + 16 + 12 + 8
+REQUIRED = sum(CANDIDATES)
 LARGE_CHARS = 2500
 SEED = 20260910
 

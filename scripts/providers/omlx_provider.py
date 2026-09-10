@@ -26,11 +26,20 @@ from requests.adapters import HTTPAdapter
 from .base import ProviderError, ProviderResult, TranslationProvider
 
 DEFAULT_HOST = "http://localhost:8090"
+# Only takes effect when a caller constructs OmlxProvider without an explicit
+# timeout. translate_book_ollama.py always passes its own --timeout (1800 by
+# default, or the value cloud_llm.sh derives from the concurrency probe — see
+# spec-05), so this default is dead on the real translation path. An earlier
+# comment on DEFAULT_MAX_TOKENS below claimed real requests were "safely
+# inside the unchanged 120s request timeout" — that was never true here; the
+# actual value in use was 1800, and this constant simply went unused.
 DEFAULT_TIMEOUT = 120
 # Real full-size 3000-char chunks produced about 509-534 tokens; the observed
-# legitimate ceiling is ~650. 2048 leaves >3x output headroom while capping a
-# runaway generation at ~77s even at the measured worst N=24 rate (26.6 tok/s),
-# safely inside the unchanged 120s request timeout instead of timing out first.
+# legitimate ceiling is ~650. 2048 is roughly 3x that ceiling — generous output
+# headroom. This is independent of the request timeout: a generation that
+# reaches max_tokens ends cleanly (rather than getting cut off mid-token by a
+# timeout) once the timeout comfortably exceeds max_tokens / (single-request
+# speed); it does not need to be "less than the timeout" in absolute terms.
 DEFAULT_MAX_TOKENS = 2048
 RETRY_BACKOFF = [10, 30, 90]
 DEFAULT_CHAT_TEMPLATE_KWARGS = {"enable_thinking": False}

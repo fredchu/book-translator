@@ -113,8 +113,15 @@ done
 [[ "${FAKE_PROBE_FAIL:-0}" == 1 ]] && exit 7
 safe="${FAKE_SAFE_CONCURRENCY:-16}"
 passed="${FAKE_PROBE_PASSED:-true}"
-printf '{"status":"ok","selected_concurrency":%s,"passed":%s,"waves":[{"n":%s,"mean_single_tok_s":%s,"max_latency_s":%s}]}\n' \
-  "$safe" "$passed" "$safe" "${FAKE_PROBE_SPEED:-28.5}" "${FAKE_PROBE_LATENCY:-20}" >"$out"
+# 沒特別指定就不寫 derived_timeout_s 這個鍵，逼呼叫端測試「探針沒回傳逾時值」那條分支；
+# 要測正常路徑就設 FAKE_DERIVED_TIMEOUT。
+if [[ -n "${FAKE_DERIVED_TIMEOUT:-}" ]]; then
+    timeout_field="\"derived_timeout_s\":${FAKE_DERIVED_TIMEOUT},"
+else
+    timeout_field=""
+fi
+printf '{"status":"ok","selected_concurrency":%s,"passed":%s,%s"waves":[{"n":%s,"mean_single_tok_s":%s,"max_latency_s":%s}]}\n' \
+  "$safe" "$passed" "$timeout_field" "$safe" "${FAKE_PROBE_SPEED:-28.5}" "${FAKE_PROBE_LATENCY:-20}" >"$out"
 '''
 
 # 站在 `python3 -m bookcast.vast_machine_memory` 的位置——不管本機有沒有真的裝
@@ -311,7 +318,7 @@ def test_vast_happy_path_waits_for_models_then_translates_then_destroys(tmp_path
         create = next(c for c in calls if "create instance" in c)
         assert "--image vllm/vllm-openai:v0.28.0" in create and "--env -p 8000:8000" in create
         assert f"--raw --args {MODEL} --served-model-name {MODEL} --port 8000" in create and f"--api-key {key}" in create
-        assert "--max-num-seqs 24" in create
+        assert "--max-num-seqs 32" in create
         assert "--ssh" not in create and "--disable-log-requests" not in create and not create.endswith("--raw")
         assert "destroyed" in calls and calls.index("destroyed") > calls.index(create)
         assert "已確認 7001 不在清單中" in r.stderr
@@ -329,7 +336,7 @@ def test_cloud_concurrency_one_knob_and_escape_hatch(tmp_path: Path) -> None:
         out = Path(env["FAKE_TRANSLATE_OUT"]).read_text(encoding="utf-8")
         assert "--concurrent-chapters --max-concurrent-requests 12" in out
         create = next(c for c in _calls(env) if "create instance" in c)
-        assert "--max-num-seqs 24" in create
+        assert "--max-num-seqs 32" in create
 
         off_dir = tmp_path / "off"
         off_dir.mkdir()
@@ -344,7 +351,7 @@ def test_cloud_concurrency_one_knob_and_escape_hatch(tmp_path: Path) -> None:
         srv.shutdown()
 
 
-@pytest.mark.parametrize("safe", [24, 16, 12, 8])
+@pytest.mark.parametrize("safe", [32, 24, 16, 12, 8])
 def test_adaptive_probe_selects_each_candidate(tmp_path: Path, safe: int) -> None:
     srv, port = _serve_models()
     try:
@@ -357,7 +364,65 @@ def test_adaptive_probe_selects_each_candidate(tmp_path: Path, safe: int) -> Non
         assert f"--max-concurrent-requests {safe}" in out
         assert f"安全 N={safe}" in r.stderr
         if safe == 8:
-            assert "都未達 20% 跑飛餘裕" in r.stderr
+            assert "落後者或吞吐都不合格" in r.stderr
+    finally:
+        srv.shutdown()
+
+
+def test_derived_timeout_is_passed_to_translator_ceiled(tmp_path: Path) -> None:
+    """驗收 1：逾時是探針量出來的，餵給翻譯器的值跟探針輸出的值同一個來源
+    （這裡只驗 cloud_llm.sh 有沒有正確讀出、無條件進位、傳下去——公式本身
+    的斷言在 test_adaptive_concurrency_probe.py::test_derive_timeout_*）。"""
+    srv, port = _serve_models()
+    try:
+        env = _setup(tmp_path, port=port)
+        env["FAKE_DERIVED_TIMEOUT"] = "90.4"  # 無條件進位應該變成 91
+        r = _run(env, "--", "--book", "x.epub")
+        assert r.returncode == 0, r.stderr[-1500:]
+        out = Path(env["FAKE_TRANSLATE_OUT"]).read_text(encoding="utf-8")
+        assert "--timeout 91" in out
+        assert "翻譯逾時：91 秒" in r.stderr
+    finally:
+        srv.shutdown()
+
+
+def test_derived_timeout_exact_integer_not_rounded_up_unnecessarily(tmp_path: Path) -> None:
+    srv, port = _serve_models()
+    try:
+        env = _setup(tmp_path, port=port)
+        env["FAKE_DERIVED_TIMEOUT"] = "90"
+        r = _run(env, "--", "--book", "x.epub")
+        assert r.returncode == 0, r.stderr[-1500:]
+        out = Path(env["FAKE_TRANSLATE_OUT"]).read_text(encoding="utf-8")
+        assert "--timeout 90" in out
+    finally:
+        srv.shutdown()
+
+
+def test_missing_derived_timeout_leaves_translator_default_untouched(tmp_path: Path) -> None:
+    """探針成功但沒回傳 derived_timeout_s（舊版探針、或欄位缺漏）：不硬湊一個值，
+    翻譯器維持用它自己的 --timeout 預設，不能因為缺一個欄位就整個失敗。"""
+    srv, port = _serve_models()
+    try:
+        env = _setup(tmp_path, port=port)  # 沒設 FAKE_DERIVED_TIMEOUT
+        r = _run(env, "--", "--book", "x.epub")
+        assert r.returncode == 0, r.stderr[-1500:]
+        out = Path(env["FAKE_TRANSLATE_OUT"]).read_text(encoding="utf-8")
+        assert "--timeout" not in out
+        assert "沒有回傳可用的逾時值" in r.stderr
+    finally:
+        srv.shutdown()
+
+
+def test_probe_failure_does_not_override_translator_timeout(tmp_path: Path) -> None:
+    srv, port = _serve_models()
+    try:
+        env = _setup(tmp_path, port=port)
+        env["FAKE_PROBE_FAIL"] = "1"
+        r = _run(env, "--", "--book", "x.epub")
+        assert r.returncode == 0, r.stderr
+        out = Path(env["FAKE_TRANSLATE_OUT"]).read_text(encoding="utf-8")
+        assert "--timeout" not in out
     finally:
         srv.shutdown()
 
@@ -406,7 +471,7 @@ def test_sglang_engine_uses_native_args_and_passes_thinking_preflight(tmp_path: 
         assert f"--raw --args python3 -m sglang.launch_server --model-path {MODEL}" in create
         assert "--context-length 16384" in create
         assert "--mem-fraction-static 0.92" in create
-        assert "--max-running-requests 24" in create
+        assert "--max-running-requests 32" in create
         assert "--reasoning-parser qwen3" in create
         assert "--max-model-len" not in create
         assert "--gpu-memory-utilization" not in create

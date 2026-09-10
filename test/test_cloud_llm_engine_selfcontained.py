@@ -209,10 +209,10 @@ def test_engine_runs_thinking_probe_before_translator_without_external_checkout(
         assert "destroyed" in calls
         if engine == "sglang":
             assert "--reasoning-parser qwen3" in calls
-            assert "--max-running-requests 24" in calls
+            assert "--max-running-requests 32" in calls
             assert "--max-model-len" not in calls
         else:
-            assert "--max-num-seqs 24" in calls
+            assert "--max-num-seqs 32" in calls
             assert "--max-running-requests" not in calls
     finally:
         server.shutdown()
@@ -231,13 +231,13 @@ def test_concurrency_override_stays_synchronized_without_external_checkout(
         translated_args = Path(env["TRANSLATE_OUT"]).read_text(encoding="utf-8")
         assert "--max-concurrent-requests 12" in translated_args
         calls = Path(env["STUB_CALLS"]).read_text(encoding="utf-8")
-        server_flag = "--max-num-seqs 24" if engine == "vllm" else "--max-running-requests 24"
+        server_flag = "--max-num-seqs 32" if engine == "vllm" else "--max-running-requests 32"
         assert server_flag in calls
     finally:
         server.shutdown()
 
 
-@pytest.mark.parametrize("safe", [24, 16, 12, 8])
+@pytest.mark.parametrize("safe", [32, 24, 16, 12, 8])
 def test_adaptive_branches_are_covered_without_external_checkout(
     tmp_path: Path, safe: int
 ) -> None:
@@ -254,7 +254,7 @@ def test_adaptive_branches_are_covered_without_external_checkout(
         assert telemetry["gpu"] == "RTX 5090" and telemetry["profile"] == "int4"
         assert telemetry["waves"][0]["mean_single_tok_s"] == 28.5
         if safe == 8:
-            assert "都未達 20% 跑飛餘裕" in result.stderr
+            assert "落後者或吞吐都不合格" in result.stderr
     finally:
         server.shutdown()
 
@@ -290,7 +290,7 @@ def test_explicit_value_still_probes_and_only_warns_above_safe(
         warning = f"明傳併發 {explicit} 高於探針安全值 {safe}"
         assert (warning in result.stderr) is warns
         calls = Path(env["STUB_CALLS"]).read_text(encoding="utf-8")
-        assert f"--max-num-seqs {max(24, explicit)}" in calls
+        assert f"--max-num-seqs {max(32, explicit)}" in calls
     finally:
         server.shutdown()
 
