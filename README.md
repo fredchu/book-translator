@@ -39,6 +39,10 @@ extract_epub.py           # OPF spine walk → manifest v2 + verbatim copy of
 dispatch.py + glossary.py # parallel chapter translation with per-book glossary,
    │                       # style anchor, last-paragraph carryover, cross-chunk
    │                       # coherence — chapter 1 confirms tone before fan-out
+   │                       # spec_terms.json (optional, per book) pins agreed
+   │                       # renderings; only the terms a chunk actually contains
+   │                       # are injected. REQUIRED before enabling concurrency —
+   │                       # without it, independent chunks diverge on names
    ▼
 assemble.py               # interleave src/tgt paragraphs at original file paths;
    │                       # embed ALL extracted assets; hand-build nav with
@@ -71,7 +75,7 @@ Output strategies (per-spine-item):
 Five orthogonal audits. The first four are deterministic scripts; the fifth is the pytest suite. Any failure stops the run; the bad EPUB is not shipped.
 
 ```
-$ pytest -q                                          # 338 passed
+$ pytest -q                                          # full suite must be green
 $ python scripts/structural_audit.py    --source ... --output ... --book-dir ...
 $ python scripts/bilingual_coverage_audit.py  --source ... --output ...
 $ python scripts/href_resolve_audit.py        --output ...
@@ -124,7 +128,10 @@ default reverted. Use `--omlx-model Qwen3.6-35B-Heretic-4bit` when a draft is
 enough (~4x faster).
 
 Because the offline path has no glossary pass, `offline_postprocess.py` recovers
-what the glossary would have provided — Simplified→Traditional via opencc `s2twp`,
+what the glossary would have provided — Simplified→Traditional via opencc `s2tw`
+applied **sentence by sentence, only to sentences containing an unambiguously Simplified
+character** (the `p` variant also swaps mainland vocabulary and corrupts already-correct
+Traditional text; even plain `s2tw` mis-resolves one-to-many characters, hence the gate),
 character-name coherence, bilingual ToC labels, book-wide gloss dedupe, and
 acronym collapse. The last two exist because the model sees one chunk at a time
 and treats every chunk as a term's first mention; cross-chunk consistency is
@@ -191,6 +198,18 @@ Each round was driven by the [`/automl`](https://github.com/fredchu/claude-autom
 
 ---
 
+## 雲端 GPU（Vast.ai / RunPod）
+
+`scripts/cloud_llm.sh -- --book X.epub` 會租一台 GPU、用 vLLM（或 `CLOUD_LLM_ENGINE=sglang` 換 SGLang）跑 Qwopus 模型、經 omlx 引擎翻譯，翻完砍機。細節見 SKILL.md 的「Cloud mode」。
+
+章節會併發派送，而**同時要送幾個請求是在你實際租到的那台機器上量出來的**——送一波正式大小的稿子，依序試 24、16、12、8，直到某一級同時通過吞吐下限與最慢請求上限為止。過程不使用顯示卡型號或顯存門檻；`CLOUD_LLM_CONCURRENCY` 可以覆蓋。
+
+實測（RTX 6000 Ada 48GB、int4、一本 503 個請求的書）：同時送 16 個時**每本約 7 分鐘、約 0.16 美元**，而先前預設的 4 是 20 分鐘、0.30 美元。開機要 5 到 11 分鐘，在這個併發寬度下開機比翻譯還久。
+
+> **併發需要術語表。** 沒有 `spec_terms.json` 時，併發的每一塊會各自決定人名怎麼音譯——實測比循序**更糟**，不只是沒變好。程式會警告，但不會擋你。
+
+---
+
 ## 為什麼做這個
 
 通用 AI 書籍翻譯工具常見兩個問題：
@@ -214,6 +233,9 @@ extract_epub.py           # 走 OPF spine → manifest v2 + verbatim 複製
 dispatch.py + glossary.py # 平行翻譯各章，每書一份 glossary、style anchor、
    │                       # 跨章節末段 carryover；第 1 章 preview 確認語感
    │                       # 才 fan out 其餘章節
+   │                       # spec_terms.json（選用，每書一份）釘住講好的譯名，
+   │                       # 只注入這一塊真的出現的詞。開併發前是必要條件——
+   │                       # 沒有它，各自獨立的塊會在人名上分歧
    ▼
 assemble.py               # 原檔路徑下交錯 src/tgt 段落；嵌入所有抽出的資產；
    │                       # 手刻 nav 保留 PART 階層
@@ -245,7 +267,7 @@ bilingual.epub
 五個正交 audit。前四個是確定性 script，第五個是 pytest。任一失敗就擋下整個流程，不會交付有問題的 EPUB。
 
 ```
-$ pytest -q                                          # 69 passed
+$ pytest -q                                          # 全套必須綠
 $ python scripts/structural_audit.py    --source ... --output ... --book-dir ...
 $ python scripts/bilingual_coverage_audit.py  --source ... --output ...
 $ python scripts/href_resolve_audit.py        --output ...
@@ -278,6 +300,34 @@ Python 3.10+：
 - 直接給一個 `.epub` 路徑且暗示要做文學翻譯
 
 skill 會帶你確認 glossary、印出第 1 章 preview 讓你確認語感，再 fan out 翻剩下的章節。中斷後可從 `<run_dir>/state.json` 續跑。
+
+---
+
+## 離線路徑（本機模型，不花 API 費用）
+
+除了上面的 Claude subagent 路徑，整本書也可以用 Apple Silicon 上的本機模型翻，
+走 [omlx](https://github.com/jundot/omlx)：
+
+```bash
+python3 scripts/translate_book_ollama.py --book /path/to/X.epub --out /path/to/out/
+# 預設就是：--engine omlx --omlx-model Qwopus3.6-27B-v2-MLX-4bit
+```
+
+**預設是品質優先，不是吞吐優先。** 一顆比較快的 35B-A3B MoE 曾經當了六週預設，
+依據是 5 倍速度優勢加上一個自動化的語域評分；後來有人完整讀完一章，判斷它的散文明顯扁平，
+預設就換回來了。只要草稿的時候用 `--omlx-model Qwen3.6-35B-Heretic-4bit`（約快 4 倍）。
+
+離線路徑沒有 glossary 那一關，所以 `offline_postprocess.py` 補回 glossary 本來會提供的東西——
+簡繁轉換用 opencc `s2tw`，而且是**逐句判斷、只轉含有明確簡體字的句子**
+（帶 `p` 的版本還會換大陸詞彙、把本來就正確的繁體改壞；即使是純 `s2tw` 也會把一簡對多繁的字
+挑錯，所以要加這道閘）、人名一致化、雙語目錄標籤、全書注釋去重、縮寫收合。
+後兩者存在是因為模型一次只看到一塊，每一塊都以為自己是那個詞的第一次出現；
+跨塊一致性是確定性的工作，不是 prompt 能修的。
+
+**風格規則帶著一個學費很貴的警告。** `dispatch.OFFLINE_STYLE_RULES` **絕對不可以**放句長規則。
+曾經放過一次：它在「超過 55 字的句子佔比」這個指標上是所有候選裡最好的，
+但同時把句長變異壓平、把行內術語注釋毀掉。**優化長度的代理指標，等於在優化單調。**
+那個常數上方的註解留著完整的量測表。
 
 ---
 
