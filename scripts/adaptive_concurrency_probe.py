@@ -147,6 +147,23 @@ WAVE_DURATION_LATENCY_MULTIPLE = 3.0
 STEADY_STATE_RAMP_FRACTION = 0.25
 SATURATION_DEGRADATION_TOLERANCE = 0.05
 DIAGNOSTIC_TIMEOUT_S = 10.0
+# ---------- warm-up request (2026-09-10, orchestrator-reported) ----------
+# Every tier's closed loop is the FIRST traffic that tier's own slots ever
+# send -- there is no prior wave's requests to have already absorbed a
+# one-time cold-start cost (model paging in, thread/connection setup). A
+# real 4th SGLang trial's N=8 wave hit max_latency 41.4s vs median 25.1s
+# (1.65x, uncomfortably close to the 2x backlog threshold) -- and a local
+# oMLX run reproduced the SAME shape outright at N=2 (23.5s vs 9.7s median,
+# tripping the gate) purely from this effect, with the machine otherwise
+# idle. One request, fired and DISCARDED before the timed window starts,
+# absorbs that cost so it never lands inside max_latency/median/duration and
+# never counts toward completions or tokens. Deliberately generic/unrelated
+# to the measured pool (not one of `requests_`) so it can't prefix-cache-warm
+# a prompt that WILL be measured -- that would bias the first real completion
+# faster, the unsafe direction. Small max_tokens on purpose: this only needs
+# to trigger the same warm-up machinery, not a full-length generation.
+_WARMUP_REQUEST = {"system": "warmup", "user": "warmup"}
+WARMUP_MAX_TOKENS = 8
 
 
 class ServerDiedError(RuntimeError):
@@ -252,6 +269,13 @@ def probe_wave(
     if not requests_:
         raise ValueError(f"N={n} needs at least one prompt to run a closed-loop wave")
 
+    # See the module-level comment above WARMUP_MAX_TOKENS: fired and
+    # discarded BEFORE `start` below, so its cost never enters the timed
+    # window. A failure here (e.g. connection refused) propagates exactly
+    # like a real measured request's failure would -- choose_concurrency()'s
+    # existing liveness check already handles that correctly.
+    probe_one(endpoint, model, api_key, _WARMUP_REQUEST, WARMUP_MAX_TOKENS, timeout)
+
     lock = threading.Lock()
     completions: list[dict[str, Any]] = []
     failure: list[BaseException] = []
@@ -291,6 +315,30 @@ def probe_wave(
         raise failure[0]
 
     final_duration_s = duration_s
+    metrics = _wave_metrics_from_completions(completions, final_duration_s, ramp_fraction)
+    return {
+        "n": n,
+        "requests": len(completions),
+        **metrics,
+        # Keep raw measurements in telemetry so aggregation can be audited without
+        # asserting anything about the runner's absolute wall-clock performance.
+        "samples": completions,
+    }
+
+
+def _wave_metrics_from_completions(
+    completions: list[dict[str, Any]],
+    final_duration_s: float,
+    ramp_fraction: float = STEADY_STATE_RAMP_FRACTION,
+) -> dict[str, Any]:
+    """Pure post-processing of a closed-loop wave's raw completions (extracted
+    2026-09-10, after fable's mutation check found the steady-state window's
+    ramp-exclusion had ZERO test coverage: setting STEADY_STATE_RAMP_FRACTION
+    to 0.0, or loosening the window's lower bound to `0 <= c["end_t"]`, both
+    left the full 52-test suite green). Factored out so the exclusion itself
+    is calibration-testable with synthetic completions -- no HTTP, no
+    threads, no clock; see
+    test_wave_metrics_excludes_ramp_up_tokens_from_steady_state."""
     window_start_s = final_duration_s * ramp_fraction
     window_length_s = final_duration_s - window_start_s
     window_tokens = sum(
@@ -300,10 +348,7 @@ def probe_wave(
     latencies = [c["elapsed_s"] for c in completions]
     total_out_tokens = sum(c["out_tokens"] for c in completions)
     wall_clock_s = max((c["end_t"] for c in completions), default=0.0)
-
     return {
-        "n": n,
-        "requests": len(completions),
         "duration_s": round(final_duration_s, 3),
         "window_start_s": round(window_start_s, 3),
         # Per-REQUEST speed. Naturally DECREASES as concurrency rises (more
@@ -322,9 +367,6 @@ def probe_wave(
         "aggregate_tok_per_s": (total_out_tokens / wall_clock_s) if wall_clock_s else 0.0,
         "max_latency_s": max(latencies),
         "median_latency_s": statistics.median(latencies),
-        # Keep raw measurements in telemetry so aggregation can be audited without
-        # asserting anything about the runner's absolute wall-clock performance.
-        "samples": completions,
     }
 
 
@@ -789,21 +831,52 @@ def choose_concurrency(
     return selected_n, waves, True, derive_timeout(max_tokens, selected_wave)
 
 
-def candidates_within_cap(effective_cap: int | None) -> tuple[int, ...]:
-    """Filter CANDIDATES down to whatever a server-reported hard ceiling
-    allows (spec-07, 3rd real trial: SGLang's own "max_running_requests is
-    capped to N by the mamba state cache" log line). None means no cap was
-    found -- use the full ladder unchanged."""
+def candidates_within_cap(
+    effective_cap: int | None, candidates: tuple[int, ...] = CANDIDATES
+) -> tuple[int, ...]:
+    """Filter `candidates` (default CANDIDATES) down to whatever a
+    server-reported hard ceiling allows (spec-07, 3rd real trial: SGLang's
+    own "max_running_requests is capped to N by the mamba state cache" log
+    line). None means no cap was found -- use the ladder unchanged."""
     if effective_cap is None:
-        return CANDIDATES
-    filtered = tuple(n for n in CANDIDATES if n <= effective_cap)
+        return candidates
+    filtered = tuple(n for n in candidates if n <= effective_cap)
     if filtered:
         return filtered
     # Even the smallest candidate exceeds the reported cap -- still try it
     # alone so a real measurement comes back instead of refusing to probe at
     # all; the caller can see candidates[0] > effective_cap in the output and
     # know the server is far more constrained than usual.
-    return (CANDIDATES[0],)
+    return (candidates[0],)
+
+
+def parse_candidates_override(raw: str) -> tuple[int, ...] | None:
+    """Parse --candidates/PROBE_CANDIDATES ("2,4,8,16") into a strictly
+    increasing tuple of positive ints, or None if not given.
+
+    Exists so local/mechanism testing can swap the candidate ladder WITHOUT
+    ever editing the tracked CANDIDATES constant. A prior round temporarily
+    edited CANDIDATES directly in the working tree for a local run, marked it
+    "revert before commit", and left it in place -- a second collaborator's
+    independent test run against that same dirty working tree then measured
+    4 failing tests and reported them as real defects in a commit that, on a
+    clean checkout, actually had 2 (both pre-existing fixture gaps unrelated
+    to the commit). The fix is structural, not "remember to revert": a
+    source edit to a tracked file is a shared side effect the moment another
+    process reads the tree, so local overrides must never touch it at all.
+    """
+    raw = raw.strip()
+    if not raw:
+        return None
+    try:
+        values = tuple(int(part.strip()) for part in raw.split(","))
+    except ValueError as exc:
+        raise ValueError(f"--candidates must be comma-separated integers, got {raw!r}") from exc
+    if not values or any(v <= 0 for v in values):
+        raise ValueError(f"--candidates must be positive integers, got {raw!r}")
+    if list(values) != sorted(set(values)):
+        raise ValueError(f"--candidates must be strictly increasing with no duplicates, got {raw!r}")
+    return values
 
 
 def main() -> int:
@@ -833,9 +906,22 @@ def main() -> int:
             "behind that cap, not real concurrency (spec-07, 3rd real trial)"
         ),
     )
+    parser.add_argument(
+        "--candidates",
+        default=os.environ.get("PROBE_CANDIDATES", ""),
+        help=(
+            "override the CANDIDATES ladder for THIS run only, comma-separated ascending "
+            "positive ints (e.g. '2,4,8,16') — for local/mechanism testing, so this never "
+            "requires a temporary edit to the tracked CANDIDATES constant (also settable via "
+            "the PROBE_CANDIDATES env var; --effective-cap still filters whichever ladder is used)"
+        ),
+    )
     args = parser.parse_args()
 
-    candidates = candidates_within_cap(args.effective_cap)
+    candidates_base = parse_candidates_override(args.candidates)
+    candidates = candidates_within_cap(
+        args.effective_cap, candidates_base if candidates_base is not None else CANDIDATES
+    )
 
     result: dict[str, Any] = {
         "gpu": args.gpu,

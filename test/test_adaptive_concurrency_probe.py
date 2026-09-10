@@ -306,7 +306,21 @@ def test_real_http_wave_measures_completion_tokens_latency_and_parallelism() -> 
         def do_POST(self):  # noqa: N802
             size = int(self.headers.get("Content-Length", "0"))
             body = json.loads(self.rfile.read(size))
-            assert body["messages"][1]["content"].startswith("chunk-")
+            content = body["messages"][1]["content"]
+            # probe_wave()'s uncounted warm-up request (2026-09-10) arrives
+            # once, synchronously, BEFORE the four measured threads start --
+            # it must not touch the barrier (sized for exactly 4 parties) or
+            # this test's overlap-of-4 guarantee below.
+            if content == "warmup":
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "choices": [{"message": {"content": "warm"}}],
+                    "usage": {"completion_tokens": 1},
+                }).encode())
+                return
+            assert content.startswith("chunk-")
             with self.lock:
                 self.__class__.active += 1
                 self.__class__.max_active = max(self.__class__.max_active, self.__class__.active)
@@ -359,6 +373,113 @@ def test_real_http_wave_measures_completion_tokens_latency_and_parallelism() -> 
         assert wave["steady_state_tok_per_s"] == 0.0
     finally:
         server.shutdown()
+
+
+def test_probe_wave_fires_one_uncounted_warmup_request_before_timing_starts() -> None:
+    """2026-09-10, orchestrator-reported: a real cloud N=8 wave hit
+    max_latency 41.4s vs median 25.1s (1.65x, close to the 2x backlog
+    threshold) and a local run reproduced the same shape outright at N=2 --
+    both from the FIRST tier's own cold start, no prior wave having warmed
+    the server up. The warm-up request must be sent, must be discarded (not
+    counted toward wave["requests"]/samples), and must use the generic
+    sentinel content, not one of the measured pool's own prompts."""
+    received: list[dict[str, Any]] = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            size = int(self.headers.get("Content-Length", "0"))
+            received.append(json.loads(self.rfile.read(size)))
+            time.sleep(0.05)  # dominates min_duration_s below -> exactly one real round
+            payload = json.dumps({
+                "choices": [{"message": {"content": "譯文"}}],
+                "usage": {"completion_tokens": 4},
+            }).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, _format, *_args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        rows = [{"system": "s", "user": "chunk-0"}]
+        wave = probe.probe_wave(
+            f"http://127.0.0.1:{server.server_address[1]}", "model", "key", rows, 1, 2048, 2,
+            min_duration_s=0.02, duration_latency_multiple=0.0, ramp_fraction=0.25,
+        )
+        assert wave["requests"] == 1  # the warm-up call must not be counted
+        assert len(received) == 2  # warm-up + the one real (measured) request
+        assert received[0]["messages"][1]["content"] == "warmup"
+        assert received[1]["messages"][1]["content"] == "chunk-0"
+    finally:
+        server.shutdown()
+
+
+def test_wave_metrics_excludes_ramp_up_tokens_from_steady_state() -> None:
+    """fable's mutation check (2026-09-10) found the steady-state window's
+    ramp exclusion had ZERO test coverage: setting STEADY_STATE_RAMP_FRACTION
+    to 0.0, or loosening the window's lower bound to `0 <= c["end_t"]`, both
+    left the full 52-test suite green. Two ramp-up completions (end_t inside
+    the excluded first 25%) carry deliberately extreme token counts a buggy
+    (unguarded) accounting would surface immediately."""
+    completions = [
+        {"end_t": 5.0, "elapsed_s": 1.0, "out_tokens": 100_000.0, "tok_per_s": 100_000.0},
+        {"end_t": 10.0, "elapsed_s": 1.0, "out_tokens": 100_000.0, "tok_per_s": 100_000.0},
+        {"end_t": 40.0, "elapsed_s": 5.0, "out_tokens": 50.0, "tok_per_s": 10.0},
+        {"end_t": 70.0, "elapsed_s": 5.0, "out_tokens": 50.0, "tok_per_s": 10.0},
+        {"end_t": 95.0, "elapsed_s": 5.0, "out_tokens": 50.0, "tok_per_s": 10.0},
+    ]
+    # No ramp_fraction passed here on purpose: this must exercise the real
+    # STEADY_STATE_RAMP_FRACTION constant's default, not a value hardcoded in
+    # the test -- otherwise mutating the constant itself would slip past this
+    # test undetected (exactly the shape of gap fable found).
+    assert probe.STEADY_STATE_RAMP_FRACTION == 0.25
+    excluding_ramp = probe._wave_metrics_from_completions(completions, 100.0)
+    assert excluding_ramp["window_start_s"] == 25.0
+    # Only the 3 in-window completions (150 tokens over 75s) count -- the two
+    # 100_000-token ramp-up outliers must be fully excluded, not diluted in.
+    assert excluding_ramp["steady_state_tok_per_s"] == pytest.approx(150.0 / 75.0)
+
+    # Reverse assertion: with ramp_fraction=0.0 the SAME completions must
+    # produce a materially different estimate -- if this test only checked
+    # the ramp_fraction=0.25 case, deleting the exclusion (ramp_fraction
+    # hardcoded to 0, or the >= window_start_s check dropped) would still
+    # pass it by coincidence.
+    including_ramp = probe._wave_metrics_from_completions(completions, 100.0, 0.0)
+    assert including_ramp["window_start_s"] == 0.0
+    assert including_ramp["steady_state_tok_per_s"] == pytest.approx(200_150.0 / 100.0)
+    assert including_ramp["steady_state_tok_per_s"] != excluding_ramp["steady_state_tok_per_s"]
+
+
+def test_parse_candidates_override_accepts_comma_separated_ascending_ints() -> None:
+    assert probe.parse_candidates_override("") is None
+    assert probe.parse_candidates_override("  ") is None
+    assert probe.parse_candidates_override("2,4,8,16") == (2, 4, 8, 16)
+    assert probe.parse_candidates_override(" 2 , 4 ") == (2, 4)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    ["2,abc", "0,4", "-1,4", "4,2", "2,2,4"],
+)
+def test_parse_candidates_override_rejects_malformed_input(raw: str) -> None:
+    with pytest.raises(ValueError):
+        probe.parse_candidates_override(raw)
+
+
+def test_candidates_within_cap_accepts_an_override_ladder_not_just_candidates() -> None:
+    """2026-09-10: a prior round temporarily edited the tracked CANDIDATES
+    constant for a local test run and left it in the working tree, which
+    corrupted a second collaborator's independent test results on that same
+    commit. The fix is this parameter: local/mechanism testing overrides the
+    ladder via --candidates/PROBE_CANDIDATES, never by editing source."""
+    override = (2, 4, 8, 16)
+    assert probe.candidates_within_cap(None, override) == override
+    assert probe.candidates_within_cap(10, override) == (2, 4, 8)
+    assert probe.candidates_within_cap(1, override) == (2,)  # smallest still tried alone
 
 
 def _evidence_from_bodies(steps: list[tuple[str, str, bool]]):
