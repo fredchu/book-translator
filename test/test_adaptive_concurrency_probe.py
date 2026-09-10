@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import http.server
 import importlib.util
 import json
@@ -307,14 +308,92 @@ def _evidence_from_bodies(steps: list[tuple[str, str, bool]]):
     return fetch
 
 
-def test_retract_signal_sums_numbers_on_any_line_mentioning_retract() -> None:
-    """Field/endpoint name is deliberately not pinned (spec-07 review) — any
-    line containing 'retract' anywhere in either endpoint's raw text counts."""
+def test_retract_signal_prefers_exact_sglang_metric_and_records_line() -> None:
+    exact_line = 'sglang:num_retracted_reqs{engine_type="unified",pid="243"} 0.0'
     snapshot = {
-        "server_info": {"alive": True, "body": "num_retracted_reqs: 3\nqueue_len: 99"},
-        "metrics": {"alive": True, "body": 'sglang:num_retract_total{gpu="0"} 7'},
+        "server_info": {"alive": True, "body": '{"retract_check_timestamp":1781619500.97}'},
+        "metrics": {"alive": True, "body": "unrelated_retract_total 99\n" + exact_line},
     }
-    assert probe.retract_signal(snapshot) == 10.0
+    details = probe.retract_signal_details(snapshot)
+    assert details["value"] == 0.0
+    assert details["match"] == "exact"
+    assert [entry["line"] for entry in details["lines"]] == [exact_line]
+
+
+def test_retract_signal_supports_exact_vllm_preemption_metric() -> None:
+    line = 'vllm:num_preemptions_total{model_name="m"} 2.0'
+    details = probe.retract_signal_details({"metrics": {"body": line}})
+    assert details["value"] == 2.0
+    assert details["match"] == "exact"
+    assert details["lines"][0]["line"] == line
+
+
+@pytest.mark.parametrize("generic_metric", ["custom_retract_total", "custom_preempt_total"])
+def test_retract_signal_generic_fallback_excludes_comments_and_time_metrics(
+    generic_metric: str,
+) -> None:
+    snapshot = {
+        "server_info": {"body": '{"num_retracted_reqs": 1781619500.97}'},
+        "metrics": {
+            "body": (
+                "# HELP custom_retract_total timestamp 1781619500.97\n"
+                "# TYPE custom_retract_total gauge\n"
+                "custom_retract_created 1781619500.97\n"
+                "custom_retract_timestamp_seconds 1781619500.97\n"
+                "custom_retract_runtime_seconds 1781619500.97\n"
+                f'{generic_metric}{{gpu="0"}} 3.0'
+            )
+        },
+    }
+    details = probe.retract_signal_details(snapshot)
+    assert details["value"] == 3.0
+    assert details["match"] == "generic_prometheus"
+    assert [entry["metric"] for entry in details["lines"]] == [generic_metric]
+
+
+def _real_sglang_metrics_fixture() -> str:
+    path = REPO / "test" / "fixtures" / "adaptive-concurrency-evidence-001-metrics.txt"
+    raw = path.read_bytes()
+    assert hashlib.sha256(raw).hexdigest() == "2712ae207b3e62b9e0b814e25415bab9024a2a8939c318a55ac499e36bc28912"
+    return raw.decode("utf-8")
+
+
+def test_real_metrics_fixture_reads_zero_not_timestamp() -> None:
+    metrics = _real_sglang_metrics_fixture()
+    details = probe.retract_signal_details(
+        {"server_info": {"body": ""}, "metrics": {"body": metrics}}
+    )
+    assert details["value"] == 0.0
+    assert details["match"] == "exact"
+    assert len(details["lines"]) == 1
+    assert details["lines"][0]["metric"] == "sglang:num_retracted_reqs"
+    assert details["lines"][0]["line"].endswith(" 0.0")
+
+
+def test_real_metrics_fixture_allows_observed_n8_wave_to_pass() -> None:
+    metrics_body = _real_sglang_metrics_fixture()
+    increased = metrics_body.replace(
+        'sglang:num_retracted_reqs{engine_type="unified",model_name="Jackrong/Qwopus3.6-27B-v2-FP8",moe_ep_rank="0",pid="243",pp_rank="0",tp_rank="0"} 0.0',
+        'sglang:num_retracted_reqs{engine_type="unified",model_name="Jackrong/Qwopus3.6-27B-v2-FP8",moe_ep_rank="0",pid="243",pp_rank="0",tp_rank="0"} 1.0',
+    )
+    evidence = _evidence_from_bodies([
+        ("", metrics_body, True),  # before N=8
+        ("", metrics_body, True),  # after N=8: true counter unchanged
+        ("", metrics_body, True),  # before N=12
+        ("", increased, True),     # stop after proving N=8 passed
+    ])
+    wave_metrics = {
+        8: _m(25.0, 200.0, 40.5, 25.4),  # observed lag ratio 1.59 < fallback 2x
+        12: _m(23.0, 230.0, 30.0, 24.0),
+    }
+    selected, waves, passed, _timeout = probe.choose_concurrency(
+        _requests(), _fake_wave(wave_metrics, []), fetch_evidence=evidence
+    )
+    assert selected == 8 and passed is True
+    assert waves[0]["passed"] is True
+    assert waves[0]["backlog_gate_used"] == "retract"
+    assert waves[0]["retract_before"] == waves[0]["retract_after"] == 0.0
+    assert waves[0]["retract_evidence_before"]["lines"][0]["line"].endswith(" 0.0")
 
 
 def test_retract_signal_returns_none_not_zero_when_nothing_matches() -> None:
@@ -335,10 +414,10 @@ def test_backlog_gate_prefers_retract_signal_over_latency() -> None:
     seen: list[tuple[int, list[str]]] = []
     metrics = {8: _m(32.0, 240.0, 10.0, 10.0), 12: _m(28.0, 280.0, 10.0, 10.0)}
     evidence = _evidence_from_bodies([
-        ("num_retracted: 0", "", True),  # before N=8
-        ("num_retracted: 0", "", True),  # after N=8
-        ("num_retracted: 0", "", True),  # before N=12
-        ("num_retracted: 3", "", True),  # after N=12 -- retract count rose during the wave
+        ("{}", "sglang:num_retracted_reqs 0.0", True),  # before N=8
+        ("{}", "sglang:num_retracted_reqs 0.0", True),  # after N=8
+        ("{}", "sglang:num_retracted_reqs 0.0", True),  # before N=12
+        ("{}", "sglang:num_retracted_reqs 3.0", True),  # after N=12 -- real counter rose
     ])
     selected, waves, passed, _timeout = probe.choose_concurrency(
         _requests(), _fake_wave(metrics, seen), fetch_evidence=evidence
@@ -349,6 +428,24 @@ def test_backlog_gate_prefers_retract_signal_over_latency() -> None:
     assert waves[1]["backlog_ok"] is False
     assert waves[1]["retract_before"] == 0.0
     assert waves[1]["retract_after"] == 3.0
+
+
+def test_backlog_gate_falls_back_when_before_after_counter_series_differ() -> None:
+    seen: list[tuple[int, list[str]]] = []
+    metrics = {8: _m(32.0, 240.0, 25.0, 10.0)}  # latency fallback must fail at 2x
+    evidence = _evidence_from_bodies([
+        ("", 'custom_preempt_total{worker="old"} 100', True),
+        ("", 'sglang:num_retracted_reqs{worker="new"} 1', True),
+    ])
+    selected, waves, passed, _timeout = probe.choose_concurrency(
+        _requests(), _fake_wave(metrics, seen), fetch_evidence=evidence
+    )
+    assert selected == 8 and passed is False
+    assert waves[0]["retract_before"] == 100.0
+    assert waves[0]["retract_after"] == 1.0
+    assert waves[0]["retract_series_compatible"] is False
+    assert waves[0]["backlog_gate_used"] == "latency_fallback"
+    assert waves[0]["backlog_ok"] is False
 
 
 def test_backlog_gate_falls_back_to_latency_when_no_retract_signal_anywhere() -> None:
@@ -519,6 +616,51 @@ def test_fetch_endpoint_text_alive_false_on_connection_refused() -> None:
     result = probe.fetch_endpoint_text("http://127.0.0.1:1", "", timeout=1.0)
     assert result["alive"] is False
     assert result["body"] == ""
+
+
+def test_choose_concurrency_respects_a_filtered_candidates_subset() -> None:
+    """spec-07, 3rd real trial: a candidate above a hard server-side ceiling
+    measures queuing behind that ceiling, not real concurrency. Only
+    metrics for {8, 12} exist -- if the climb ever tried 16, this would
+    KeyError inside the fake wave, proving the filter actually bounds the
+    ladder rather than just relabeling it after the fact."""
+    seen: list[tuple[int, list[str]]] = []
+    metrics = {8: _m(32.0, 240.0, 10.0, 10.0), 12: _m(28.0, 280.0, 10.0, 10.0)}
+    selected, waves, passed, _timeout = probe.choose_concurrency(
+        _requests(), _fake_wave(metrics, seen), candidates=(8, 12)
+    )
+    assert selected == 12
+    assert passed is True
+    assert len(waves) == 2
+
+
+def test_choose_concurrency_rejects_empty_candidates() -> None:
+    with pytest.raises(ValueError, match="non-empty"):
+        probe.choose_concurrency(_requests(), lambda _batch, _n: {}, candidates=())
+
+
+def test_candidates_within_cap_returns_full_ladder_when_no_cap_reported() -> None:
+    """No cap found in the container log means "not capped", not "unknown" --
+    the full CANDIDATES ladder applies unchanged."""
+    assert probe.candidates_within_cap(None) == probe.CANDIDATES
+
+
+def test_candidates_within_cap_filters_to_reported_ceiling() -> None:
+    assert probe.candidates_within_cap(20) == (8, 12, 16)
+
+
+def test_candidates_within_cap_is_inclusive_of_an_exact_candidate_value() -> None:
+    """A cap that lands exactly ON a candidate keeps that candidate -- the
+    server said it can handle up to and including this many."""
+    assert probe.candidates_within_cap(16) == (8, 12, 16)
+
+
+def test_candidates_within_cap_keeps_smallest_when_cap_is_below_it() -> None:
+    """A cap below even the smallest candidate (e.g. cap=5) still tries N=8
+    alone rather than refusing to probe at all -- one real measurement beats
+    none, and the output records candidates[0] > effective_cap for whoever
+    reads the result."""
+    assert probe.candidates_within_cap(5) == (8,)
 
 
 def test_probe_own_default_max_tokens_matches_translator_single_source() -> None:

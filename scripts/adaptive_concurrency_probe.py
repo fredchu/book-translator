@@ -56,13 +56,10 @@ of the above, both found in review before any money was spent on a live run.
    counter increased during the wave (fetched via the same fetch_evidence()
    snapshot, before and after). Falls back to a latency multiple — now a
    SEPARATE, tighter BACKLOG_FALLBACK_LATENCY_MULTIPLE (2.0) — only when no
-   retract-shaped line can be found in either diagnostic endpoint's raw text.
-   The field/endpoint that actually carries a retract counter on a given
-   SGLang build has never been directly observed, so nothing pins one: both
-   endpoints' raw bodies are scanned for any line containing "retract" and
-   every number on it is summed, per spec-07 review ("machine_id 那次是運氣
-   好，這次不要賭" — getting away with guessing a field name once is not a
-   reason to do it again).
+   retract/preempt counter can be found in the diagnostic metrics. Counter
+   discovery now prefers the observed exact SGLang/vLLM names, then falls
+   back to strict Prometheus samples while excluding timestamp-like metric
+   names. The exact lines used are persisted in each wave's JSON.
 """
 
 from __future__ import annotations
@@ -107,7 +104,6 @@ LATENCY_MULTIPLE = 3.0
 BACKLOG_FALLBACK_LATENCY_MULTIPLE = 2.0
 SATURATION_GAIN = 0.10
 DIAGNOSTIC_TIMEOUT_S = 10.0
-_RETRACT_NUMBER_RE = re.compile(r"-?\d+(?:\.\d+)?")
 
 
 class ServerDiedError(RuntimeError):
@@ -234,26 +230,77 @@ def fetch_evidence_snapshot(endpoint: str, api_key: str, timeout: float = DIAGNO
     }
 
 
-def _retract_lines(text: str) -> list[str]:
-    return [line.strip() for line in text.splitlines() if "retract" in line.lower()]
+_EXACT_BACKLOG_METRICS = {
+    "sglang:num_retracted_reqs",
+    "vllm:num_preemptions_total",
+}
+# 已知限制（orchestrator review 記錄，2026-09-10）：fullmatch 要求數值後面
+# 直接到行尾，但 Prometheus 曝露格式允許數值後面再接一個可選的毫秒時間戳
+# （"metric{labels} value timestamp"）。真的遇到那種帶時間戳的行會在這裡被
+# 靜默跳過，不會誤判成別的東西——後果只是退回延遲判準（安全降級，不是答錯），
+# 所以先不擋這輪；但這是刻意留下的已知限制，不是漏洞，未來若要支援帶
+# 時間戳的樣本行，這裡要放寬成允許一個可選的第三個數字欄位。
+_PROMETHEUS_SAMPLE_RE = re.compile(
+    r"^(?P<name>[A-Za-z_:][A-Za-z0-9_:]*)"
+    r"(?P<labels>\{[^}]*\})?\s+"
+    r"(?P<value>[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)\s*$"
+)
+_BACKLOG_NAME_RE = re.compile(r"retract|preempt", re.IGNORECASE)
+_EXCLUDED_COUNTER_NAME_RE = re.compile(r"time|created|timestamp", re.IGNORECASE)
+
+
+def _prometheus_samples(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    """Parse only Prometheus sample lines, skipping HELP/TYPE comments."""
+    samples: list[dict[str, Any]] = []
+    for endpoint_name, entry in snapshot.items():
+        for raw_line in (entry.get("body") or "").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            match = _PROMETHEUS_SAMPLE_RE.fullmatch(line)
+            if match is None:
+                continue
+            samples.append(
+                {
+                    "endpoint": endpoint_name,
+                    "line": raw_line,
+                    "metric": match.group("name"),
+                    "series": match.group("name") + (match.group("labels") or ""),
+                    "value": float(match.group("value")),
+                }
+            )
+    return samples
+
+
+def retract_signal_details(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Return the counter and exact evidence lines used to derive it.
+
+    Exact observed names win. Generic fallback considers only metric names
+    containing retract/preempt and rejects time/created/timestamp metrics.
+    No valid sample is unknown (None), so callers use the latency fallback.
+    """
+    samples = _prometheus_samples(snapshot)
+    exact = [sample for sample in samples if sample["metric"] in _EXACT_BACKLOG_METRICS]
+    if exact:
+        return {"value": sum(sample["value"] for sample in exact), "match": "exact", "lines": exact}
+    generic = [
+        sample
+        for sample in samples
+        if _BACKLOG_NAME_RE.search(sample["metric"])
+        and not _EXCLUDED_COUNTER_NAME_RE.search(sample["metric"])
+    ]
+    if generic:
+        return {
+            "value": sum(sample["value"] for sample in generic),
+            "match": "generic_prometheus",
+            "lines": generic,
+        }
+    return {"value": None, "match": None, "lines": []}
 
 
 def retract_signal(snapshot: dict[str, Any]) -> float | None:
-    """Sum every number on every line mentioning "retract" across BOTH
-    endpoints in one snapshot. Returns None — never 0 — when no such line
-    exists anywhere: we have never directly observed which endpoint or field
-    name actually carries a retract counter on a given SGLang build, so
-    finding nothing means "unknown", not "zero retracts happened". The
-    caller (choose_concurrency()) must fall back to the latency gate on
-    None, not treat it as a clean bill of health (spec-07 review: "machine_id
-    那次是運氣好，這次不要賭" — don't pin a field nobody has actually seen)."""
-    found = False
-    total = 0.0
-    for entry in snapshot.values():
-        for line in _retract_lines(entry.get("body") or ""):
-            found = True
-            total += sum(float(m) for m in _RETRACT_NUMBER_RE.findall(line))
-    return total if found else None
+    """Value-only compatibility view; None means no trustworthy counter."""
+    return retract_signal_details(snapshot)["value"]
 
 
 def _slim_evidence(snapshot: dict[str, Any]) -> dict[str, Any]:
@@ -307,11 +354,19 @@ def choose_concurrency(
     *,
     max_tokens: int = DEFAULT_MAX_TOKENS,
     fetch_evidence: Callable[[], dict[str, Any]] = _default_fetch_evidence,
+    candidates: tuple[int, ...] = CANDIDATES,
 ) -> tuple[int, list[dict[str, Any]], bool, float]:
-    """Climb CANDIDATES from the smallest, stopping at the first tier that
-    either backs up (a real straggler, not just an average) or stops paying
-    off (throughput gain under SATURATION_GAIN over the previous tier).
-    Returns (selected_n, waves, passed, derived_timeout_s).
+    """Climb `candidates` (default CANDIDATES) from the smallest, stopping at
+    the first tier that either backs up (a real straggler, not just an
+    average) or stops paying off (throughput gain under SATURATION_GAIN over
+    the previous tier). Returns (selected_n, waves, passed, derived_timeout_s).
+
+    `candidates` can be a filtered subset of CANDIDATES (see main()'s
+    --effective-cap): spec-07's 3rd real trial found SGLang printing its own
+    hard ceiling ("max_running_requests is capped to N by the mamba state
+    cache") — a candidate ABOVE that ceiling measures queuing behind the cap,
+    not real concurrency, so it must never even be tried once the cap is
+    known.
 
     Every tier is bracketed by an evidence snapshot (fetch_evidence(), before
     and after) used two ways:
@@ -325,18 +380,20 @@ def choose_concurrency(
       the last confirmed-safe tier. No response at all means the process is
       gone — raise ServerDiedError; the caller must NOT translate against it.
     """
-    required = sum(CANDIDATES)
+    if not candidates:
+        raise ValueError("candidates must be non-empty")
+    required = sum(candidates)
     if len(requests_) < required:
         raise ValueError(f"probe load needs {required} distinct large chunks, got {len(requests_)}")
 
     offset = 0
     waves: list[dict[str, Any]] = []
-    selected_n = CANDIDATES[0]
+    selected_n = candidates[0]
     selected_wave: dict[str, Any] | None = None
     prev_wave: dict[str, Any] | None = None
     passed_any = False
 
-    for n in CANDIDATES:
+    for n in candidates:
         batch = requests_[offset : offset + n]
         offset += n  # Every wave is cold with respect to earlier prompts.
         evidence_before = fetch_evidence()
@@ -387,11 +444,25 @@ def choose_concurrency(
         wave["max_latency_s"] = round(float(wave["max_latency_s"]), 3)
         wave["median_latency_s"] = round(float(wave["median_latency_s"]), 3)
 
-        retract_before = retract_signal(evidence_before)
-        retract_after = retract_signal(evidence_after)
+        retract_details_before = retract_signal_details(evidence_before)
+        retract_details_after = retract_signal_details(evidence_after)
+        retract_before = retract_details_before["value"]
+        retract_after = retract_details_after["value"]
         wave["retract_before"] = retract_before
         wave["retract_after"] = retract_after
-        if retract_before is not None and retract_after is not None:
+        # _slim_evidence intentionally drops raw bodies; retain the precise
+        # parsed samples so the decision remains auditable from result JSON.
+        wave["retract_evidence_before"] = retract_details_before
+        wave["retract_evidence_after"] = retract_details_after
+        compatible_retract_series = (
+            retract_before is not None
+            and retract_after is not None
+            and retract_details_before["match"] == retract_details_after["match"]
+            and {entry["series"] for entry in retract_details_before["lines"]}
+            == {entry["series"] for entry in retract_details_after["lines"]}
+        )
+        wave["retract_series_compatible"] = compatible_retract_series
+        if compatible_retract_series:
             wave["backlog_gate_used"] = "retract"
             backlog_ok = retract_after <= retract_before
         else:
@@ -440,6 +511,23 @@ def choose_concurrency(
     return selected_n, waves, True, derive_timeout(max_tokens, selected_wave)
 
 
+def candidates_within_cap(effective_cap: int | None) -> tuple[int, ...]:
+    """Filter CANDIDATES down to whatever a server-reported hard ceiling
+    allows (spec-07, 3rd real trial: SGLang's own "max_running_requests is
+    capped to N by the mamba state cache" log line). None means no cap was
+    found -- use the full ladder unchanged."""
+    if effective_cap is None:
+        return CANDIDATES
+    filtered = tuple(n for n in CANDIDATES if n <= effective_cap)
+    if filtered:
+        return filtered
+    # Even the smallest candidate exceeds the reported cap -- still try it
+    # alone so a real measurement comes back instead of refusing to probe at
+    # all; the caller can see candidates[0] > effective_cap in the output and
+    # know the server is far more constrained than usual.
+    return (CANDIDATES[0],)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--endpoint", required=True)
@@ -456,7 +544,20 @@ def main() -> int:
         default=DEFAULT_PROBE_TIMEOUT,
         help="ceiling for this probe's OWN measurement calls only — not the derived production timeout this script outputs",
     )
+    parser.add_argument(
+        "--effective-cap",
+        type=int,
+        default=None,
+        help=(
+            "hard concurrency ceiling the SERVER itself reported (e.g. parsed from SGLang's own "
+            "'max_running_requests is capped to N by the mamba state cache' log line) — CANDIDATES "
+            "above this are never tried; a candidate above a hard server-side cap measures queuing "
+            "behind that cap, not real concurrency (spec-07, 3rd real trial)"
+        ),
+    )
     args = parser.parse_args()
+
+    candidates = candidates_within_cap(args.effective_cap)
 
     result: dict[str, Any] = {
         "gpu": args.gpu,
@@ -467,7 +568,8 @@ def main() -> int:
         # separate from derived_timeout_s below (that one is the OUTPUT fed to
         # the real translator; this one is what bounded THIS run's own calls).
         "probe_timeout_s": args.timeout,
-        "candidates": list(CANDIDATES),
+        "effective_cap": args.effective_cap,
+        "candidates": list(candidates),
     }
     args.out.parent.mkdir(parents=True, exist_ok=True)
 
@@ -516,7 +618,8 @@ def main() -> int:
             return wave
 
         selected, waves, passed, derived_timeout = choose_concurrency(
-            requests_, run_wave, max_tokens=args.max_tokens, fetch_evidence=real_fetch_evidence
+            requests_, run_wave, max_tokens=args.max_tokens, fetch_evidence=real_fetch_evidence,
+            candidates=candidates,
         )
         result.update(
             status="ok",

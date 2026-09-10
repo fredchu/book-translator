@@ -1,0 +1,1510 @@
+
+==========
+== CUDA ==
+==========
+CUDA Version 13.0.3
+Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+By pulling and using the container, you accept the terms and conditions of this license:
+https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
+/sgl-workspace/sglang/python/sglang/launch_server.py:63: UserWarning: 'python -m sglang.launch_server' is still supported, but 'sglang serve' is the recommended entrypoint.
+  Example: sglang serve --model-path <model> [options]
+  warnings.warn(
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+[2026-09-10 06:13:49] Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+[2026-09-10 06:13:50] Attention backend not specified. Use flashinfer backend by default.
+[2026-09-10 06:13:52] server_args={'model_path': 'Jackrong/Qwopus3.6-27B-v2-FP8', 'tokenizer_path': 'Jackrong/Qwopus3.6-27B-v2-FP8', 'tokenizer_mode': 'auto', 'tokenizer_backend': 'huggingface', 'tokenizer_worker_num': 1, 'detokenizer_worker_num': 1, 'skip_tokenizer_init': False, 'load_format': 'auto', 'model_loader_extra_config': '{}', 'trust_remote_code': False, 'context_length': 16384, 'is_embedding': False, 'enable_multimodal': None, 'revision': None, 'model_impl': 'auto', 'model_config_pars
+[2026-09-10 06:13:56] Ignore import error when loading sglang.srt.multimodal.processors.mimo_audio: Could not load libtorchcodec. Likely causes:
+          1. FFmpeg is not properly installed in your environment. We support
+             versions 4, 5, 6, 7, and 8, and we attempt to load libtorchcodec
+             for each of those versions. Errors for versions not installed on
+             your system are expected; only the error for your installed FFmpeg
+             version is relevant. On Windows, ensure you've installed the
+             "full-shared" version which ships DLLs.
+          2. The PyTorch version (2.13.0+cu130) is not compatible with
+             this version of TorchCodec. Refer to the version compatibility
+             table:
+             https://github.com/pytorch/torchcodec?tab=readme-ov-file#installing-torchcodec.
+          3. Another runtime dependency; see exceptions below.
+        The following exceptions were raised as we tried to load libtorchcodec:
+[start of libtorchcodec loading traceback]
+FFmpeg version 8:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1516, in load_library
+    ctypes.CDLL(path)
+  File "/usr/lib/python3.12/ctypes/__init__.py", line 379, in __init__
+    self._handle = _dlopen(self._name, mode)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+OSError: libavutil.so.60: cannot open shared object file: No such file or directory
+The above exception was the direct cause of the following exception:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torchcodec/_internally_replaced_utils.py", line 93, in load_torchcodec_shared_libraries
+    torch.ops.load_library(core_library_path)
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1518, in load_library
+    raise OSError(f"Could not load this library: {path}") from e
+OSError: Could not load this library: /opt/sglang/lib/python3.12/site-packages/torchcodec/libtorchcodec_core8.so
+FFmpeg version 7:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1516, in load_library
+    ctypes.CDLL(path)
+  File "/usr/lib/python3.12/ctypes/__init__.py", line 379, in __init__
+    self._handle = _dlopen(self._name, mode)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+OSError: libavutil.so.59: cannot open shared object file: No such file or directory
+The above exception was the direct cause of the following exception:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torchcodec/_internally_replaced_utils.py", line 93, in load_torchcodec_shared_libraries
+    torch.ops.load_library(core_library_path)
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1518, in load_library
+    raise OSError(f"Could not load this library: {path}") from e
+OSError: Could not load this library: /opt/sglang/lib/python3.12/site-packages/torchcodec/libtorchcodec_core7.so
+FFmpeg version 6:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1516, in load_library
+    ctypes.CDLL(path)
+  File "/usr/lib/python3.12/ctypes/__init__.py", line 379, in __init__
+    self._handle = _dlopen(self._name, mode)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+OSError: libavutil.so.58: cannot open shared object file: No such file or directory
+The above exception was the direct cause of the following exception:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torchcodec/_internally_replaced_utils.py", line 93, in load_torchcodec_shared_libraries
+    torch.ops.load_library(core_library_path)
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1518, in load_library
+    raise OSError(f"Could not load this library: {path}") from e
+OSError: Could not load this library: /opt/sglang/lib/python3.12/site-packages/torchcodec/libtorchcodec_core6.so
+FFmpeg version 5:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1516, in load_library
+    ctypes.CDLL(path)
+  File "/usr/lib/python3.12/ctypes/__init__.py", line 379, in __init__
+    self._handle = _dlopen(self._name, mode)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+OSError: libavutil.so.57: cannot open shared object file: No such file or directory
+The above exception was the direct cause of the following exception:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torchcodec/_internally_replaced_utils.py", line 93, in load_torchcodec_shared_libraries
+    torch.ops.load_library(core_library_path)
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1518, in load_library
+    raise OSError(f"Could not load this library: {path}") from e
+OSError: Could not load this library: /opt/sglang/lib/python3.12/site-packages/torchcodec/libtorchcodec_core5.so
+FFmpeg version 4:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1516, in load_library
+    ctypes.CDLL(path)
+  File "/usr/lib/python3.12/ctypes/__init__.py", line 379, in __init__
+    self._handle = _dlopen(self._name, mode)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+OSError: libavutil.so.56: cannot open shared object file: No such file or directory
+The above exception was the direct cause of the following exception:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torchcodec/_internally_replaced_utils.py", line 93, in load_torchcodec_shared_libraries
+    torch.ops.load_library(core_library_path)
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1518, in load_library
+    raise OSError(f"Could not load this library: {path}") from e
+OSError: Could not load this library: /opt/sglang/lib/python3.12/site-packages/torchcodec/libtorchcodec_core4.so
+[end of libtorchcodec loading traceback].
+[2026-09-10 06:13:56] Ignore import error when loading sglang.srt.multimodal.processors.mimo_v2: Could not load libtorchcodec. Likely causes:
+          1. FFmpeg is not properly installed in your environment. We support
+             versions 4, 5, 6, 7, and 8, and we attempt to load libtorchcodec
+             for each of those versions. Errors for versions not installed on
+             your system are expected; only the error for your installed FFmpeg
+             version is relevant. On Windows, ensure you've installed the
+             "full-shared" version which ships DLLs.
+          2. The PyTorch version (2.13.0+cu130) is not compatible with
+             this version of TorchCodec. Refer to the version compatibility
+             table:
+             https://github.com/pytorch/torchcodec?tab=readme-ov-file#installing-torchcodec.
+          3. Another runtime dependency; see exceptions below.
+        The following exceptions were raised as we tried to load libtorchcodec:
+[start of libtorchcodec loading traceback]
+FFmpeg version 8:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1516, in load_library
+    ctypes.CDLL(path)
+  File "/usr/lib/python3.12/ctypes/__init__.py", line 379, in __init__
+    self._handle = _dlopen(self._name, mode)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+OSError: libavutil.so.60: cannot open shared object file: No such file or directory
+The above exception was the direct cause of the following exception:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torchcodec/_internally_replaced_utils.py", line 93, in load_torchcodec_shared_libraries
+    torch.ops.load_library(core_library_path)
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1518, in load_library
+    raise OSError(f"Could not load this library: {path}") from e
+OSError: Could not load this library: /opt/sglang/lib/python3.12/site-packages/torchcodec/libtorchcodec_core8.so
+FFmpeg version 7:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1516, in load_library
+    ctypes.CDLL(path)
+  File "/usr/lib/python3.12/ctypes/__init__.py", line 379, in __init__
+    self._handle = _dlopen(self._name, mode)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+OSError: libavutil.so.59: cannot open shared object file: No such file or directory
+The above exception was the direct cause of the following exception:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torchcodec/_internally_replaced_utils.py", line 93, in load_torchcodec_shared_libraries
+    torch.ops.load_library(core_library_path)
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1518, in load_library
+    raise OSError(f"Could not load this library: {path}") from e
+OSError: Could not load this library: /opt/sglang/lib/python3.12/site-packages/torchcodec/libtorchcodec_core7.so
+FFmpeg version 6:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1516, in load_library
+    ctypes.CDLL(path)
+  File "/usr/lib/python3.12/ctypes/__init__.py", line 379, in __init__
+    self._handle = _dlopen(self._name, mode)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+OSError: libavutil.so.58: cannot open shared object file: No such file or directory
+The above exception was the direct cause of the following exception:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torchcodec/_internally_replaced_utils.py", line 93, in load_torchcodec_shared_libraries
+    torch.ops.load_library(core_library_path)
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1518, in load_library
+    raise OSError(f"Could not load this library: {path}") from e
+OSError: Could not load this library: /opt/sglang/lib/python3.12/site-packages/torchcodec/libtorchcodec_core6.so
+FFmpeg version 5:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1516, in load_library
+    ctypes.CDLL(path)
+  File "/usr/lib/python3.12/ctypes/__init__.py", line 379, in __init__
+    self._handle = _dlopen(self._name, mode)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+OSError: libavutil.so.57: cannot open shared object file: No such file or directory
+The above exception was the direct cause of the following exception:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torchcodec/_internally_replaced_utils.py", line 93, in load_torchcodec_shared_libraries
+    torch.ops.load_library(core_library_path)
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1518, in load_library
+    raise OSError(f"Could not load this library: {path}") from e
+OSError: Could not load this library: /opt/sglang/lib/python3.12/site-packages/torchcodec/libtorchcodec_core5.so
+FFmpeg version 4:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1516, in load_library
+    ctypes.CDLL(path)
+  File "/usr/lib/python3.12/ctypes/__init__.py", line 379, in __init__
+    self._handle = _dlopen(self._name, mode)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+OSError: libavutil.so.56: cannot open shared object file: No such file or directory
+The above exception was the direct cause of the following exception:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torchcodec/_internally_replaced_utils.py", line 93, in load_torchcodec_shared_libraries
+    torch.ops.load_library(core_library_path)
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1518, in load_library
+    raise OSError(f"Could not load this library: {path}") from e
+OSError: Could not load this library: /opt/sglang/lib/python3.12/site-packages/torchcodec/libtorchcodec_core4.so
+[end of libtorchcodec loading traceback].
+[2026-09-10 06:13:56] Ignore import error when loading sglang.srt.multimodal.processors.mimo_v2_asr: Could not load libtorchcodec. Likely causes:
+          1. FFmpeg is not properly installed in your environment. We support
+             versions 4, 5, 6, 7, and 8, and we attempt to load libtorchcodec
+             for each of those versions. Errors for versions not installed on
+             your system are expected; only the error for your installed FFmpeg
+             version is relevant. On Windows, ensure you've installed the
+             "full-shared" version which ships DLLs.
+          2. The PyTorch version (2.13.0+cu130) is not compatible with
+             this version of TorchCodec. Refer to the version compatibility
+             table:
+             https://github.com/pytorch/torchcodec?tab=readme-ov-file#installing-torchcodec.
+          3. Another runtime dependency; see exceptions below.
+        The following exceptions were raised as we tried to load libtorchcodec:
+[start of libtorchcodec loading traceback]
+FFmpeg version 8:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1516, in load_library
+    ctypes.CDLL(path)
+  File "/usr/lib/python3.12/ctypes/__init__.py", line 379, in __init__
+    self._handle = _dlopen(self._name, mode)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+OSError: libavutil.so.60: cannot open shared object file: No such file or directory
+The above exception was the direct cause of the following exception:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torchcodec/_internally_replaced_utils.py", line 93, in load_torchcodec_shared_libraries
+    torch.ops.load_library(core_library_path)
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1518, in load_library
+    raise OSError(f"Could not load this library: {path}") from e
+OSError: Could not load this library: /opt/sglang/lib/python3.12/site-packages/torchcodec/libtorchcodec_core8.so
+FFmpeg version 7:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1516, in load_library
+    ctypes.CDLL(path)
+  File "/usr/lib/python3.12/ctypes/__init__.py", line 379, in __init__
+    self._handle = _dlopen(self._name, mode)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+OSError: libavutil.so.59: cannot open shared object file: No such file or directory
+The above exception was the direct cause of the following exception:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torchcodec/_internally_replaced_utils.py", line 93, in load_torchcodec_shared_libraries
+    torch.ops.load_library(core_library_path)
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1518, in load_library
+    raise OSError(f"Could not load this library: {path}") from e
+OSError: Could not load this library: /opt/sglang/lib/python3.12/site-packages/torchcodec/libtorchcodec_core7.so
+FFmpeg version 6:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1516, in load_library
+    ctypes.CDLL(path)
+  File "/usr/lib/python3.12/ctypes/__init__.py", line 379, in __init__
+    self._handle = _dlopen(self._name, mode)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+OSError: libavutil.so.58: cannot open shared object file: No such file or directory
+The above exception was the direct cause of the following exception:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torchcodec/_internally_replaced_utils.py", line 93, in load_torchcodec_shared_libraries
+    torch.ops.load_library(core_library_path)
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1518, in load_library
+    raise OSError(f"Could not load this library: {path}") from e
+OSError: Could not load this library: /opt/sglang/lib/python3.12/site-packages/torchcodec/libtorchcodec_core6.so
+FFmpeg version 5:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1516, in load_library
+    ctypes.CDLL(path)
+  File "/usr/lib/python3.12/ctypes/__init__.py", line 379, in __init__
+    self._handle = _dlopen(self._name, mode)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+OSError: libavutil.so.57: cannot open shared object file: No such file or directory
+The above exception was the direct cause of the following exception:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torchcodec/_internally_replaced_utils.py", line 93, in load_torchcodec_shared_libraries
+    torch.ops.load_library(core_library_path)
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1518, in load_library
+    raise OSError(f"Could not load this library: {path}") from e
+OSError: Could not load this library: /opt/sglang/lib/python3.12/site-packages/torchcodec/libtorchcodec_core5.so
+FFmpeg version 4:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1516, in load_library
+    ctypes.CDLL(path)
+  File "/usr/lib/python3.12/ctypes/__init__.py", line 379, in __init__
+    self._handle = _dlopen(self._name, mode)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+OSError: libavutil.so.56: cannot open shared object file: No such file or directory
+The above exception was the direct cause of the following exception:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torchcodec/_internally_replaced_utils.py", line 93, in load_torchcodec_shared_libraries
+    torch.ops.load_library(core_library_path)
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1518, in load_library
+    raise OSError(f"Could not load this library: {path}") from e
+OSError: Could not load this library: /opt/sglang/lib/python3.12/site-packages/torchcodec/libtorchcodec_core4.so
+[end of libtorchcodec loading traceback].
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+[2026-09-10 06:14:01] Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+[2026-09-10 06:14:02] Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+[2026-09-10 06:14:03] Processor tokenizer for Jackrong/Qwopus3.6-27B-v2-FP8 is TokenizersBackend, reloading via get_tokenizer
+[2026-09-10 06:14:07] Processor tokenizer for Jackrong/Qwopus3.6-27B-v2-FP8 is TokenizersBackend, reloading via get_tokenizer
+[2026-09-10 06:14:11] Multimodal data loading enabled with 16 worker threads (auto).
+[2026-09-10 06:14:11] Using default HuggingFace chat template with detected content format: openai
+[2026-09-10 06:14:11] Auto-detected template features: reasoning_config=ReasoningToggleConfig(toggle_param='enable_thinking', default_enabled=True, special_case=None, effort_kwarg=None), reasoning_parser=qwen3, tool_call_parser=qwen
+[2026-09-10 06:14:15] Ignore import error when loading sglang.srt.multimodal.processors.mimo_audio: Could not load libtorchcodec. Likely causes:
+          1. FFmpeg is not properly installed in your environment. We support
+             versions 4, 5, 6, 7, and 8, and we attempt to load libtorchcodec
+             for each of those versions. Errors for versions not installed on
+             your system are expected; only the error for your installed FFmpeg
+             version is relevant. On Windows, ensure you've installed the
+             "full-shared" version which ships DLLs.
+          2. The PyTorch version (2.13.0+cu130) is not compatible with
+             this version of TorchCodec. Refer to the version compatibility
+             table:
+             https://github.com/pytorch/torchcodec?tab=readme-ov-file#installing-torchcodec.
+          3. Another runtime dependency; see exceptions below.
+        The following exceptions were raised as we tried to load libtorchcodec:
+[start of libtorchcodec loading traceback]
+FFmpeg version 8:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1516, in load_library
+    ctypes.CDLL(path)
+  File "/usr/lib/python3.12/ctypes/__init__.py", line 379, in __init__
+    self._handle = _dlopen(self._name, mode)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+OSError: libavutil.so.60: cannot open shared object file: No such file or directory
+The above exception was the direct cause of the following exception:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torchcodec/_internally_replaced_utils.py", line 93, in load_torchcodec_shared_libraries
+    torch.ops.load_library(core_library_path)
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1518, in load_library
+    raise OSError(f"Could not load this library: {path}") from e
+OSError: Could not load this library: /opt/sglang/lib/python3.12/site-packages/torchcodec/libtorchcodec_core8.so
+FFmpeg version 7:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1516, in load_library
+    ctypes.CDLL(path)
+  File "/usr/lib/python3.12/ctypes/__init__.py", line 379, in __init__
+    self._handle = _dlopen(self._name, mode)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+OSError: libavutil.so.59: cannot open shared object file: No such file or directory
+The above exception was the direct cause of the following exception:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torchcodec/_internally_replaced_utils.py", line 93, in load_torchcodec_shared_libraries
+    torch.ops.load_library(core_library_path)
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1518, in load_library
+    raise OSError(f"Could not load this library: {path}") from e
+OSError: Could not load this library: /opt/sglang/lib/python3.12/site-packages/torchcodec/libtorchcodec_core7.so
+FFmpeg version 6:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1516, in load_library
+    ctypes.CDLL(path)
+  File "/usr/lib/python3.12/ctypes/__init__.py", line 379, in __init__
+    self._handle = _dlopen(self._name, mode)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+OSError: libavutil.so.58: cannot open shared object file: No such file or directory
+The above exception was the direct cause of the following exception:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torchcodec/_internally_replaced_utils.py", line 93, in load_torchcodec_shared_libraries
+    torch.ops.load_library(core_library_path)
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1518, in load_library
+    raise OSError(f"Could not load this library: {path}") from e
+OSError: Could not load this library: /opt/sglang/lib/python3.12/site-packages/torchcodec/libtorchcodec_core6.so
+FFmpeg version 5:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1516, in load_library
+    ctypes.CDLL(path)
+  File "/usr/lib/python3.12/ctypes/__init__.py", line 379, in __init__
+    self._handle = _dlopen(self._name, mode)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+OSError: libavutil.so.57: cannot open shared object file: No such file or directory
+The above exception was the direct cause of the following exception:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torchcodec/_internally_replaced_utils.py", line 93, in load_torchcodec_shared_libraries
+    torch.ops.load_library(core_library_path)
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1518, in load_library
+    raise OSError(f"Could not load this library: {path}") from e
+OSError: Could not load this library: /opt/sglang/lib/python3.12/site-packages/torchcodec/libtorchcodec_core5.so
+FFmpeg version 4:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1516, in load_library
+    ctypes.CDLL(path)
+  File "/usr/lib/python3.12/ctypes/__init__.py", line 379, in __init__
+    self._handle = _dlopen(self._name, mode)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+OSError: libavutil.so.56: cannot open shared object file: No such file or directory
+The above exception was the direct cause of the following exception:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torchcodec/_internally_replaced_utils.py", line 93, in load_torchcodec_shared_libraries
+    torch.ops.load_library(core_library_path)
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1518, in load_library
+    raise OSError(f"Could not load this library: {path}") from e
+OSError: Could not load this library: /opt/sglang/lib/python3.12/site-packages/torchcodec/libtorchcodec_core4.so
+[end of libtorchcodec loading traceback].
+[2026-09-10 06:14:15] Ignore import error when loading sglang.srt.multimodal.processors.mimo_v2: Could not load libtorchcodec. Likely causes:
+          1. FFmpeg is not properly installed in your environment. We support
+             versions 4, 5, 6, 7, and 8, and we attempt to load libtorchcodec
+             for each of those versions. Errors for versions not installed on
+             your system are expected; only the error for your installed FFmpeg
+             version is relevant. On Windows, ensure you've installed the
+             "full-shared" version which ships DLLs.
+          2. The PyTorch version (2.13.0+cu130) is not compatible with
+             this version of TorchCodec. Refer to the version compatibility
+             table:
+             https://github.com/pytorch/torchcodec?tab=readme-ov-file#installing-torchcodec.
+          3. Another runtime dependency; see exceptions below.
+        The following exceptions were raised as we tried to load libtorchcodec:
+[start of libtorchcodec loading traceback]
+FFmpeg version 8:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1516, in load_library
+    ctypes.CDLL(path)
+  File "/usr/lib/python3.12/ctypes/__init__.py", line 379, in __init__
+    self._handle = _dlopen(self._name, mode)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+OSError: libavutil.so.60: cannot open shared object file: No such file or directory
+The above exception was the direct cause of the following exception:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torchcodec/_internally_replaced_utils.py", line 93, in load_torchcodec_shared_libraries
+    torch.ops.load_library(core_library_path)
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1518, in load_library
+    raise OSError(f"Could not load this library: {path}") from e
+OSError: Could not load this library: /opt/sglang/lib/python3.12/site-packages/torchcodec/libtorchcodec_core8.so
+FFmpeg version 7:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1516, in load_library
+    ctypes.CDLL(path)
+  File "/usr/lib/python3.12/ctypes/__init__.py", line 379, in __init__
+    self._handle = _dlopen(self._name, mode)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+OSError: libavutil.so.59: cannot open shared object file: No such file or directory
+The above exception was the direct cause of the following exception:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torchcodec/_internally_replaced_utils.py", line 93, in load_torchcodec_shared_libraries
+    torch.ops.load_library(core_library_path)
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1518, in load_library
+    raise OSError(f"Could not load this library: {path}") from e
+OSError: Could not load this library: /opt/sglang/lib/python3.12/site-packages/torchcodec/libtorchcodec_core7.so
+FFmpeg version 6:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1516, in load_library
+    ctypes.CDLL(path)
+  File "/usr/lib/python3.12/ctypes/__init__.py", line 379, in __init__
+    self._handle = _dlopen(self._name, mode)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+OSError: libavutil.so.58: cannot open shared object file: No such file or directory
+The above exception was the direct cause of the following exception:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torchcodec/_internally_replaced_utils.py", line 93, in load_torchcodec_shared_libraries
+    torch.ops.load_library(core_library_path)
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1518, in load_library
+    raise OSError(f"Could not load this library: {path}") from e
+OSError: Could not load this library: /opt/sglang/lib/python3.12/site-packages/torchcodec/libtorchcodec_core6.so
+FFmpeg version 5:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1516, in load_library
+    ctypes.CDLL(path)
+  File "/usr/lib/python3.12/ctypes/__init__.py", line 379, in __init__
+    self._handle = _dlopen(self._name, mode)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+OSError: libavutil.so.57: cannot open shared object file: No such file or directory
+The above exception was the direct cause of the following exception:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torchcodec/_internally_replaced_utils.py", line 93, in load_torchcodec_shared_libraries
+    torch.ops.load_library(core_library_path)
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1518, in load_library
+    raise OSError(f"Could not load this library: {path}") from e
+OSError: Could not load this library: /opt/sglang/lib/python3.12/site-packages/torchcodec/libtorchcodec_core5.so
+FFmpeg version 4:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1516, in load_library
+    ctypes.CDLL(path)
+  File "/usr/lib/python3.12/ctypes/__init__.py", line 379, in __init__
+    self._handle = _dlopen(self._name, mode)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+OSError: libavutil.so.56: cannot open shared object file: No such file or directory
+The above exception was the direct cause of the following exception:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torchcodec/_internally_replaced_utils.py", line 93, in load_torchcodec_shared_libraries
+    torch.ops.load_library(core_library_path)
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1518, in load_library
+    raise OSError(f"Could not load this library: {path}") from e
+OSError: Could not load this library: /opt/sglang/lib/python3.12/site-packages/torchcodec/libtorchcodec_core4.so
+[end of libtorchcodec loading traceback].
+[2026-09-10 06:14:15] Ignore import error when loading sglang.srt.multimodal.processors.mimo_v2_asr: Could not load libtorchcodec. Likely causes:
+          1. FFmpeg is not properly installed in your environment. We support
+             versions 4, 5, 6, 7, and 8, and we attempt to load libtorchcodec
+             for each of those versions. Errors for versions not installed on
+             your system are expected; only the error for your installed FFmpeg
+             version is relevant. On Windows, ensure you've installed the
+             "full-shared" version which ships DLLs.
+          2. The PyTorch version (2.13.0+cu130) is not compatible with
+             this version of TorchCodec. Refer to the version compatibility
+             table:
+             https://github.com/pytorch/torchcodec?tab=readme-ov-file#installing-torchcodec.
+          3. Another runtime dependency; see exceptions below.
+        The following exceptions were raised as we tried to load libtorchcodec:
+[start of libtorchcodec loading traceback]
+FFmpeg version 8:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1516, in load_library
+    ctypes.CDLL(path)
+  File "/usr/lib/python3.12/ctypes/__init__.py", line 379, in __init__
+    self._handle = _dlopen(self._name, mode)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+OSError: libavutil.so.60: cannot open shared object file: No such file or directory
+The above exception was the direct cause of the following exception:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torchcodec/_internally_replaced_utils.py", line 93, in load_torchcodec_shared_libraries
+    torch.ops.load_library(core_library_path)
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1518, in load_library
+    raise OSError(f"Could not load this library: {path}") from e
+OSError: Could not load this library: /opt/sglang/lib/python3.12/site-packages/torchcodec/libtorchcodec_core8.so
+FFmpeg version 7:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1516, in load_library
+    ctypes.CDLL(path)
+  File "/usr/lib/python3.12/ctypes/__init__.py", line 379, in __init__
+    self._handle = _dlopen(self._name, mode)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+OSError: libavutil.so.59: cannot open shared object file: No such file or directory
+The above exception was the direct cause of the following exception:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torchcodec/_internally_replaced_utils.py", line 93, in load_torchcodec_shared_libraries
+    torch.ops.load_library(core_library_path)
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1518, in load_library
+    raise OSError(f"Could not load this library: {path}") from e
+OSError: Could not load this library: /opt/sglang/lib/python3.12/site-packages/torchcodec/libtorchcodec_core7.so
+FFmpeg version 6:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1516, in load_library
+    ctypes.CDLL(path)
+  File "/usr/lib/python3.12/ctypes/__init__.py", line 379, in __init__
+    self._handle = _dlopen(self._name, mode)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+OSError: libavutil.so.58: cannot open shared object file: No such file or directory
+The above exception was the direct cause of the following exception:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torchcodec/_internally_replaced_utils.py", line 93, in load_torchcodec_shared_libraries
+    torch.ops.load_library(core_library_path)
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1518, in load_library
+    raise OSError(f"Could not load this library: {path}") from e
+OSError: Could not load this library: /opt/sglang/lib/python3.12/site-packages/torchcodec/libtorchcodec_core6.so
+FFmpeg version 5:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1516, in load_library
+    ctypes.CDLL(path)
+  File "/usr/lib/python3.12/ctypes/__init__.py", line 379, in __init__
+    self._handle = _dlopen(self._name, mode)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+OSError: libavutil.so.57: cannot open shared object file: No such file or directory
+The above exception was the direct cause of the following exception:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torchcodec/_internally_replaced_utils.py", line 93, in load_torchcodec_shared_libraries
+    torch.ops.load_library(core_library_path)
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1518, in load_library
+    raise OSError(f"Could not load this library: {path}") from e
+OSError: Could not load this library: /opt/sglang/lib/python3.12/site-packages/torchcodec/libtorchcodec_core5.so
+FFmpeg version 4:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1516, in load_library
+    ctypes.CDLL(path)
+  File "/usr/lib/python3.12/ctypes/__init__.py", line 379, in __init__
+    self._handle = _dlopen(self._name, mode)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+OSError: libavutil.so.56: cannot open shared object file: No such file or directory
+The above exception was the direct cause of the following exception:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/torchcodec/_internally_replaced_utils.py", line 93, in load_torchcodec_shared_libraries
+    torch.ops.load_library(core_library_path)
+  File "/opt/sglang/lib/python3.12/site-packages/torch/_ops.py", line 1518, in load_library
+    raise OSError(f"Could not load this library: {path}") from e
+OSError: Could not load this library: /opt/sglang/lib/python3.12/site-packages/torchcodec/libtorchcodec_core4.so
+[end of libtorchcodec loading traceback].
+[2026-09-10 06:14:15] Multimodal data loading enabled with 16 worker threads (auto).
+[2026-09-10 06:14:15] Init torch distributed begin.
+[2026-09-10 06:14:15] Init torch distributed ends. elapsed=0.05 s, mem usage=0.07 GB
+[2026-09-10 06:14:15] Load weight begin. avail mem=46.86 GB
+[2026-09-10 06:14:15] Detected fp8 checkpoint.
+[2026-09-10 06:14:15] Multimodal attention backend not set. Use triton_attn.
+[2026-09-10 06:14:15] Using triton_attn as multimodal attention backend.
+[2026-09-10 06:14:16] using attn output gate!
+[2026-09-10 06:14:16] Local HF snapshot at /root/.cache/huggingface/hub/models--Jackrong--Qwopus3.6-27B-v2-FP8/snapshots/2ea14ba5f1cf45416a658a0f070fbef4f02bbc84 has no files matching ['*.safetensors', '*.bin', '*.pt']; will attempt download.
+[2026-09-10 06:14:17] Using model weights format ['*.safetensors']
+Multi-thread loading shards:   0% Completed | 0/8 [00:00<?, ?it/s]Multi-thread loading shards:  12% Completed | 1/8 [00:00<00:02,  3.36it/s]Multi-thread loading shards:  25% Completed | 2/8 [00:00<00:02,  2.07it/s]Multi-thread loading shards:  38% Completed | 3/8 [00:01<00:02,  1.73it/s]Multi-thread loading shards:  50% Completed | 4/8 [00:02<00:02,  1.59it/s]Multi-thread loading shards:  62% Completed | 5/8 [00:03<00:01,  1.53it/s]Multi-thread loading shards:  75% Completed | 6/8 [00:03<
+[2026-09-10 06:14:59] Load weight end. elapsed=44.01 s, type=Qwen3_5ForConditionalGeneration, quant=fp8, fmt=e4m3, avail mem=18.40 GB, mem usage=28.47 GB.
+[2026-09-10 06:15:05] Processor tokenizer for Jackrong/Qwopus3.6-27B-v2-FP8 is TokenizersBackend, reloading via get_tokenizer
+[2026-09-10 06:15:12] Reserving 0.10 GB of the KV budget for post-sizing multimodal allocations (feature-transport pools + embedding cache).
+[2026-09-10 06:15:12] max_running_requests is capped to 9 by the mamba state cache (max_mamba_cache_size=47, 5 state slots per request). To raise it: increase --mamba-full-memory-ratio or --max-mamba-cache-size, or halve the state size with --mamba-ssm-dtype bfloat16.
+[2026-09-10 06:15:12] Mamba Cache is allocated. max_mamba_cache_size: 47, conv_state size: 0.13GB, ssm_state size: 6.75GB 
+[2026-09-10 06:15:12] KV Cache is allocated. dtype: torch.bfloat16, #tokens: 125292, K size: 3.82 GB, V size: 3.82 GB
+[2026-09-10 06:15:12] Memory pool end. avail mem=3.81 GB
+[2026-09-10 06:15:12] Linear attention kernel backend: decode=triton, prefill=triton, verify=triton
+[2026-09-10 06:15:12] Using hybrid linear attention backend for hybrid GDN models.
+[2026-09-10 06:15:12] GDN kernel dispatcher: decode=TritonGDNKernel, extend=TritonGDNKernel, verify=TritonGDNKernel packed_decode=True
+[2026-09-10 06:15:12] Capture target prefill CUDA graph begin. backend=breakable, num_tokens=[4, 8, 12, 16, 20, 24, 28, 32, 48, 64, 80, 96, 112, 128, 144, 160, 176, 192, 208, 224, 240, 256, 288, 320, 352, 384, 416, 448, 480, 512, 576, 640, 704, 768, 832, 896, 960, 1024, 1280, 1536, 1792, 2048, 2304, 2560, 2816, 3072, 3328, 3584, 3840, 4096], avail mem=3.37 GB
+  0%|          | 0/50 [00:00<?, ?it/s]Capturing num tokens (num_tokens=4096 avail_mem=3.33 GB):   0%|          | 0/50 [00:00<?, ?it/s][2026-09-10 06:15:19] Using default W8A8 Block FP8 kernel config. Performance might be sub-optimal! Config file not found at /sgl-workspace/sglang/python/sglang/kernels/ops/quantization/configs/N=16384,K=5120,device_name=NVIDIA_RTX_6000_Ada_Generation,dtype=fp8_w8a8,block_shape=[128, 128].json
+/opt/sglang/lib/python3.12/site-packages/triton/language/core.py:2284: UserWarning: tl.make_block_ptr is deprecated. Use TensorDescriptor or tl.make_tensor_descriptor instead.
+  warn("tl.make_block_ptr is deprecated. Use TensorDescriptor or tl.make_tensor_descriptor instead.")
+[2026-09-10 06:15:29] Using default W8A8 Block FP8 kernel config. Performance might be sub-optimal! Config file not found at /sgl-workspace/sglang/python/sglang/kernels/ops/quantization/configs/N=5120,K=6144,device_name=NVIDIA_RTX_6000_Ada_Generation,dtype=fp8_w8a8,block_shape=[128, 128].json
+[2026-09-10 06:15:30] Using default W8A8 Block FP8 kernel config. Performance might be sub-optimal! Config file not found at /sgl-workspace/sglang/python/sglang/kernels/ops/quantization/configs/N=34816,K=5120,device_name=NVIDIA_RTX_6000_Ada_Generation,dtype=fp8_w8a8,block_shape=[128, 128].json
+[2026-09-10 06:15:36] Using default W8A8 Block FP8 kernel config. Performance might be sub-optimal! Config file not found at /sgl-workspace/sglang/python/sglang/kernels/ops/quantization/configs/N=5120,K=17408,device_name=NVIDIA_RTX_6000_Ada_Generation,dtype=fp8_w8a8,block_shape=[128, 128].json
+[2026-09-10 06:15:36] Using default W8A8 Block FP8 kernel config. Performance might be sub-optimal! Config file not found at /sgl-workspace/sglang/python/sglang/kernels/ops/quantization/configs/N=14336,K=5120,device_name=NVIDIA_RTX_6000_Ada_Generation,dtype=fp8_w8a8,block_shape=[128, 128].json
+Capturing num tokens (num_tokens=4096 avail_mem=3.33 GB):   2%|▏         | 1/50 [00:31<25:29, 31.21s/it]Capturing num tokens (num_tokens=3840 avail_mem=1.18 GB):   2%|▏         | 1/50 [00:31<25:29, 31.21s/it]Capturing num tokens (num_tokens=3840 avail_mem=1.18 GB):   4%|▍         | 2/50 [00:32<11:04, 13.85s/it]Capturing num tokens (num_tokens=3584 avail_mem=1.16 GB):   4%|▍         | 2/50 [00:32<11:04, 13.85s/it]Capturing num tokens (num_tokens=3584 avail_mem=1.16 GB):   6%|▌         | 3/50
+  warn("tl.make_block_ptr is deprecated. Use TensorDescriptor or tl.make_tensor_descriptor instead.")
+Capturing num tokens (num_tokens=2048 avail_mem=1.09 GB):  18%|█▊        | 9/50 [00:42<01:14,  1.81s/it]Capturing num tokens (num_tokens=1792 avail_mem=1.08 GB):  18%|█▊        | 9/50 [00:42<01:14,  1.81s/it]Capturing num tokens (num_tokens=1792 avail_mem=1.08 GB):  20%|██        | 10/50 [00:42<00:59,  1.48s/it]Capturing num tokens (num_tokens=1536 avail_mem=1.06 GB):  20%|██        | 10/50 [00:42<00:59,  1.48s/it]Capturing num tokens (num_tokens=1536 avail_mem=1.06 GB):  22%|██▏       | 11
+[2026-09-10 06:16:12] Capture target prefill CUDA graph end. elapsed=59.46 s, mem usage=1.92 GB, avail mem=1.45 GB.
+[2026-09-10 06:16:12] Capture target decode CUDA graph begin. backend=full, num_tokens_per_req=1, bs=[1, 2, 4, 8, 9], avail mem=1.45 GB
+  0%|          | 0/5 [00:00<?, ?it/s]Capturing batches (bs=9 avail_mem=1.45 GB):   0%|          | 0/5 [00:00<?, ?it/s][2026-09-10 06:16:12] Using fused GDN decode QKVZ/BA unpack + indexed Conv1D.
+Capturing batches (bs=9 avail_mem=1.45 GB):  20%|██        | 1/5 [00:01<00:05,  1.32s/it]Capturing batches (bs=8 avail_mem=1.42 GB):  20%|██        | 1/5 [00:01<00:05,  1.32s/it]Capturing batches (bs=8 avail_mem=1.42 GB):  40%|████      | 2/5 [00:01<00:02,  1.42it/s]Capturing batches (bs=4 avail_mem=1.42 GB):  40%|████      | 2/5 [00:01<00:02,  1.42it/s]Capturing batches (bs=4 avail_mem=1.42 GB):  60%|██████    | 3/5 [00:01<00:01,  1.98it/s]Capturing batches (bs=2 avail_mem=1.39 GB):  60%|
+[2026-09-10 06:16:16] Capture target decode CUDA graph end. elapsed=3.85 s, mem usage=0.10 GB, avail mem=1.35 GB.
+[2026-09-10 06:16:16] max_total_num_tokens=125292, chunked_prefill_size=4096, max_prefill_tokens=16384, max_running_requests=9, context_len=16384, available_gpu_mem=1.35 GB
+[2026-09-10 06:16:16] Init Unified Radix Cache. Components: (<ComponentType.FULL: 0>, <ComponentType.MAMBA: 2>). Tree Core: UnifiedTreeCore
+[2026-09-10 06:16:16] Tree cache initialized: source=default impl=UnifiedRadixCache hybrid_swa=False hybrid_ssm=True hicache_attached=False streaming_wrapped=False
+[2026-09-10 06:16:17] Engine startup timings (s): load_weight=44.01, kv_cache_allocation=0.41, scheduler_e2e=134.50, cuda_graph={prefill=59.46, decode=3.85, target_verify=0.00, draft_prefill=0.00, draft_decode=0.00, draft_extend=0.00}, tokenizer_e2e=144.14
+[2026-09-10 06:16:17] INFO:     Started server process [1]
+[2026-09-10 06:16:17] INFO:     Waiting for application startup.
+[2026-09-10 06:16:17] INFO:     Application startup complete.
+[2026-09-10 06:16:17] INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+[2026-09-10 06:16:18] INFO:     127.0.0.1:59184 - "GET /model_info HTTP/1.1" 200 OK
+[2026-09-10 06:16:18] Triton kernel 'write_req_to_token_pool_triton' device-loaded after serving started (free device mem: 0.86 GiB). Pre-load it during engine init to avoid CUDA OOM.
+[2026-09-10 06:16:18] Triton kernel 'compute_position_kernel' device-loaded after serving started (free device mem: 0.86 GiB). Pre-load it during engine init to avoid CUDA OOM.
+[2026-09-10 06:16:18] Triton kernel '_fused_slot_clear_kernel' device-loaded after serving started (free device mem: 0.86 GiB). Pre-load it during engine init to avoid CUDA OOM.
+/sgl-workspace/sglang/python/sglang/srt/entrypoints/http_server.py:454: FastAPIDeprecationWarning: ORJSONResponse is deprecated, FastAPI now serializes data directly to JSON bytes via Pydantic when a return type or response model is set, which is faster and doesn't need a custom response class. Read more in the FastAPI docs: https://fastapi.tiangolo.com/advanced/custom-response/#orjson-or-response-model and https://fastapi.tiangolo.com/tutorial/response-model/
+  return await original_handler(ORJSONRequest(request.scope, request.receive))
+[2026-09-10 06:16:19] INFO:     118.168.37.210:61141 - "GET /v1/models HTTP/1.1" 200 OK
+[2026-09-10 06:16:21] Triton kernel '_fwd_kernel' device-loaded after serving started (free device mem: 0.74 GiB). Pre-load it during engine init to avoid CUDA OOM.
+[2026-09-10 06:16:21] Prefill batch, #new-seq: 1, #new-token: 80, #cached-token: 0, full token usage: 0.00, mamba usage: 0.15, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 14.02
+[2026-09-10 06:16:27] Prefill batch, #new-seq: 1, #new-token: 26, #cached-token: 0, full token usage: 0.00, mamba usage: 0.15, #running-req: 1, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 4.79
+[2026-09-10 06:16:27] INFO:     118.168.37.210:61142 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-10 06:16:27] INFO:     127.0.0.1:59190 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-10 06:16:27] Freezing GC in Scheduler process. gen0: 75->0, gen1: 1017->0, gen2: 1232582->0
+[2026-09-10 06:16:27] Freezing GC in Tokenizer Manager process. gen0: 734->0, gen1: 1182->0, gen2: 1082541->0
+[2026-09-10 06:16:27] INFO:     127.0.0.1:36092 - "POST /freeze_gc HTTP/1.1" 200 OK
+[2026-09-10 06:16:27] The server is fired up and ready to roll!
+[2026-09-10 06:16:27] Freezing GC in Detokenizer Manager process. gen0: 413->0, gen1: 3195->0, gen2: 897245->0
+[2026-09-10 06:16:28] Endpoint '/get_server_info' is deprecated and will be removed in a future version. Please use '/server_info' instead.
+[2026-09-10 06:16:28] INFO:     118.168.37.210:61152 - "GET /get_server_info HTTP/1.1" 200 OK
+[2026-09-10 06:16:29] INFO:     118.168.37.210:61153 - "GET /metrics HTTP/1.1" 200 OK
+[2026-09-10 06:16:29] Triton kernel 'write_req_to_token_pool_triton' device-loaded after serving started (free device mem: 0.71 GiB). Pre-load it during engine init to avoid CUDA OOM.
+[2026-09-10 06:16:30] Prefill batch, #new-seq: 1, #new-token: 995, #cached-token: 0, full token usage: 0.04, mamba usage: 0.40, #running-req: 0, #queue-req: 2, #pending-token: 0, cuda graph: True, input throughput (token/s): 364.03
+[2026-09-10 06:16:31] Triton kernel '_fused_slot_copy_kernel' device-loaded after serving started (free device mem: 0.31 GiB). Pre-load it during engine init to avoid CUDA OOM.
+[2026-09-10 06:16:31] Prefill batch, #new-seq: 5, #new-token: 4096, #cached-token: 0, full token usage: 0.04, mamba usage: 0.64, #running-req: 1, #queue-req: 0, #pending-token: 2976, cuda graph: True, input throughput (token/s): 2558.58
+[2026-09-10 06:16:32] Prefill batch, #new-seq: 3, #new-token: 2336, #cached-token: 640, full token usage: 0.04, mamba usage: 0.68, #running-req: 5, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 4194.67
+[2026-09-10 06:16:33] Decode batch, #running-req: 8, #full token: 5579, full token usage: 0.04, mamba num: 32, mamba usage: 0.68, cuda graph: True, gen throughput (token/s): 15.50, #queue-req: 0
+[2026-09-10 06:16:35] Decode batch, #running-req: 8, #full token: 5899, full token usage: 0.05, mamba num: 32, mamba usage: 0.68, cuda graph: True, gen throughput (token/s): 204.25, #queue-req: 0
+[2026-09-10 06:16:36] Decode batch, #running-req: 8, #full token: 6219, full token usage: 0.05, mamba num: 32, mamba usage: 0.68, cuda graph: True, gen throughput (token/s): 203.79, #queue-req: 0
+[2026-09-10 06:16:38] Decode batch, #running-req: 8, #full token: 6539, full token usage: 0.05, mamba num: 32, mamba usage: 0.68, cuda graph: True, gen throughput (token/s): 203.84, #queue-req: 0
+[2026-09-10 06:16:39] Decode batch, #running-req: 8, #full token: 6859, full token usage: 0.05, mamba num: 32, mamba usage: 0.68, cuda graph: True, gen throughput (token/s): 203.69, #queue-req: 0
+[2026-09-10 06:16:41] Decode batch, #running-req: 8, #full token: 7179, full token usage: 0.06, mamba num: 32, mamba usage: 0.68, cuda graph: True, gen throughput (token/s): 203.62, #queue-req: 0
+[2026-09-10 06:16:42] Decode batch, #running-req: 8, #full token: 7499, full token usage: 0.06, mamba num: 32, mamba usage: 0.68, cuda graph: True, gen throughput (token/s): 203.46, #queue-req: 0
+[2026-09-10 06:16:44] Decode batch, #running-req: 8, #full token: 7819, full token usage: 0.06, mamba num: 32, mamba usage: 0.68, cuda graph: True, gen throughput (token/s): 203.27, #queue-req: 0
+[2026-09-10 06:16:46] Decode batch, #running-req: 8, #full token: 8139, full token usage: 0.06, mamba num: 32, mamba usage: 0.68, cuda graph: True, gen throughput (token/s): 202.83, #queue-req: 0
+[2026-09-10 06:16:47] Decode batch, #running-req: 8, #full token: 8459, full token usage: 0.07, mamba num: 32, mamba usage: 0.68, cuda graph: True, gen throughput (token/s): 203.00, #queue-req: 0
+[2026-09-10 06:16:49] Decode batch, #running-req: 8, #full token: 8779, full token usage: 0.07, mamba num: 32, mamba usage: 0.68, cuda graph: True, gen throughput (token/s): 202.82, #queue-req: 0
+[2026-09-10 06:16:50] Decode batch, #running-req: 8, #full token: 9099, full token usage: 0.07, mamba num: 32, mamba usage: 0.68, cuda graph: True, gen throughput (token/s): 202.74, #queue-req: 0
+[2026-09-10 06:16:52] Decode batch, #running-req: 8, #full token: 9419, full token usage: 0.08, mamba num: 32, mamba usage: 0.68, cuda graph: True, gen throughput (token/s): 202.60, #queue-req: 0
+[2026-09-10 06:16:53] INFO:     118.168.37.210:61159 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-10 06:16:53] INFO:     118.168.37.210:61160 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-10 06:16:53] Decode batch, #running-req: 6, #full token: 7556, full token usage: 0.06, mamba num: 24, mamba usage: 0.51, cuda graph: True, gen throughput (token/s): 187.71, #queue-req: 0
+[2026-09-10 06:16:54] INFO:     118.168.37.210:61157 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-10 06:16:54] INFO:     118.168.37.210:61156 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-10 06:16:54] INFO:     118.168.37.210:61154 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-10 06:16:55] INFO:     118.168.37.210:61161 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-10 06:16:55] Decode batch, #running-req: 2, #full token: 3111, full token usage: 0.02, mamba num: 8, mamba usage: 0.17, cuda graph: True, gen throughput (token/s): 104.74, #queue-req: 0
+[2026-09-10 06:16:55] INFO:     118.168.37.210:61155 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-10 06:16:57] Decode batch, #running-req: 1, #full token: 2009, full token usage: 0.02, mamba num: 4, mamba usage: 0.09, cuda graph: True, gen throughput (token/s): 33.30, #queue-req: 0
+[2026-09-10 06:16:58] Decode batch, #running-req: 1, #full token: 2049, full token usage: 0.02, mamba num: 4, mamba usage: 0.09, cuda graph: True, gen throughput (token/s): 23.65, #queue-req: 0
+[2026-09-10 06:17:00] Decode batch, #running-req: 1, #full token: 2089, full token usage: 0.02, mamba num: 4, mamba usage: 0.09, cuda graph: True, gen throughput (token/s): 23.62, #queue-req: 0
+[2026-09-10 06:17:02] Decode batch, #running-req: 1, #full token: 2129, full token usage: 0.02, mamba num: 4, mamba usage: 0.09, cuda graph: True, gen throughput (token/s): 23.61, #queue-req: 0
+[2026-09-10 06:17:03] Decode batch, #running-req: 1, #full token: 2169, full token usage: 0.02, mamba num: 4, mamba usage: 0.09, cuda graph: True, gen throughput (token/s): 23.60, #queue-req: 0
+[2026-09-10 06:17:05] Decode batch, #running-req: 1, #full token: 2209, full token usage: 0.02, mamba num: 4, mamba usage: 0.09, cuda graph: True, gen throughput (token/s): 23.59, #queue-req: 0
+[2026-09-10 06:17:07] Decode batch, #running-req: 1, #full token: 2249, full token usage: 0.02, mamba num: 4, mamba usage: 0.09, cuda graph: True, gen throughput (token/s): 23.59, #queue-req: 0
+[2026-09-10 06:17:08] Decode batch, #running-req: 1, #full token: 2289, full token usage: 0.02, mamba num: 4, mamba usage: 0.09, cuda graph: True, gen throughput (token/s): 23.58, #queue-req: 0
+[2026-09-10 06:17:09] INFO:     118.168.37.210:61158 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-10 06:17:10] Endpoint '/get_server_info' is deprecated and will be removed in a future version. Please use '/server_info' instead.
+[2026-09-10 06:17:10] INFO:     118.168.37.210:61199 - "GET /get_server_info HTTP/1.1" 200 OK
+[2026-09-10 06:17:10] INFO:     118.168.37.210:61200 - "GET /metrics HTTP/1.1" 200 OK
+[rank0]:[W910 06:17:11.722196202 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1056964608 bytes (free: 28442624, total: 50869764096).
+[rank0]:[W910 06:17:11.744540399 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1056964608 bytes (free: 896663552, total: 50869764096).
+[2026-09-10 06:17:11] Scheduler hit an exception: Traceback (most recent call last):
+  File "/sgl-workspace/sglang/python/sglang/srt/managers/scheduler.py", line 5600, in run_scheduler_process
+    scheduler.run_event_loop()
+  File "/sgl-workspace/sglang/python/sglang/srt/managers/scheduler.py", line 1792, in run_event_loop
+    dispatch_event_loop(self)
+  File "/sgl-workspace/sglang/python/sglang/srt/managers/scheduler.py", line 5446, in dispatch_event_loop
+    scheduler.event_loop_overlap()
+  File "/opt/sglang/lib/python3.12/site-packages/torch/utils/_contextlib.py", line 124, in decorate_context
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/managers/scheduler.py", line 1890, in event_loop_overlap
+    batch_result = self.run_batch(batch)
+                   ^^^^^^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/utils/nvtx_utils.py", line 109, in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/managers/scheduler.py", line 4081, in run_batch
+    batch_result = self.model_worker.forward_batch_generation(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/managers/tp_worker.py", line 628, in forward_batch_generation
+    out = self.model_runner.forward(
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/model_executor/model_runner.py", line 1613, in forward
+    output = self._forward_raw(
+             ^^^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/model_executor/model_runner.py", line 1761, in _forward_raw
+    self._maybe_execute_deferred_mamba_cow_and_clear(forward_batch)
+  File "/sgl-workspace/sglang/python/sglang/srt/model_executor/model_runner.py", line 1704, in _maybe_execute_deferred_mamba_cow_and_clear
+    pool.mamba_pool.copy_from(
+  File "/sgl-workspace/sglang/python/sglang/srt/mem_cache/memory_pool.py", line 1022, in copy_from
+    temporal[:, dst_indices] = temporal[:, src_indices]
+                               ~~~~~~~~^^^^^^^^^^^^^^^^
+torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 1008.00 MiB. GPU 0 has a total capacity of 47.38 GiB of which 855.12 MiB is free. Process 3791134 has 496.00 MiB memory in use. Process 3793810 has 46.04 GiB memory in use. Of the allocated memory 44.56 GiB is allocated by PyTorch, with 1.01 GiB allocated in private pools (e.g., CUDA Graphs), and 136.30 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandabl
+[2026-09-10 06:17:11] SIGQUIT received. signum=None, frame=None. It usually means one child failed.
+[2026-09-10 06:17:11] Sleeping 5 seconds before crash diagnostics to let GPU activity settle.
+[rank0]:[W910 06:17:12.566858202 ProcessGroupNCCL.cpp:1624] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
+[2026-09-10 06:17:16] No live scheduler processes found; skipping py-spy and CUDA coredump.
+[2026-09-10 06:17:16] kill_process_tree called: parent_pid=1, include_parent=True, pid=1
+[2026-09-10 06:17:16] ERROR:    Exception in ASGI application
+Traceback (most recent call last):
+  File "/usr/lib/python3.12/asyncio/tasks.py", line 520, in wait_for
+    return await fut
+           ^^^^^^^^^
+  File "/usr/lib/python3.12/asyncio/locks.py", line 212, in wait
+    await fut
+asyncio.exceptions.CancelledError
+The above exception was the direct cause of the following exception:
+Traceback (most recent call last):
+  File "/sgl-workspace/sglang/python/sglang/srt/managers/tokenizer_manager.py", line 1710, in _stream_one_response
+    await asyncio.wait_for(
+  File "/usr/lib/python3.12/asyncio/tasks.py", line 519, in wait_for
+    async with timeouts.timeout(timeout):
+  File "/usr/lib/python3.12/asyncio/timeouts.py", line 115, in __aexit__
+    raise TimeoutError from exc_val
+TimeoutError
+During handling of the above exception, another exception occurred:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/uvicorn/protocols/http/h11_impl.py", line 416, in run_asgi
+    result = await app(  # type: ignore[func-returns-value]
+[2026-09-10 06:17:16] INFO:     118.168.37.210:61208 - "POST /v1/chat/completions HTTP/1.1" 500 Internal Server Error
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/uvicorn/middleware/proxy_headers.py", line 63, in __call__
+    return await self.app(scope, receive, send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/applications.py", line 1163, in __call__
+    await super().__call__(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/applications.py", line 96, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/middleware/errors.py", line 164, in __call__
+    await self.app(scope, receive, _send)
+  File "/sgl-workspace/sglang/python/sglang/srt/utils/auth.py", line 201, in __call__
+    await self.app(scope, receive, send)
+  File "/sgl-workspace/sglang/python/sglang/srt/utils/http_middleware_patch.py", line 50, in __call__
+    await self.dispatch(request, call_next)
+  File "/sgl-workspace/sglang/python/sglang/srt/utils/common.py", line 2654, in track_http_status_code
+    response = await call_next(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/utils/http_middleware_patch.py", line 47, in call_next
+    await self.app(scope, receive, send_and_capture)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/middleware/cors.py", line 88, in __call__
+    await self.app(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/middleware/exceptions.py", line 63, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/middleware/asyncexitstack.py", line 18, in __call__
+    await self.app(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/routing.py", line 670, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/routing.py", line 2734, in app
+    await route.handle(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/routing.py", line 1281, in handle
+    await super().handle(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/routing.py", line 280, in handle
+    await self.app(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/routing.py", line 158, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/routing.py", line 144, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/entrypoints/http_server.py", line 454, in custom_handler
+    return await original_handler(ORJSONRequest(request.scope, request.receive))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/routing.py", line 706, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/routing.py", line 352, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/entrypoints/http_server.py", line 1739, in openai_v1_chat_completions
+    return await raw_request.app.state.openai_serving_chat.handle_request(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/entrypoints/openai/serving_base.py", line 107, in handle_request
+    return await self._handle_non_streaming_request(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/entrypoints/openai/serving_chat.py", line 1817, in _handle_non_streaming_request
+    ret = await self.tokenizer_manager.generate_request(
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/managers/tokenizer_manager.py", line 822, in generate_request
+    async for response in self._wait_one_response(obj, request):
+  File "/sgl-workspace/sglang/python/sglang/srt/managers/tokenizer_manager.py", line 1717, in _stream_one_response
+    and await request.is_disconnected()
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/requests.py", line 335, in is_disconnected
+    message = await self._receive()
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/uvicorn/protocols/http/h11_impl.py", line 537, in receive
+    await self.message_event.wait()
+  File "/usr/lib/python3.12/asyncio/locks.py", line 212, in wait
+    await fut
+asyncio.exceptions.CancelledError
+[2026-09-10 06:17:16] INFO:     118.168.37.210:61210 - "POST /v1/chat/completions HTTP/1.1" 500 Internal Server Error
+[2026-09-10 06:17:16] ERROR:    Exception in ASGI application
+Traceback (most recent call last):
+  File "/usr/lib/python3.12/asyncio/tasks.py", line 520, in wait_for
+    return await fut
+           ^^^^^^^^^
+  File "/usr/lib/python3.12/asyncio/locks.py", line 212, in wait
+    await fut
+asyncio.exceptions.CancelledError
+The above exception was the direct cause of the following exception:
+Traceback (most recent call last):
+  File "/sgl-workspace/sglang/python/sglang/srt/managers/tokenizer_manager.py", line 1710, in _stream_one_response
+    await asyncio.wait_for(
+  File "/usr/lib/python3.12/asyncio/tasks.py", line 519, in wait_for
+    async with timeouts.timeout(timeout):
+  File "/usr/lib/python3.12/asyncio/timeouts.py", line 115, in __aexit__
+    raise TimeoutError from exc_val
+TimeoutError
+During handling of the above exception, another exception occurred:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/uvicorn/protocols/http/h11_impl.py", line 416, in run_asgi
+    result = await app(  # type: ignore[func-returns-value]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/uvicorn/middleware/proxy_headers.py", line 63, in __call__
+    return await self.app(scope, receive, send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/applications.py", line 1163, in __call__
+    await super().__call__(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/applications.py", line 96, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/middleware/errors.py", line 164, in __call__
+    await self.app(scope, receive, _send)
+  File "/sgl-workspace/sglang/python/sglang/srt/utils/auth.py", line 201, in __call__
+    await self.app(scope, receive, send)
+  File "/sgl-workspace/sglang/python/sglang/srt/utils/http_middleware_patch.py", line 50, in __call__
+    await self.dispatch(request, call_next)
+  File "/sgl-workspace/sglang/python/sglang/srt/utils/common.py", line 2654, in track_http_status_code
+    response = await call_next(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/utils/http_middleware_patch.py", line 47, in call_next
+    await self.app(scope, receive, send_and_capture)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/middleware/cors.py", line 88, in __call__
+    await self.app(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/middleware/exceptions.py", line 63, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/middleware/asyncexitstack.py", line 18, in __call__
+    await self.app(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/routing.py", line 670, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/routing.py", line 2734, in app
+    await route.handle(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/routing.py", line 1281, in handle
+    await super().handle(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/routing.py", line 280, in handle
+    await self.app(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/routing.py", line 158, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/routing.py", line 144, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/entrypoints/http_server.py", line 454, in custom_handler
+    return await original_handler(ORJSONRequest(request.scope, request.receive))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/routing.py", line 706, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/routing.py", line 352, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/entrypoints/http_server.py", line 1739, in openai_v1_chat_completions
+    return await raw_request.app.state.openai_serving_chat.handle_request(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/entrypoints/openai/serving_base.py", line 107, in handle_request
+    return await self._handle_non_streaming_request(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/entrypoints/openai/serving_chat.py", line 1817, in _handle_non_streaming_request
+    ret = await self.tokenizer_manager.generate_request(
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/managers/tokenizer_manager.py", line 822, in generate_request
+    async for response in self._wait_one_response(obj, request):
+  File "/sgl-workspace/sglang/python/sglang/srt/managers/tokenizer_manager.py", line 1717, in _stream_one_response
+    and await request.is_disconnected()
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/requests.py", line 335, in is_disconnected
+    message = await self._receive()
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/uvicorn/protocols/http/h11_impl.py", line 537, in receive
+    await self.message_event.wait()
+  File "/usr/lib/python3.12/asyncio/locks.py", line 212, in wait
+    await fut
+asyncio.exceptions.CancelledError
+[2026-09-10 06:17:16] ERROR:    Exception in ASGI application
+Traceback (most recent call last):
+  File "/usr/lib/python3.12/asyncio/tasks.py", line 520, in wait_for
+    return await fut
+           ^^^^^^^^^
+  File "/usr/lib/python3.12/asyncio/locks.py", line 212, in wait
+    await fut
+asyncio.exceptions.CancelledError
+The above exception was the direct cause of the following exception:
+Traceback (most recent call last):
+  File "/sgl-workspace/sglang/python/sglang/srt/managers/tokenizer_manager.py", line 1710, in _stream_one_response
+    await asyncio.wait_for(
+  File "/usr/lib/python3.12/asyncio/tasks.py", line 519, in wait_for
+    async with timeouts.timeout(timeout):
+  File "/usr/lib/python3.12/asyncio/timeouts.py", line 115, in __aexit__
+    raise TimeoutError from exc_val
+TimeoutError
+During handling of the above exception, another exception occurred:
+[2026-09-10 06:17:16] INFO:     118.168.37.210:61209 - "POST /v1/chat/completions HTTP/1.1" 500 Internal Server Error
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/uvicorn/protocols/http/h11_impl.py", line 416, in run_asgi
+    result = await app(  # type: ignore[func-returns-value]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/uvicorn/middleware/proxy_headers.py", line 63, in __call__
+    return await self.app(scope, receive, send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/applications.py", line 1163, in __call__
+    await super().__call__(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/applications.py", line 96, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/middleware/errors.py", line 164, in __call__
+    await self.app(scope, receive, _send)
+  File "/sgl-workspace/sglang/python/sglang/srt/utils/auth.py", line 201, in __call__
+    await self.app(scope, receive, send)
+  File "/sgl-workspace/sglang/python/sglang/srt/utils/http_middleware_patch.py", line 50, in __call__
+    await self.dispatch(request, call_next)
+  File "/sgl-workspace/sglang/python/sglang/srt/utils/common.py", line 2654, in track_http_status_code
+    response = await call_next(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/utils/http_middleware_patch.py", line 47, in call_next
+    await self.app(scope, receive, send_and_capture)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/middleware/cors.py", line 88, in __call__
+    await self.app(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/middleware/exceptions.py", line 63, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/middleware/asyncexitstack.py", line 18, in __call__
+    await self.app(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/routing.py", line 670, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/routing.py", line 2734, in app
+    await route.handle(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/routing.py", line 1281, in handle
+    await super().handle(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/routing.py", line 280, in handle
+    await self.app(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/routing.py", line 158, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/routing.py", line 144, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/entrypoints/http_server.py", line 454, in custom_handler
+    return await original_handler(ORJSONRequest(request.scope, request.receive))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/routing.py", line 706, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/routing.py", line 352, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/entrypoints/http_server.py", line 1739, in openai_v1_chat_completions
+    return await raw_request.app.state.openai_serving_chat.handle_request(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/entrypoints/openai/serving_base.py", line 107, in handle_request
+    return await self._handle_non_streaming_request(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/entrypoints/openai/serving_chat.py", line 1817, in _handle_non_streaming_request
+    ret = await self.tokenizer_manager.generate_request(
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/managers/tokenizer_manager.py", line 822, in generate_request
+    async for response in self._wait_one_response(obj, request):
+  File "/sgl-workspace/sglang/python/sglang/srt/managers/tokenizer_manager.py", line 1717, in _stream_one_response
+    and await request.is_disconnected()
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/requests.py", line 335, in is_disconnected
+    message = await self._receive()
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/uvicorn/protocols/http/h11_impl.py", line 537, in receive
+    await self.message_event.wait()
+  File "/usr/lib/python3.12/asyncio/locks.py", line 212, in wait
+    await fut
+asyncio.exceptions.CancelledError
+[2026-09-10 06:17:16] ERROR:    Exception in ASGI application
+Traceback (most recent call last):
+  File "/usr/lib/python3.12/asyncio/tasks.py", line 520, in wait_for
+    return await fut
+           ^^^^^^^^^
+  File "/usr/lib/python3.12/asyncio/locks.py", line 212, in wait
+    await fut
+asyncio.exceptions.CancelledError
+The above exception was the direct cause of the following exception:
+Traceback (most recent call last):
+  File "/sgl-workspace/sglang/python/sglang/srt/managers/tokenizer_manager.py", line 1710, in _stream_one_response
+    await asyncio.wait_for(
+[2026-09-10 06:17:16] INFO:     118.168.37.210:61211 - "POST /v1/chat/completions HTTP/1.1" 500 Internal Server Error
+  File "/usr/lib/python3.12/asyncio/tasks.py", line 519, in wait_for
+    async with timeouts.timeout(timeout):
+  File "/usr/lib/python3.12/asyncio/timeouts.py", line 115, in __aexit__
+    raise TimeoutError from exc_val
+TimeoutError
+During handling of the above exception, another exception occurred:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/uvicorn/protocols/http/h11_impl.py", line 416, in run_asgi
+    result = await app(  # type: ignore[func-returns-value]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/uvicorn/middleware/proxy_headers.py", line 63, in __call__
+    return await self.app(scope, receive, send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/applications.py", line 1163, in __call__
+    await super().__call__(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/applications.py", line 96, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/middleware/errors.py", line 164, in __call__
+    await self.app(scope, receive, _send)
+  File "/sgl-workspace/sglang/python/sglang/srt/utils/auth.py", line 201, in __call__
+    await self.app(scope, receive, send)
+  File "/sgl-workspace/sglang/python/sglang/srt/utils/http_middleware_patch.py", line 50, in __call__
+    await self.dispatch(request, call_next)
+  File "/sgl-workspace/sglang/python/sglang/srt/utils/common.py", line 2654, in track_http_status_code
+    response = await call_next(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/utils/http_middleware_patch.py", line 47, in call_next
+    await self.app(scope, receive, send_and_capture)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/middleware/cors.py", line 88, in __call__
+    await self.app(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/middleware/exceptions.py", line 63, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/middleware/asyncexitstack.py", line 18, in __call__
+    await self.app(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/routing.py", line 670, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/routing.py", line 2734, in app
+    await route.handle(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/routing.py", line 1281, in handle
+    await super().handle(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/routing.py", line 280, in handle
+    await self.app(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/routing.py", line 158, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/routing.py", line 144, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/entrypoints/http_server.py", line 454, in custom_handler
+    return await original_handler(ORJSONRequest(request.scope, request.receive))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/routing.py", line 706, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/routing.py", line 352, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/entrypoints/http_server.py", line 1739, in openai_v1_chat_completions
+    return await raw_request.app.state.openai_serving_chat.handle_request(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/entrypoints/openai/serving_base.py", line 107, in handle_request
+    return await self._handle_non_streaming_request(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/entrypoints/openai/serving_chat.py", line 1817, in _handle_non_streaming_request
+    ret = await self.tokenizer_manager.generate_request(
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/managers/tokenizer_manager.py", line 822, in generate_request
+    async for response in self._wait_one_response(obj, request):
+  File "/sgl-workspace/sglang/python/sglang/srt/managers/tokenizer_manager.py", line 1717, in _stream_one_response
+    and await request.is_disconnected()
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/requests.py", line 335, in is_disconnected
+    message = await self._receive()
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/uvicorn/protocols/http/h11_impl.py", line 537, in receive
+    await self.message_event.wait()
+  File "/usr/lib/python3.12/asyncio/locks.py", line 212, in wait
+    await fut
+asyncio.exceptions.CancelledError
+[2026-09-10 06:17:16] ERROR:    Exception in ASGI application
+Traceback (most recent call last):
+  File "/usr/lib/python3.12/asyncio/tasks.py", line 520, in wait_for
+    return await fut
+           ^^^^^^^^^
+[2026-09-10 06:17:16] INFO:     118.168.37.210:61206 - "POST /v1/chat/completions HTTP/1.1" 500 Internal Server Error
+  File "/usr/lib/python3.12/asyncio/locks.py", line 212, in wait
+    await fut
+asyncio.exceptions.CancelledError
+The above exception was the direct cause of the following exception:
+Traceback (most recent call last):
+  File "/sgl-workspace/sglang/python/sglang/srt/managers/tokenizer_manager.py", line 1710, in _stream_one_response
+    await asyncio.wait_for(
+  File "/usr/lib/python3.12/asyncio/tasks.py", line 519, in wait_for
+    async with timeouts.timeout(timeout):
+  File "/usr/lib/python3.12/asyncio/timeouts.py", line 115, in __aexit__
+    raise TimeoutError from exc_val
+TimeoutError
+During handling of the above exception, another exception occurred:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/uvicorn/protocols/http/h11_impl.py", line 416, in run_asgi
+    result = await app(  # type: ignore[func-returns-value]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/uvicorn/middleware/proxy_headers.py", line 63, in __call__
+    return await self.app(scope, receive, send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/applications.py", line 1163, in __call__
+    await super().__call__(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/applications.py", line 96, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/middleware/errors.py", line 164, in __call__
+    await self.app(scope, receive, _send)
+  File "/sgl-workspace/sglang/python/sglang/srt/utils/auth.py", line 201, in __call__
+    await self.app(scope, receive, send)
+  File "/sgl-workspace/sglang/python/sglang/srt/utils/http_middleware_patch.py", line 50, in __call__
+    await self.dispatch(request, call_next)
+  File "/sgl-workspace/sglang/python/sglang/srt/utils/common.py", line 2654, in track_http_status_code
+    response = await call_next(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/utils/http_middleware_patch.py", line 47, in call_next
+    await self.app(scope, receive, send_and_capture)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/middleware/cors.py", line 88, in __call__
+    await self.app(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/middleware/exceptions.py", line 63, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/middleware/asyncexitstack.py", line 18, in __call__
+    await self.app(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/routing.py", line 670, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/routing.py", line 2734, in app
+    await route.handle(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/routing.py", line 1281, in handle
+    await super().handle(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/routing.py", line 280, in handle
+    await self.app(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/routing.py", line 158, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/routing.py", line 144, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/entrypoints/http_server.py", line 454, in custom_handler
+    return await original_handler(ORJSONRequest(request.scope, request.receive))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/routing.py", line 706, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/routing.py", line 352, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/entrypoints/http_server.py", line 1739, in openai_v1_chat_completions
+    return await raw_request.app.state.openai_serving_chat.handle_request(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/entrypoints/openai/serving_base.py", line 107, in handle_request
+    return await self._handle_non_streaming_request(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/entrypoints/openai/serving_chat.py", line 1817, in _handle_non_streaming_request
+    ret = await self.tokenizer_manager.generate_request(
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/managers/tokenizer_manager.py", line 822, in generate_request
+    async for response in self._wait_one_response(obj, request):
+  File "/sgl-workspace/sglang/python/sglang/srt/managers/tokenizer_manager.py", line 1717, in _stream_one_response
+    and await request.is_disconnected()
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/requests.py", line 335, in is_disconnected
+    message = await self._receive()
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/uvicorn/protocols/http/h11_impl.py", line 537, in receive
+    await self.message_event.wait()
+  File "/usr/lib/python3.12/asyncio/locks.py", line 212, in wait
+    await fut
+asyncio.exceptions.CancelledError
+[2026-09-10 06:17:16] ERROR:    Exception in ASGI application
+Traceback (most recent call last):
+  File "/usr/lib/python3.12/asyncio/tasks.py", line 520, in wait_for
+    return await fut
+           ^^^^^^^^^
+  File "/usr/lib/python3.12/asyncio/locks.py", line 212, in wait
+    await fut
+asyncio.exceptions.CancelledError
+The above exception was the direct cause of the following exception:
+[2026-09-10 06:17:16] INFO:     118.168.37.210:61204 - "POST /v1/chat/completions HTTP/1.1" 500 Internal Server Error
+Traceback (most recent call last):
+  File "/sgl-workspace/sglang/python/sglang/srt/managers/tokenizer_manager.py", line 1710, in _stream_one_response
+    await asyncio.wait_for(
+  File "/usr/lib/python3.12/asyncio/tasks.py", line 519, in wait_for
+    async with timeouts.timeout(timeout):
+  File "/usr/lib/python3.12/asyncio/timeouts.py", line 115, in __aexit__
+    raise TimeoutError from exc_val
+TimeoutError
+During handling of the above exception, another exception occurred:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/uvicorn/protocols/http/h11_impl.py", line 416, in run_asgi
+    result = await app(  # type: ignore[func-returns-value]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/uvicorn/middleware/proxy_headers.py", line 63, in __call__
+    return await self.app(scope, receive, send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/applications.py", line 1163, in __call__
+    await super().__call__(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/applications.py", line 96, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/middleware/errors.py", line 164, in __call__
+    await self.app(scope, receive, _send)
+  File "/sgl-workspace/sglang/python/sglang/srt/utils/auth.py", line 201, in __call__
+    await self.app(scope, receive, send)
+  File "/sgl-workspace/sglang/python/sglang/srt/utils/http_middleware_patch.py", line 50, in __call__
+    await self.dispatch(request, call_next)
+  File "/sgl-workspace/sglang/python/sglang/srt/utils/common.py", line 2654, in track_http_status_code
+    response = await call_next(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/utils/http_middleware_patch.py", line 47, in call_next
+    await self.app(scope, receive, send_and_capture)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/middleware/cors.py", line 88, in __call__
+    await self.app(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/middleware/exceptions.py", line 63, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/middleware/asyncexitstack.py", line 18, in __call__
+    await self.app(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/routing.py", line 670, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/routing.py", line 2734, in app
+    await route.handle(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/routing.py", line 1281, in handle
+    await super().handle(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/routing.py", line 280, in handle
+    await self.app(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/routing.py", line 158, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/routing.py", line 144, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/entrypoints/http_server.py", line 454, in custom_handler
+    return await original_handler(ORJSONRequest(request.scope, request.receive))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/routing.py", line 706, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/routing.py", line 352, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/entrypoints/http_server.py", line 1739, in openai_v1_chat_completions
+    return await raw_request.app.state.openai_serving_chat.handle_request(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/entrypoints/openai/serving_base.py", line 107, in handle_request
+    return await self._handle_non_streaming_request(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/entrypoints/openai/serving_chat.py", line 1817, in _handle_non_streaming_request
+    ret = await self.tokenizer_manager.generate_request(
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/managers/tokenizer_manager.py", line 822, in generate_request
+    async for response in self._wait_one_response(obj, request):
+  File "/sgl-workspace/sglang/python/sglang/srt/managers/tokenizer_manager.py", line 1717, in _stream_one_response
+    and await request.is_disconnected()
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/requests.py", line 335, in is_disconnected
+    message = await self._receive()
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/uvicorn/protocols/http/h11_impl.py", line 537, in receive
+    await self.message_event.wait()
+  File "/usr/lib/python3.12/asyncio/locks.py", line 212, in wait
+    await fut
+asyncio.exceptions.CancelledError
+[2026-09-10 06:17:16] ERROR:    Traceback (most recent call last):
+  File "/usr/lib/python3.12/asyncio/runners.py", line 194, in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "uvloop/loop.pyx", line 1512, in uvloop.loop.Loop.run_until_complete
+  File "uvloop/loop.pyx", line 1505, in uvloop.loop.Loop.run_until_complete
+  File "uvloop/loop.pyx", line 1379, in uvloop.loop.Loop.run_forever
+  File "uvloop/loop.pyx", line 557, in uvloop.loop.Loop._run
+  File "uvloop/loop.pyx", line 476, in uvloop.loop.Loop._on_idle
+  File "uvloop/cbhandles.pyx", line 83, in uvloop.loop.Handle._run
+  File "uvloop/cbhandles.pyx", line 61, in uvloop.loop.Handle._run
+  File "/sgl-workspace/sglang/python/sglang/srt/managers/tokenizer_manager.py", line 3644, in running_phase_sigquit_handler
+    kill_process_tree(os.getpid())
+  File "/sgl-workspace/sglang/python/sglang/srt/utils/common.py", line 2287, in kill_process_tree
+    sys.exit(0)
+SystemExit: 0
+During handling of the above exception, another exception occurred:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/routing.py", line 655, in lifespan
+    await receive()
+  File "/opt/sglang/lib/python3.12/site-packages/uvicorn/lifespan/on.py", line 137, in receive
+    return await self.receive_queue.get()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/asyncio/queues.py", line 158, in get
+    await getter
+asyncio.exceptions.CancelledError
+[2026-09-10 06:17:16] ERROR:    Exception in ASGI application
+Traceback (most recent call last):
+  File "/usr/lib/python3.12/asyncio/tasks.py", line 520, in wait_for
+    return await fut
+           ^^^^^^^^^
+  File "/usr/lib/python3.12/asyncio/locks.py", line 212, in wait
+    await fut
+asyncio.exceptions.CancelledError
+The above exception was the direct cause of the following exception:
+Traceback (most recent call last):
+  File "/sgl-workspace/sglang/python/sglang/srt/managers/tokenizer_manager.py", line 1710, in _stream_one_response
+    await asyncio.wait_for(
+  File "/usr/lib/python3.12/asyncio/tasks.py", line 519, in wait_for
+    async with timeouts.timeout(timeout):
+  File "/usr/lib/python3.12/asyncio/timeouts.py", line 115, in __aexit__
+    raise TimeoutError from exc_val
+TimeoutError
+[2026-09-10 06:17:16] INFO:     118.168.37.210:61205 - "POST /v1/chat/completions HTTP/1.1" 500 Internal Server Error
+During handling of the above exception, another exception occurred:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/uvicorn/protocols/http/h11_impl.py", line 416, in run_asgi
+    result = await app(  # type: ignore[func-returns-value]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/uvicorn/middleware/proxy_headers.py", line 63, in __call__
+    return await self.app(scope, receive, send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/applications.py", line 1163, in __call__
+    await super().__call__(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/applications.py", line 96, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/middleware/errors.py", line 164, in __call__
+    await self.app(scope, receive, _send)
+  File "/sgl-workspace/sglang/python/sglang/srt/utils/auth.py", line 201, in __call__
+    await self.app(scope, receive, send)
+  File "/sgl-workspace/sglang/python/sglang/srt/utils/http_middleware_patch.py", line 50, in __call__
+    await self.dispatch(request, call_next)
+  File "/sgl-workspace/sglang/python/sglang/srt/utils/common.py", line 2654, in track_http_status_code
+    response = await call_next(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/utils/http_middleware_patch.py", line 47, in call_next
+    await self.app(scope, receive, send_and_capture)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/middleware/cors.py", line 88, in __call__
+    await self.app(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/middleware/exceptions.py", line 63, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/middleware/asyncexitstack.py", line 18, in __call__
+    await self.app(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/routing.py", line 670, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/routing.py", line 2734, in app
+    await route.handle(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/routing.py", line 1281, in handle
+    await super().handle(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/routing.py", line 280, in handle
+    await self.app(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/routing.py", line 158, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/routing.py", line 144, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/entrypoints/http_server.py", line 454, in custom_handler
+    return await original_handler(ORJSONRequest(request.scope, request.receive))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/routing.py", line 706, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/routing.py", line 352, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/entrypoints/http_server.py", line 1739, in openai_v1_chat_completions
+    return await raw_request.app.state.openai_serving_chat.handle_request(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/entrypoints/openai/serving_base.py", line 107, in handle_request
+    return await self._handle_non_streaming_request(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/entrypoints/openai/serving_chat.py", line 1817, in _handle_non_streaming_request
+    ret = await self.tokenizer_manager.generate_request(
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/managers/tokenizer_manager.py", line 822, in generate_request
+    async for response in self._wait_one_response(obj, request):
+  File "/sgl-workspace/sglang/python/sglang/srt/managers/tokenizer_manager.py", line 1717, in _stream_one_response
+    and await request.is_disconnected()
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/requests.py", line 335, in is_disconnected
+    message = await self._receive()
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/uvicorn/protocols/http/h11_impl.py", line 537, in receive
+    await self.message_event.wait()
+  File "/usr/lib/python3.12/asyncio/locks.py", line 212, in wait
+    await fut
+asyncio.exceptions.CancelledError
+[2026-09-10 06:17:16] ERROR:    Exception in ASGI application
+Traceback (most recent call last):
+  File "/usr/lib/python3.12/asyncio/tasks.py", line 520, in wait_for
+    return await fut
+           ^^^^^^^^^
+  File "/usr/lib/python3.12/asyncio/locks.py", line 212, in wait
+    await fut
+asyncio.exceptions.CancelledError
+The above exception was the direct cause of the following exception:
+Traceback (most recent call last):
+  File "/sgl-workspace/sglang/python/sglang/srt/managers/tokenizer_manager.py", line 1710, in _stream_one_response
+[2026-09-10 06:17:16] INFO:     118.168.37.210:61207 - "POST /v1/chat/completions HTTP/1.1" 500 Internal Server Error
+    await asyncio.wait_for(
+  File "/usr/lib/python3.12/asyncio/tasks.py", line 519, in wait_for
+    async with timeouts.timeout(timeout):
+  File "/usr/lib/python3.12/asyncio/timeouts.py", line 115, in __aexit__
+    raise TimeoutError from exc_val
+TimeoutError
+During handling of the above exception, another exception occurred:
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/uvicorn/protocols/http/h11_impl.py", line 416, in run_asgi
+    result = await app(  # type: ignore[func-returns-value]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/uvicorn/middleware/proxy_headers.py", line 63, in __call__
+    return await self.app(scope, receive, send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/applications.py", line 1163, in __call__
+    await super().__call__(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/applications.py", line 96, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/middleware/errors.py", line 164, in __call__
+    await self.app(scope, receive, _send)
+  File "/sgl-workspace/sglang/python/sglang/srt/utils/auth.py", line 201, in __call__
+    await self.app(scope, receive, send)
+  File "/sgl-workspace/sglang/python/sglang/srt/utils/http_middleware_patch.py", line 50, in __call__
+    await self.dispatch(request, call_next)
+  File "/sgl-workspace/sglang/python/sglang/srt/utils/common.py", line 2654, in track_http_status_code
+    response = await call_next(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/utils/http_middleware_patch.py", line 47, in call_next
+    await self.app(scope, receive, send_and_capture)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/middleware/cors.py", line 88, in __call__
+    await self.app(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/middleware/exceptions.py", line 63, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/middleware/asyncexitstack.py", line 18, in __call__
+    await self.app(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/routing.py", line 670, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/routing.py", line 2734, in app
+    await route.handle(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/routing.py", line 1281, in handle
+    await super().handle(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/routing.py", line 280, in handle
+    await self.app(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/routing.py", line 158, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/routing.py", line 144, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/entrypoints/http_server.py", line 454, in custom_handler
+    return await original_handler(ORJSONRequest(request.scope, request.receive))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/routing.py", line 706, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/fastapi/routing.py", line 352, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/entrypoints/http_server.py", line 1739, in openai_v1_chat_completions
+    return await raw_request.app.state.openai_serving_chat.handle_request(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/entrypoints/openai/serving_base.py", line 107, in handle_request
+    return await self._handle_non_streaming_request(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/entrypoints/openai/serving_chat.py", line 1817, in _handle_non_streaming_request
+    ret = await self.tokenizer_manager.generate_request(
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/srt/managers/tokenizer_manager.py", line 822, in generate_request
+    async for response in self._wait_one_response(obj, request):
+  File "/sgl-workspace/sglang/python/sglang/srt/managers/tokenizer_manager.py", line 1717, in _stream_one_response
+    and await request.is_disconnected()
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/requests.py", line 335, in is_disconnected
+    message = await self._receive()
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/uvicorn/protocols/http/h11_impl.py", line 537, in receive
+    await self.message_event.wait()
+  File "/usr/lib/python3.12/asyncio/locks.py", line 212, in wait
+    await fut
+asyncio.exceptions.CancelledError
+[2026-09-10 06:17:16] kill_process_tree called: parent_pid=1, include_parent=False, pid=1
+==========
+== CUDA ==
+==========
+CUDA Version 13.0.3
+Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+By pulling and using the container, you accept the terms and conditions of this license:
+https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
+

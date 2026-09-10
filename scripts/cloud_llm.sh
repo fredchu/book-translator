@@ -24,7 +24,8 @@
 #   CLOUD_LLM_ENGINE          vllm|sglang（預設 vllm）
 #   CLOUD_LLM_CONCURRENCY     client 併發寬度；未明傳時由就緒後的真實大塊探針自動選 24/16/12/8
 #   CLOUD_LLM_CONCURRENT_CHAPTERS=0  關掉雲端預設的跨章併發，退回舊行為
-#   CLOUD_LLM_EXTRA_SERVER_ARGS  追加目前引擎的 server 參數；vllm 仍相容舊的 CLOUD_LLM_EXTRA_VLLM_ARGS
+#   CLOUD_LLM_EXTRA_SERVER_ARGS  追加目前引擎的 server 參數；vllm 仍相容舊的 CLOUD_LLM_EXTRA_VLLM_ARGS，
+#                                sglang 對稱有 CLOUD_LLM_EXTRA_SGLANG_ARGS（只在沒設前者時生效）
 #   --keep / --stop DIR      見上
 #
 # 憑證：Vast → VAST_API_KEY 或 ~/.config/vastai/vast_api_key；RunPod → RUNPOD_API_KEY 或 ~/.config/runpod/api_key。
@@ -127,6 +128,19 @@ if [[ "$ENGINE" == sglang && "$PROFILE" == fp8 ]]; then
         || die "CLOUD_LLM_SGLANG_FP8_MAX_RUNNING_REQUESTS(${SGLANG_FP8_MAX_RUNNING_REQUESTS}) 小於探針候選頂端 ${SERVER_CONCURRENCY}，探針量不到（尚未租機）"
     SERVER_CONCURRENCY="$SGLANG_FP8_MAX_RUNNING_REQUESTS"
 fi
+# 2026-09-10 更正兩次：
+# 第一次——原本想加一個 fp8 專用的 mem-fraction 旋鈕並把預設調低，但真機
+# 第三趟之後 verifier 讀到 SGLang 自己印的訊息，推翻了這個方向：往下調
+# mem-fraction 會同時縮小 mamba 狀態池，槽數更少、有效併發上限更低——
+# mem-fraction 不是「提高併發上限」的槓桿，這句仍然成立。
+# 第二次（review-mem-budget.md §8）——但 mem-fraction 是「自由記憶體」的槓桿：
+# 關 radix 後省下的池子空間會被 KV 全數吸走，第四趟若維持 0.92、mem-fraction
+# 不動，graph 之後可用記憶體反而比第三趟更少（估 1.1–1.3 GB，比第三趟撞牆
+# 的 1.35 GB 還緊）。§8 四格試算後改為 0.88：關 radix＋0.88 才能把 graph
+# 之後的餘裕頂到約 3.0–3.3 GB（≥2.5 GB 門檻）。所以第四趟啟動參數是
+# --disable-radix-cache --mem-fraction-static 0.88（見下面 CLOUD_LLM_EXTRA_SGLANG_ARGS），
+# 兩個變因一起改，但 §8.6 的過關六行仍可各自歸因：第 1–3 行歸 radix，
+# 第 4–5 行歸 mem-fraction。
 # 挑報價用預估總費用排序：這條流程流量最重——每次拉 10 GB 映像＋ int4 19 GB／fp8 31 GB 模型，
 # 流量費常高過 GPU 費（Vast 單價 0 到 0.039 美元／GB）。時數預設 1.5 小時（一本 47 萬字約 1 小時），可用環境變數改。
 export VAST_LIB_EST_HOURS="${VAST_LIB_EST_HOURS:-1.5}"
@@ -403,6 +417,11 @@ if [[ -n "${CLOUD_LLM_EXTRA_SERVER_ARGS:-}" ]]; then
 elif [[ "$ENGINE" == vllm && -n "${CLOUD_LLM_EXTRA_VLLM_ARGS:-}" ]]; then
     # Backward compatibility for existing vLLM benchmark commands only.
     read -r -a _extra <<<"$CLOUD_LLM_EXTRA_VLLM_ARGS"
+elif [[ "$ENGINE" == sglang && -n "${CLOUD_LLM_EXTRA_SGLANG_ARGS:-}" ]]; then
+    # spec-07 第四趟：容量調校旗標（--disable-radix-cache／--mamba-ssm-dtype／
+    # --mamba-full-memory-ratio）要能只對 sglang 加，不會不小心也套到同一次
+    # 會話裡若還跑 vLLM 的那台——跟 CLOUD_LLM_EXTRA_VLLM_ARGS 對稱的獨立旋鈕。
+    read -r -a _extra <<<"$CLOUD_LLM_EXTRA_SGLANG_ARGS"
 else
     _extra=()
 fi
@@ -417,9 +436,12 @@ done
 if [[ ${#_extra[@]} -gt 0 ]]; then
     SERVER_ARGS+=("${_extra[@]}")
 fi
-# spec-07 item 5（可重現性）：完整伺服器啟動參數落盤，不用事後從記憶重建。
+# spec-07 item 5（可重現性）＋第四趟教訓（實效值跟啟動參數是兩回事，server_info
+# 那個欄位不能信）：完整伺服器啟動參數落盤，也印到 log 讓人開機當下就看得到，
+# 不用等事後去翻檔案才知道這次到底帶了哪些旗標。
 printf '%s\n' "${SERVER_ARGS[@]}" >"$RUN_DIR/server-args.txt"
 printf '%s\n' "$IMAGE" >"$RUN_DIR/image.txt"
+log "${ENGINE} 實際採用的伺服器啟動參數：$(printf '%q ' "${SERVER_ARGS[@]}")"
 
 # ---------- 開機 ----------
 # 逐張試一層 offers，額度是這一層自己的（獨立於其他層，見 MAX_OFFER_TRIES/WHITELIST_TRIES 注解）。
@@ -599,6 +621,35 @@ log "${ENGINE} thinking preflight 通過：content 無 think 標籤、reasoning_
 # 通過 preflight 就記成功；不等整本書翻完（翻譯內容失敗跟機器硬體無關，不該污染機器記憶）。
 machine_memory_record synth_ok ""
 
+# ---------- 實效併發上限（review-mem-budget.md：候選要夾在伺服器真的會用的值以下）----------
+# 第三趟三次都被 server_info 的 --max-running-requests 騙了（那是啟動參數，不是實效值）。
+# 就緒摘要那行（"max_total_num_tokens=… max_running_requests=M"）才是真話：SGLang
+# 不管有沒有內部夾住（例如 mamba 狀態池不夠）都會印這行，M 就是它真正會用的值——
+# 沒被夾住時 M 自然等於我們傳的 --max-running-requests，被夾住時 M 就是夾住後的數字。
+# 兩種情況同一個欄位讀出來，不必分別處理「有夾/沒夾」兩條路。
+EFFECTIVE_CAP_ARGS=()
+if [[ "$PROVIDER" == vast ]]; then
+    BOOT_LOG_TAIL="$(vast_lib_cli logs "$INSTANCE_ID" --tail 5000 2>/dev/null || true)"
+    # 同一次開機可能印多次（重試／重啟過），取最後一次出現的才是最終生效值。
+    EFFECTIVE_CAP="$(printf '%s\n' "$BOOT_LOG_TAIL" | grep -oE 'max_running_requests=[0-9]+' | tail -1 | cut -d= -f2 || true)"
+    if [[ "$EFFECTIVE_CAP" =~ ^[0-9]+$ ]]; then
+        EFFECTIVE_CAP_ARGS=(--effective-cap "$EFFECTIVE_CAP")
+        if (( EFFECTIVE_CAP < SERVER_CONCURRENCY )); then
+            log "⚠️  伺服器實效併發上限 ${EFFECTIVE_CAP}，低於啟動參數 ${SERVER_CONCURRENCY}（讀的是就緒摘要，不是 server_info——那個只回啟動參數）；探針候選會夾在這個值以下"
+        else
+            log "伺服器實效併發上限 ${EFFECTIVE_CAP}，跟啟動參數一致，沒有被額外夾住"
+        fi
+    else
+        log "⚠️  沒讀到就緒摘要的 max_running_requests，探針候選不設實效上限（沿用全部候選，跟舊行為一樣）"
+    fi
+else
+    # RunPod 沒有等同 vastai logs 的落地機制（既有已知缺口，RunPod 路徑本來就
+    # 沒真機驗過）——這裡不去實作它，但警告要印在 if 外面：讓 RunPod 至少
+    # 明講「沒有實效上限、沿用全部候選」，不能因為分支結構就悄悄跳過警告，
+    # 那樣會變成靜默降級，跟這整段功能想避免的事一樣。
+    log "⚠️  RunPod 沒有讀取就緒摘要的機制，探針候選不設實效上限（沿用全部候選）"
+fi
+
 # ---------- 自適應併發探針 ----------
 # 每波使用不同、真實大小的大塊；小段會高估單筆速度而選到危險的 N。第一波 prefix
 # cache 是冷的，量測偏保守，方向安全。探針也會自然反映 cache preempt 的延遲成本。
@@ -610,7 +661,8 @@ else
 fi
 set +e
 OMLX_API_KEY="$API_KEY" "${ADAPTIVE_PROBE_CMD[@]}" --endpoint "$ENDPOINT" --model "$MODEL" \
-    --load "$PROBE_LOAD" --out "$PROBE_RESULT" --gpu "$GPU" --profile "$PROFILE"
+    --load "$PROBE_LOAD" --out "$PROBE_RESULT" --gpu "$GPU" --profile "$PROFILE" \
+    ${EFFECTIVE_CAP_ARGS[@]+"${EFFECTIVE_CAP_ARGS[@]}"}
 PROBE_RC=$?
 set -e
 DERIVED_TIMEOUT_ARGS=()  # 探針失敗時保持空陣列——翻譯器用它自己的 --timeout 預設，行為不變

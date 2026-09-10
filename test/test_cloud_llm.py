@@ -95,7 +95,7 @@ case "${sub[0]} ${sub[1]}" in
     "show instances")   if [[ -n "${FAKE_LIST_BY_LABEL:-}" ]] && ! grep -q "^destroyed" "$FAKE_CALLS"; then lbl=$(grep -o -- "--label [^ ]*" "$FAKE_CALLS" | head -1 | cut -d" " -f2); printf '[{"id":7001,"label":"%s","actual_status":"loading"}]\n' "$lbl"; exit 0; fi; printf '%s\n' "${FAKE_INSTANCES_JSON}" ;;
     "show instance")    printf '%s\n' "$FAKE_INSTANCE_JSON" ;;
     "destroy instance") echo destroyed >>"$FAKE_CALLS"; exit 0 ;;
-    "logs "*) echo "fake container log" ;;
+    "logs "*) printf '%s\n' "${FAKE_CONTAINER_LOG:-fake container log}" ;;
     *) exit 1 ;;
 esac
 """
@@ -106,6 +106,7 @@ exit "${FAKE_TRANSLATE_RC:-0}"
 """
 
 FAKE_ADAPTIVE_PROBE = r'''#!/usr/bin/env bash
+[[ -n "${FAKE_PROBE_CALLS:-}" ]] && printf '%s\n' "$*" >>"$FAKE_PROBE_CALLS"
 out=""
 while [[ $# -gt 0 ]]; do
     if [[ "$1" == --out ]]; then out="$2"; shift 2; else shift; fi
@@ -1060,5 +1061,108 @@ def test_provenance_files_written_for_reproducibility(tmp_path: Path) -> None:
         assert MODEL in server_args and "--max-num-seqs" in server_args and "32" in server_args
         record = json.loads((run_dir / "vast-instance-record.json").read_text(encoding="utf-8"))
         assert record["machine_id"] == 555
+    finally:
+        srv.shutdown()
+
+
+# ---------- spec-07 review-mem-budget：候選要夾在就緒摘要的實效上限 ----------
+
+def test_effective_cap_read_from_ready_summary_when_capped(tmp_path: Path) -> None:
+    """伺服器實際被夾住（mamba 狀態池不夠）：就緒摘要印出比啟動參數小的值，
+    探針呼叫要拿到這個較小的 --effective-cap，不是啟動參數 32。"""
+    srv, port = _serve_models()
+    try:
+        env = _setup(tmp_path, port=port)
+        env["FAKE_PROBE_CALLS"] = str(tmp_path / "probe_calls.log")
+        env["FAKE_CONTAINER_LOG"] = (
+            "Load weight end. avail mem=18.40 GB\n"
+            "Mamba Cache is allocated. max_mamba_cache_size: 47\n"
+            "max_running_requests is capped to 9 by the mamba state cache\n"
+            "Memory pool end. avail mem=3.81 GB\n"
+            "max_total_num_tokens=125292 max_running_requests=9 context_len=16384\n"
+        )
+        r = _run(env, "--", "--book", "x.epub")
+        assert r.returncode == 0, r.stderr[-1500:]
+        probe_calls = Path(env["FAKE_PROBE_CALLS"]).read_text(encoding="utf-8")
+        assert "--effective-cap 9" in probe_calls
+        assert "實效併發上限 9" in r.stderr
+        assert "低於啟動參數" in r.stderr
+    finally:
+        srv.shutdown()
+
+
+def test_effective_cap_equals_configured_value_when_capped_to_line_absent(tmp_path: Path) -> None:
+    """review-mem-budget.md 的關鍵推論：關 radix 之後 mamba 池子直接等於
+    --max-running-requests，"capped to"那行根本不會印。缺行的語意是沒被夾住，
+    上限就是啟動參數本身——不是退回某個預設值，也不是當成解析失敗、不設上限。"""
+    srv, port = _serve_models()
+    try:
+        env = _setup(tmp_path, port=port)
+        env["FAKE_PROBE_CALLS"] = str(tmp_path / "probe_calls.log")
+        env["FAKE_CONTAINER_LOG"] = (
+            "Load weight end. avail mem=18.40 GB\n"
+            "Mamba Cache is allocated. max_mamba_cache_size: 32\n"
+            "Memory pool end. avail mem=3.9 GB\n"
+            "max_total_num_tokens=98000 max_running_requests=32 context_len=16384\n"
+        )
+        r = _run(env, "--", "--book", "x.epub")
+        assert r.returncode == 0, r.stderr[-1500:]
+        probe_calls = Path(env["FAKE_PROBE_CALLS"]).read_text(encoding="utf-8")
+        assert "--effective-cap 32" in probe_calls
+        assert "跟啟動參數一致，沒有被額外夾住" in r.stderr
+        assert "低於啟動參數" not in r.stderr
+    finally:
+        srv.shutdown()
+
+
+def test_effective_cap_omitted_when_ready_summary_not_found(tmp_path: Path) -> None:
+    """讀不到就緒摘要（映像格式不同、log 被截斷）：不設上限、沿用全部候選，
+    不能因為解析不到就擋下或亂夾一個數字。"""
+    srv, port = _serve_models()
+    try:
+        env = _setup(tmp_path, port=port)
+        env["FAKE_PROBE_CALLS"] = str(tmp_path / "probe_calls.log")
+        env["FAKE_CONTAINER_LOG"] = "some unrelated boot noise\n"
+        r = _run(env, "--", "--book", "x.epub")
+        assert r.returncode == 0, r.stderr[-1500:]
+        probe_calls = Path(env["FAKE_PROBE_CALLS"]).read_text(encoding="utf-8")
+        assert "--effective-cap" not in probe_calls
+        assert "沒讀到就緒摘要" in r.stderr
+    finally:
+        srv.shutdown()
+
+
+def test_effective_cap_only_applies_to_vast(tmp_path: Path) -> None:
+    """RunPod 沒有等同 vastai logs 的落地機制（既有已知缺口）——這條不該對
+    RunPod 路徑動 SERVER_CONCURRENCY 以外的任何東西，也不該噴錯。"""
+    srv, port = _serve_models()
+    try:
+        env = _setup(tmp_path, port=port)
+        env.pop("VAST_API_KEY"); env["RUNPOD_API_KEY"] = "mock"
+        env["FAKE_PROBE_CALLS"] = str(tmp_path / "probe_calls.log")
+        hook = tmp_path / "hook.sh"
+        hook.write_text(f"""
+cloud_llm_test_after_libs() {{
+    fake_rp() {{
+        local method="$1" path="$2" body="$3"
+        printf 'RP %s %s\\n' "$method" "$path" >>"$FAKE_CALLS"
+        case "$method $path" in
+            "POST /pods") printf '{{"id":"pod9"}}\\n' ;;
+            "GET /pods/pod9") printf '{{"id":"pod9","status":"RUNNING","runtime":{{"ports":[{{"private":8000,"public":{port},"type":"tcp","ip":"127.0.0.1"}}]}}}}\\n' ;;
+            "GET /pods") printf '[]\\n' ;;
+            "DELETE /pods/pod9") echo destroyed >>"$FAKE_CALLS" ;;
+            *) return 1 ;;
+        esac
+    }}
+    RUNPOD_LIB_TRANSPORT=fake_rp
+}}
+""", encoding="utf-8")
+        env["CLOUD_LLM_TEST_HOOK_FILE"] = str(hook)
+        r = _run(env, "--provider", "runpod", "--", "--book", "x.epub")
+        assert r.returncode == 0, r.stderr[-1500:]
+        probe_calls = Path(env["FAKE_PROBE_CALLS"]).read_text(encoding="utf-8")
+        assert "--effective-cap" not in probe_calls
+        # 沒有實作 ≠ 靜默：RunPod 路徑要明講沒有上限機制，不能悄悄跳過警告。
+        assert "RunPod 沒有讀取就緒摘要的機制" in r.stderr
     finally:
         srv.shutdown()
