@@ -1,3 +1,12 @@
+## Unreleased
+
+### Fixes
+- **尊重 HTML `translate="no"`：程式碼區塊不再送翻**（2026-10-10，*Learning GitHub
+  Copilot* 實跑）。O'Reilly 每段程式碼都是 `<pre translate="no">`，之前整段被壓成一行
+  送進模型，組書時還在每段程式碼下面插一段「中譯版程式碼」。現在區塊本身或祖先帶
+  這個屬性就跳過；段落內的 `<code translate="no">` 不影響該段翻譯，沒標記的 `<pre>`
+  （詩、引文）行為不變。實跑結果：107 段程式碼在成品裡與原書逐字相同。
+
 ## 1.2.0 - 2026-09-10
 
 ### Features
