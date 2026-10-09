@@ -62,6 +62,8 @@ def walk_text_nodes(soup: BeautifulSoup, *, skip_empty: bool = True) -> Iterator
     for node in soup.find_all(TEXT_TAGS):
         if any(id(ancestor) in emitted_node_ids for ancestor in node.parents):
             continue
+        if _is_no_translate(node):
+            continue
         text = _clean_text(node.get_text(" ", strip=True))
         if skip_empty and not text:
             continue
@@ -83,6 +85,9 @@ def extract_blocks(html: str) -> list[Block]:
     emitted_node_ids: set[int] = set()
     for node in soup.find_all(BLOCK_TAGS):
         if any(id(ancestor) in emitted_node_ids for ancestor in node.parents):
+            continue
+
+        if node.name != "img" and _is_no_translate(node):
             continue
 
         if node.name == "img":
@@ -125,6 +130,20 @@ def extract_blocks(html: str) -> list[Block]:
 def extract_paragraphs(html: str) -> list[str]:
     """Return text from text blocks only, derived from ``extract_blocks``."""
     return [block["text"] for block in extract_blocks(html) if block["type"] == "text"]
+
+
+def _is_no_translate(node: Tag) -> bool:
+    """True when the node or an ancestor carries the HTML ``translate="no"``.
+
+    Publishers use it for code listings (O'Reilly marks every
+    ``<pre data-type="programlisting">`` this way). Only block-level nodes are
+    checked, so an inline ``<code translate="no">`` inside a paragraph keeps the
+    paragraph translatable.
+    """
+    for candidate in (node, *node.parents):
+        if isinstance(candidate, Tag) and str(candidate.get("translate", "")).lower() == "no":
+            return True
+    return False
 
 
 def _clean_text(text: str) -> str:

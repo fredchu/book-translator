@@ -142,3 +142,27 @@ def test_walk_text_nodes_sees_header_footer_when_caller_does_not_strip():
     <footer><p>Footer text.</p></footer>
     """
     assert _node_texts(html) == ["Header text.", "Body text.", "Footer text."]
+
+
+def test_translate_no_blocks_are_not_content():
+    # O'Reilly marks every code listing <pre translate="no">. Sending them to the
+    # translator flattened the code into one line and inserted a "translated"
+    # copy under each listing. The HTML translate attribute is the publisher's
+    # own statement that the block must stay as is.
+    html = """
+    <div>
+      <p>Run this with <code translate="no">pytest</code>:</p>
+      <pre data-type="programlisting" translate="no">def f():
+    return 1</pre>
+      <div translate="no"><p>Nested under a no-translate container.</p></div>
+      <pre>Plain preformatted verse stays translatable.</pre>
+    </div>
+    """
+    assert extract_paragraphs(html) == [
+        "Run this with pytest :",
+        "Plain preformatted verse stays translatable.",
+    ]
+    assert _node_texts(html) == [
+        "Run this with pytest :",
+        "Plain preformatted verse stays translatable.",
+    ]
