@@ -1,4 +1,4 @@
-## Unreleased
+## 1.3.0 - 2026-10-12
 
 ### Features
 - **雲端路徑新增 Colab（A100）**（2026-10-12）：`scripts/cloud_llm.sh --provider colab`，走官方 Colab CLI
