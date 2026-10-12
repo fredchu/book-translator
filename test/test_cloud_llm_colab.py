@@ -121,7 +121,21 @@ def test_happy_path_tunnels_endpoint_translates_and_stops(tmp_path: Path) -> Non
     assert "export PATH=/workspace/vllm-venv/bin:$PATH" in boot, "ninja 要在 PATH 上"
     out = Path(env["FAKE_TRANSLATE_OUT"]).read_text(encoding="utf-8")
     assert f"--omlx-host http://127.0.0.1:{port}" in out
-    assert "--concurrent-chapters --max-concurrent-requests 16" in out
+    assert "--concurrent-chapters --max-concurrent-requests 48" in out, "Colab 預設併發 48"
+    assert "--max-num-seqs 48" in boot
+    # 模型下載跟裝 vLLM 並行，且在啟動伺服器前等它結束
+    assert boot.index("snapshot_download") < boot.index("uv pip install") < boot.index('wait "$PREFETCH_PID"') < boot.index("vllm serve")
+
+
+def test_explicit_concurrency_still_overrides_colab_default(tmp_path: Path) -> None:
+    srv, port = _serve_models()
+    try:
+        env = _setup(tmp_path, port); env["CLOUD_LLM_CONCURRENCY"] = "24"
+        r = _run(env, "--", "--book", "x.epub")
+    finally:
+        srv.shutdown()
+    assert r.returncode == 0, r.stderr
+    assert "--max-concurrent-requests 24" in Path(env["FAKE_TRANSLATE_OUT"]).read_text(encoding="utf-8")
     assert '"enable_update_check": false' in (Path(env["HOME"]) / ".config/colab-cli/settings.json").read_text(encoding="utf-8")
 
 

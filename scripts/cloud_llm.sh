@@ -97,6 +97,15 @@ log()  { printf '[cloud-llm] %s\n' "$*" >&2; }
 die()  { printf '[cloud-llm] 失敗：%s\n' "$*" >&2; exit 1; }
 
 case "$PROVIDER" in vast|runpod|colab) ;; *) die "--provider 只能是 vast、runpod 或 colab：$PROVIDER" ;; esac
+if [[ "$PROVIDER" == colab && "$CONCURRENCY_EXPLICIT" == false ]]; then
+    # A100 40GB 的預設併發直接給 48，不交給探針選（2026-10-12 Mind-Gut 真機）：探針的邊際效率門檻
+    # 要求「併發翻倍、吞吐多兩成」，A100 從 16 到 32 只多 17%，所以探針永遠停在 16；但整本書用 48
+    # 翻完只要 4.9 分鐘、0 失敗。48／56／64 吞吐在 ±5% 內（約 720–770 tok/s），再往上只是拉長延遲。
+    # 走明傳那條路：探針照跑留證據、client 用 48，不改探針規則（Vast／RunPod 不受影響）。
+    CONCURRENCY=48
+    CONCURRENCY_EXPLICIT=true
+    SERVER_CONCURRENCY=48
+fi
 if [[ "$PROVIDER" == colab ]]; then
     # Colab 沒有 Docker 映像可用，vLLM 是開機後 pip 裝的；SGLang 那條沒做過，先擋下。
     [[ "$ENGINE" == vllm ]] || die "Colab 目前只支援 CLOUD_LLM_ENGINE=vllm（尚未租機）"
@@ -698,9 +707,14 @@ if [[ "$PROVIDER" == colab ]]; then
     {
         printf 'set -e\ncd /workspace\n'
         [[ -n "${HF_TOKEN:-}" ]] && printf 'export HF_TOKEN=%q\n' "$HF_TOKEN"
+        # 模型下載（約 2.5 分鐘）跟裝 vLLM（約 1 分鐘）都在等網路，同時做：用 Colab 內建的 huggingface_hub
+        # 先在背景抓進預設快取，vllm serve 之後直接命中。下載失敗不擋，vllm 自己會再抓一次。
+        printf 'python3 -c %q > /workspace/prefetch.log 2>&1 &\nPREFETCH_PID=$!\n' \
+            "from huggingface_hub import snapshot_download; snapshot_download('${MODEL}')"
         printf 'python3 -m pip install -q uv\n'
         printf 'uv venv -q /workspace/vllm-venv\n'
         printf 'uv pip install -q --python /workspace/vllm-venv/bin/python %q --torch-backend=auto\n' "vllm==${COLAB_VLLM_VERSION}"
+        printf 'wait "$PREFETCH_PID" || echo "prefetch failed, vllm will download itself"\n'
         # venv 的 bin 要進 PATH：vLLM 暖機最後會用 subprocess 找 ninja 現場編譯 kernel，
         # 只用絕對路徑跑 vllm 時 ninja 不在 PATH（2026-10-12 首跑 FileNotFoundError: 'ninja'）
         printf 'export PATH=/workspace/vllm-venv/bin:$PATH\n'

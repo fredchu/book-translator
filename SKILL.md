@@ -248,7 +248,10 @@ scripts/cloud_llm.sh --stop runs/cloud-llm-<id>                     # 砍掉 --k
   前提：`uv tool install google-colab-cli` 並在終端機跑過一次 `colab usage` 完成登入；SSH 金鑰要 ed25519／ecdsa。
   vLLM 開機後 pip 裝（約 1 分鐘），端點是常駐 SSH 的本機埠轉送，所以**只支援 vllm、不支援 `--keep`**。
   帳號同時最多兩台；查 `colab sessions`、手動關 `colab stop -s <名>`。砍機前會把遠端 `boot.log`
-  拉回 run 目錄的 `colab-boot.log`。實測開機到就緒 8 分鐘；坑的細節見 wiki〈Colab CLI 無人值守租用 GPU 的實務〉。
+  拉回 run 目錄的 `colab-boot.log`。實測開機到就緒約 8.5 分鐘；坑的細節見 wiki〈Colab CLI 無人值守租用 GPU 的實務〉。
+  **速度（2026-10-12 Mind-Gut 真機）：A100 比 Vast 5090 快約 1.5 倍**，整本 Mind-Gut 用併發 48 翻完 4.9 分鐘。
+  Colab **預設併發 48**（不交給探針：探針的邊際效率門檻在 A100 上永遠停在 16）；48／56／64 吞吐差不多，
+  再往上沒用。要改用 `CLOUD_LLM_CONCURRENCY`。
 - 09-04 真機：台灣 5090（0.356 美元／小時）從開機到 vLLM 就緒 19 分鐘（拉 10 GB 映像＋下載 18.7 GB 模型＋初始化），
   固定開銷約 0.12 美元；之後翻譯 5 章結構測試檔 0.3 分鐘。RunPod 路徑只有替身測試，還沒真機跑過。
 
