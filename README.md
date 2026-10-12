@@ -6,9 +6,11 @@ A Claude Code skill that turns literary EPUBs into **full-fidelity bilingual EPU
 
 ---
 
-## Cloud GPU (Vast.ai / RunPod)
+## Cloud GPU (Vast.ai / RunPod / Colab)
 
 `scripts/cloud_llm.sh -- --book X.epub` rents a GPU, serves the Qwopus model with vLLM (or SGLang via `CLOUD_LLM_ENGINE=sglang`), translates through the omlx engine and destroys the instance. See SKILL.md "Cloud mode".
+
+`--provider colab` uses a Google Colab A100 through the official Colab CLI (`uv tool install google-colab-cli`, log in once) and spends Colab compute units instead of money. Colab has no Docker image and no public port, so vLLM is pip-installed on boot and the endpoint is a local port forwarded over one persistent SSH connection. vLLM only; `--keep` is not supported. On the Mind-Gut workload an A100 ran about 1.5x faster than a Vast RTX 5090 and translated the whole book in 4.9 minutes at 48 concurrent requests, which is the Colab default.
 
 Chapters are dispatched concurrently and the safe request width is **measured on the machine you actually rented** — a wave of production-sized chunks is timed at 24, then 16, 12, 8 until one clears both a throughput floor and a slowest-request bound. No GPU model names or VRAM thresholds are involved; `CLOUD_LLM_CONCURRENCY` overrides it.
 
@@ -198,9 +200,11 @@ Each round was driven by the [`/automl`](https://github.com/fredchu/claude-autom
 
 ---
 
-## 雲端 GPU（Vast.ai / RunPod）
+## 雲端 GPU（Vast.ai / RunPod / Colab）
 
 `scripts/cloud_llm.sh -- --book X.epub` 會租一台 GPU、用 vLLM（或 `CLOUD_LLM_ENGINE=sglang` 換 SGLang）跑 Qwopus 模型、經 omlx 引擎翻譯，翻完砍機。細節見 SKILL.md 的「Cloud mode」。
+
+`--provider colab` 改用 Google Colab 的 A100，走官方 Colab CLI（`uv tool install google-colab-cli`，登入一次），扣 Colab 運算點數、不另外付錢。Colab 沒有 Docker 映像、沒有對外埠，所以開機後 pip 裝 vLLM，端點是一條常駐 SSH 連線的本機埠轉送；只支援 vLLM、不支援 `--keep`。Mind-Gut 同一份工作量實測：A100 約比 Vast RTX 5090 快 1.5 倍，併發 48（Colab 預設值）整本 4.9 分鐘翻完。
 
 章節會併發派送，而**同時要送幾個請求是在你實際租到的那台機器上量出來的**——送一波正式大小的稿子，依序試 24、16、12、8，直到某一級同時通過吞吐下限與最慢請求上限為止。過程不使用顯示卡型號或顯存門檻；`CLOUD_LLM_CONCURRENCY` 可以覆蓋。
 
