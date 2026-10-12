@@ -204,6 +204,7 @@ The skill supports two providers:
 ### Cloud mode — triggers + workflow
 
 Triggers: 「用 vast 翻 X.epub」「上雲翻」「用 runpod 翻書」「cloud translate」→
+（「用 colab 翻」「Colab A100 翻書」→ `--provider colab`，見下方 Colab 小節）
 
 ```bash
 scripts/cloud_llm.sh --provider vast -- --book /path/X.epub --out /path/translations/
@@ -243,6 +244,11 @@ scripts/cloud_llm.sh --stop runs/cloud-llm-<id>                     # 砍掉 --k
   SGLang 強制 `--reasoning-parser qwen3`。兩個引擎在正式翻譯前都會送 thinking preflight，確認
   `enable_thinking:false` 生效、content 無 think tag、`reasoning_content` 為空，否則立即砍機。
 - 在 Claude Code 裡跑長書請放背景並掛監看；Ctrl-C 會砍機（那是刻意的）。
+- **Colab（2026-10-12 起，`--provider colab`）**：預設 A100，扣 Colab 運算點數（A100 每小時約 5.3 點）不另外付錢。
+  前提：`uv tool install google-colab-cli` 並在終端機跑過一次 `colab usage` 完成登入；SSH 金鑰要 ed25519／ecdsa。
+  vLLM 開機後 pip 裝（約 1 分鐘），端點是常駐 SSH 的本機埠轉送，所以**只支援 vllm、不支援 `--keep`**。
+  帳號同時最多兩台；查 `colab sessions`、手動關 `colab stop -s <名>`。砍機前會把遠端 `boot.log`
+  拉回 run 目錄的 `colab-boot.log`。實測開機到就緒 8 分鐘；坑的細節見 wiki〈Colab CLI 無人值守租用 GPU 的實務〉。
 - 09-04 真機：台灣 5090（0.356 美元／小時）從開機到 vLLM 就緒 19 分鐘（拉 10 GB 映像＋下載 18.7 GB 模型＋初始化），
   固定開銷約 0.12 美元；之後翻譯 5 章結構測試檔 0.3 分鐘。RunPod 路徑只有替身測試，還沒真機跑過。
 

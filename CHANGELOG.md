@@ -1,5 +1,16 @@
 ## Unreleased
 
+### Features
+- **雲端路徑新增 Colab（A100）**（2026-10-12）：`scripts/cloud_llm.sh --provider colab`，走官方 Colab CLI
+  （`uv tool install google-colab-cli`，登入一次）。Colab 沒有 Docker 映像、沒有對外埠、沒有直連 SSH，所以：
+  vLLM 開機後裝進獨立 venv（版本跟映像 tag 對齊）；端點是常駐 SSH（ControlMaster）的本機埠轉送；
+  每分鐘透過 kernel 戳一次並確認常駐連線還在（Colab 沒有活著的連線約 25 分鐘就回收）；轉接前先查
+  session 清單（官方轉接器遇到機器不見會自動開新機器）。就緒後的 thinking preflight、自適應併發探針、
+  跨章併發翻譯完全沿用。只支援 vllm、不支援 `--keep`（腳本結束轉送就斷），兩者在租機前擋下。
+  真機：A100 40GB 開機到就緒 8 分鐘（含下載 17.4 GB 模型約 2.5 分鐘），5 章測試書併發翻完、4 道稽核全過、
+  機器回查已砍；整趟約 1 個運算點數。首跑失敗於 `ninja` 不在 PATH（venv 的 bin 要加進 PATH）。
+  探針在測試書上選 N=8，但那份 load 只有 12 段重複短塊，不代表真書的併發上限。
+
 ### Fixes
 - **尊重 HTML `translate="no"`：程式碼區塊不再送翻**（2026-10-10，*Learning GitHub
   Copilot* 實跑）。O'Reilly 每段程式碼都是 `<pre translate="no">`，之前整段被壓成一行

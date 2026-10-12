@@ -14,7 +14,8 @@
 #   scripts/cloud_llm.sh --stop runs/cloud-llm-XXXX                 # 砍掉 --keep 留下的那台
 #
 # 選項（都有對應環境變數）：
-#   --provider vast|runpod   CLOUD_LLM_PROVIDER（預設 vast）
+#   --provider vast|runpod|colab  CLOUD_LLM_PROVIDER（預設 vast）。colab 走官方 Colab CLI（預設 A100），
+#                            只支援 vllm、不支援 --keep；細節見下方「Colab」段
 #   --profile int4|fp8       CLOUD_LLM_PROFILE（預設 int4）：
 #                              int4 = XReyRobert/Qwopus3.6-27B-v2-GPTQ-Pro-v1（18.7 GB，跟本機 MLX 4bit 同級，5090 塞得下）
 #                              fp8  = Jackrong/Qwopus3.6-27B-v2-FP8（30.9 GB，要 ≥40 GB 卡，預設 L40S）
@@ -95,7 +96,13 @@ done
 log()  { printf '[cloud-llm] %s\n' "$*" >&2; }
 die()  { printf '[cloud-llm] 失敗：%s\n' "$*" >&2; exit 1; }
 
-case "$PROVIDER" in vast|runpod) ;; *) die "--provider 只能是 vast 或 runpod：$PROVIDER" ;; esac
+case "$PROVIDER" in vast|runpod|colab) ;; *) die "--provider 只能是 vast、runpod 或 colab：$PROVIDER" ;; esac
+if [[ "$PROVIDER" == colab ]]; then
+    # Colab 沒有 Docker 映像可用，vLLM 是開機後 pip 裝的；SGLang 那條沒做過，先擋下。
+    [[ "$ENGINE" == vllm ]] || die "Colab 目前只支援 CLOUD_LLM_ENGINE=vllm（尚未租機）"
+    # 端點是本機的 SSH 埠轉送，腳本一結束轉送就斷，留著機器也連不到。
+    [[ "$KEEP" == false && -z "$STOP_DIR" ]] || die "Colab 不支援 --keep／--stop：端點靠這支腳本的 SSH 埠轉送，腳本結束就斷（尚未租機）"
+fi
 case "$ENGINE" in vllm|sglang) ;; *) die "CLOUD_LLM_ENGINE 只能是 vllm 或 sglang：$ENGINE" ;; esac
 [[ "$CONCURRENCY" =~ ^[1-9][0-9]*$ ]] || die "CLOUD_LLM_CONCURRENCY 必須是正整數：$CONCURRENCY"
 if [[ "$CONCURRENCY_EXPLICIT" == true && "$CONCURRENCY" -gt "$SERVER_CONCURRENCY" ]]; then
@@ -105,11 +112,11 @@ case "$CONCURRENT_CHAPTERS" in 0|1) ;; *) die "CLOUD_LLM_CONCURRENT_CHAPTERS 只
 case "$PROFILE" in
     int4)
         MODEL="${MODEL:-XReyRobert/Qwopus3.6-27B-v2-GPTQ-Pro-v1}"
-        [[ "$PROVIDER" == vast ]] && GPU="${GPU:-RTX 5090}" || GPU="${GPU:-NVIDIA GeForce RTX 5090}"
+        case "$PROVIDER" in vast) GPU="${GPU:-RTX 5090}" ;; colab) GPU="${GPU:-A100}" ;; *) GPU="${GPU:-NVIDIA GeForce RTX 5090}" ;; esac
         MAX_DPH="${MAX_DPH:-0.6}" ;;
     fp8)
         MODEL="${MODEL:-Jackrong/Qwopus3.6-27B-v2-FP8}"
-        [[ "$PROVIDER" == vast ]] && GPU="${GPU:-L40S}" || GPU="${GPU:-NVIDIA L40S}"
+        case "$PROVIDER" in vast) GPU="${GPU:-L40S}" ;; colab) GPU="${GPU:-A100}" ;; *) GPU="${GPU:-NVIDIA L40S}" ;; esac
         MAX_DPH="${MAX_DPH:-1.2}" ;;
     *) die "--profile 只能是 int4 或 fp8：$PROFILE" ;;
 esac
@@ -196,7 +203,9 @@ if [[ -n "${CLOUD_LLM_TEST_HOOK_FILE:-}" ]]; then
 fi
 
 # ---------- 共用檔 ----------
-if [[ "$PROVIDER" == vast ]]; then
+if [[ "$PROVIDER" == colab ]]; then
+    : # 生命週期全靠 colab CLI，見下方「Colab」段
+elif [[ "$PROVIDER" == vast ]]; then
     [[ -r "$LIB_DIR/vast_instance_lib.sh" ]] || die "找不到 $LIB_DIR/vast_instance_lib.sh（設 BOOK_TRANSLATOR_CLOUD_LIB_DIR）"
     # shellcheck source=/dev/null
     source "$LIB_DIR/vast_instance_lib.sh"
@@ -288,6 +297,84 @@ record_machine_failure_if_eligible() {
     machine_memory_record boot_failed "$MACHINE_FAILURE_CLASS"
 }
 
+# ---------- Colab（2026-10-12 起，沿用 bookcast 同日真機踩過的坑） ----------
+# Colab 跟 Vast／RunPod 三個根本差異：沒有 Docker 映像（vLLM 開機後 pip 裝）、沒有對外埠
+# （端點＝常駐 SSH 的本機埠轉送）、沒有直連 SSH（走 `colab ssh --proxy-mode`）。
+# 四個坑（細節見 bookcast bin/bookcast_cloud.sh 與 googlecolab/google-colab-cli#160／#168）：
+#   1. 每台只准一條 SSH（第二條 HTTP 429）→ 一條常駐連線（ControlMaster）承載所有指令與埠轉送
+#   2. 沒有活著的連線約 25 分鐘就被回收 → 常駐連線＋每分鐘透過 kernel 戳一次
+#   3. `colab ssh --proxy-mode -s NAME` 遇到 session 不在會自動開新機器 → 轉接前先查清單
+#   4. CLI 有新版時提示印在 stdout，弄壞 SSH 通道 → 開機前關掉自動檢查更新
+COLAB_BIN="${CLOUD_LLM_COLAB_BIN:-$(command -v colab 2>/dev/null || true)}"
+COLAB_SSH_KEY="${CLOUD_LLM_SSH_KEY:-$HOME/.ssh/id_ed25519}"
+COLAB_KEEPALIVE_SEC="${CLOUD_LLM_COLAB_KEEPALIVE_SEC:-60}"
+COLAB_SSH_DIR=""; COLAB_CM_DIR=""; COLAB_KEEPALIVE_PID=""; COLAB_LOCAL_PORT=""; COLAB_TIMEOUT_BIN=""
+SCRIPT_PID=$$
+
+# rc 0＝在清單、1＝不在、2＝查詢失敗（不能把「查不到」當成「不存在」）
+colab_listed() {
+    local out
+    out="$("$COLAB_BIN" sessions </dev/null 2>&1)" || return 2
+    grep -qF "[$1]" <<<"$out"
+}
+
+colab_setup_ssh() {
+    COLAB_SSH_DIR="$(mktemp -d "${TMPDIR:-/tmp}/cloud-llm-colab.XXXXXX")"
+    # ControlPath 要短（macOS socket 路徑上限 104 bytes）又不能放共用 /tmp 讓人預先佔位 → /tmp 底下的私有目錄
+    COLAB_CM_DIR="$(mktemp -d /tmp/clcolab.XXXXXX)"
+    cat >"$COLAB_SSH_DIR/proxy.sh" <<PROXY
+#!/bin/bash
+"$COLAB_BIN" sessions </dev/null 2>/dev/null | grep -qF "[$INSTANCE_ID]" \\
+    || { echo "[cloud-llm] Colab session $INSTANCE_ID 不在清單上（被回收或已砍），不轉接" >&2; exit 1; }
+exec "$COLAB_BIN" ssh --proxy-mode -s "$INSTANCE_ID" -i "$COLAB_SSH_KEY"
+PROXY
+    chmod +x "$COLAB_SSH_DIR/proxy.sh"
+    printf 'Host *\n  ProxyCommand %s\n  LogLevel ERROR\n  ControlMaster no\n  ControlPath %s/%%C\n  ServerAliveInterval 15\n  ServerAliveCountMax 4\n  StrictHostKeyChecking no\n  UserKnownHostsFile /dev/null\n' \
+        "$COLAB_SSH_DIR/proxy.sh" "$COLAB_CM_DIR" >"$COLAB_SSH_DIR/config"
+    # CLOUD_LLM_COLAB_LOCAL_PORT：指定本機轉送埠（測試用；預設挑一個空的）
+    COLAB_LOCAL_PORT="${CLOUD_LLM_COLAB_LOCAL_PORT:-$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')}"
+}
+
+# 遠端指令一律搭常駐連線；第一個參數是秒數上限
+colab_ssh() {
+    local secs="$1"; shift
+    "$COLAB_TIMEOUT_BIN" -k 10 "$secs" ssh -F "$COLAB_SSH_DIR/config" -o ConnectTimeout=20 -i "$COLAB_SSH_KEY" root@colab "$@"
+}
+
+# 常駐連線兼埠轉送；斷了就重建（轉送跟著 master 一起回來）。master 必須用 -fN 單獨建立：
+# 若由 `$(…)` 裡的指令順手建立，背景的 master 會繼承 stdout，呼叫永遠不返回（bookcast 實測）。
+colab_master_ensure() {
+    [[ -n "$COLAB_SSH_DIR" ]] || return 1
+    ssh -F "$COLAB_SSH_DIR/config" -O check root@colab </dev/null >/dev/null 2>&1 && return 0
+    "$COLAB_TIMEOUT_BIN" -k 10 60 ssh -F "$COLAB_SSH_DIR/config" -o ConnectTimeout=20 \
+        -o ControlMaster=yes -o ControlPersist=yes -o ExitOnForwardFailure=yes \
+        -L "127.0.0.1:${COLAB_LOCAL_PORT}:127.0.0.1:${PORT}" -i "$COLAB_SSH_KEY" -fN root@colab \
+        </dev/null >/dev/null 2>&1
+}
+
+# 每輪先確認本體還活著：本體死掉（含 kill -9）迴圈自己停，絕不替沒人管的機器續命。
+# `colab exec -s NAME` 在 session 不存在時只報錯、不會開新機器。
+colab_keepalive_start() {
+    ( while kill -0 "$SCRIPT_PID" 2>/dev/null; do
+          echo 'pass' | "$COLAB_TIMEOUT_BIN" 60 "$COLAB_BIN" exec -s "$INSTANCE_ID" >/dev/null 2>&1 || true
+          colab_master_ensure || true
+          sleep "$COLAB_KEEPALIVE_SEC"
+      done ) </dev/null >/dev/null 2>&1 &
+    COLAB_KEEPALIVE_PID=$!
+}
+
+colab_teardown_local() {
+    [[ -n "$COLAB_KEEPALIVE_PID" ]] && kill "$COLAB_KEEPALIVE_PID" 2>/dev/null
+    COLAB_KEEPALIVE_PID=""
+    if [[ -n "$COLAB_SSH_DIR" ]]; then
+        ssh -F "$COLAB_SSH_DIR/config" -O exit root@colab </dev/null >/dev/null 2>&1 || true
+        rm -rf "$COLAB_SSH_DIR"
+    fi
+    [[ -n "$COLAB_CM_DIR" ]] && rm -rf "$COLAB_CM_DIR"
+    COLAB_SSH_DIR=""; COLAB_CM_DIR=""
+    return 0
+}
+
 # ---------- --stop：砍掉 --keep 留下的那台 ----------
 INSTANCE_ID=""
 if [[ -n "$STOP_DIR" ]]; then
@@ -341,7 +428,22 @@ terminate_instance() {
     capture_final_container_log
     log "砍機 $INSTANCE_ID"
     local rc=0 err=""
-    if [[ "$PROVIDER" == vast ]]; then
+    if [[ "$PROVIDER" == colab ]]; then
+        # 砍機前把遠端 boot.log（pip 安裝＋vLLM 伺服器輸出）拉回，崩潰原因才拿得到
+        if [[ -n "$RUN_DIR" && -n "$COLAB_SSH_DIR" ]]; then
+            colab_ssh 60 'tail -c 4000000 /workspace/boot.log' >"$RUN_DIR/colab-boot.log" 2>/dev/null \
+                || log "⚠️  遠端 boot.log 撈取失敗，${RUN_DIR}/colab-boot.log 可能是空的"
+        fi
+        colab_teardown_local
+        "$COLAB_BIN" stop -s "$INSTANCE_ID" </dev/null >/dev/null 2>&1 || true
+        local lrc=0
+        colab_listed "$INSTANCE_ID" || lrc=$?
+        case "$lrc" in
+            1) rc=0 ;;
+            0) rc=1; err="colab stop 之後仍在清單" ;;
+            *) rc=1; err="colab sessions 查詢失敗，無法確認已消失" ;;
+        esac
+    elif [[ "$PROVIDER" == vast ]]; then
         vast_lib_terminate_instance_once "$INSTANCE_ID" || rc=$?; err="$VAST_LIB_TERMINATE_LAST_ERROR"
     else
         runpod_lib_terminate_pod_once "$INSTANCE_ID" || rc=$?; err="$RUNPOD_LIB_TERMINATE_LAST_ERROR"
@@ -353,7 +455,7 @@ terminate_instance() {
     fi
     printf '[cloud-llm] ⚠️  砍機後 %s 仍在清單（%s）。id 留在 %s；請手動確認：%s\n' \
         "$INSTANCE_ID" "${err:-unknown}" "${RUN_DIR:-?}/instance.id" \
-        "$([[ "$PROVIDER" == vast ]] && echo 'bash ~/dev/srt-skill/scripts/vast_reap.sh' || echo 'bash ~/dev/srt-skill/scripts/runpod_reap.sh')" >&2
+        "$(case "$PROVIDER" in vast) echo 'bash ~/dev/srt-skill/scripts/vast_reap.sh' ;; colab) echo "colab sessions；colab stop -s $INSTANCE_ID" ;; *) echo 'bash ~/dev/srt-skill/scripts/runpod_reap.sh' ;; esac)" >&2
     return 1
 }
 trap 'rc=$?; record_machine_failure_if_eligible "$rc" || true; terminate_instance || true; exit "$rc"' EXIT
@@ -370,7 +472,26 @@ fi
 # ---------- 前置檢查（開機前能擋的都在這裡擋） ----------
 [[ ${#TRANSLATE_ARGS[@]} -gt 0 ]] || die "缺翻譯器參數：在 -- 後面給 translate_book_ollama.py 的參數（至少 --book）"
 for tool in jq curl python3; do command -v "$tool" >/dev/null || die "需要 $tool"; done
-if [[ "$PROVIDER" == vast ]]; then
+if [[ "$PROVIDER" == colab ]]; then
+    COLAB_TIMEOUT_BIN="$(command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null || true)"
+    [[ -n "$COLAB_TIMEOUT_BIN" ]] || die "Colab 需要 GNU timeout（macOS：brew install coreutils）"
+    [[ -n "$COLAB_BIN" && -x "$COLAB_BIN" && "$COLAB_BIN" == /* ]] \
+        || die "Colab 需要 colab CLI 的絕對路徑（uv tool install google-colab-cli，或設 CLOUD_LLM_COLAB_BIN）"
+    [[ -f "$COLAB_SSH_KEY" && -f "$COLAB_SSH_KEY.pub" ]] || die "找不到 SSH 金鑰 $COLAB_SSH_KEY(.pub)"
+    case "$(awk '{print $1}' "$COLAB_SSH_KEY.pub")" in
+        ssh-ed25519|ecdsa-sha2-*) ;;
+        *) die "Colab 只收 ed25519／ecdsa 金鑰（所有 ssh-rsa 都被拒），$COLAB_SSH_KEY.pub 不是；用 CLOUD_LLM_SSH_KEY 指別把" ;;
+    esac
+    # 登入失效時 colab 會停在「貼授權碼」；stdin 接 /dev/null 讓它立刻結束，開機前擋下
+    COLAB_USAGE="$("$COLAB_BIN" usage </dev/null 2>&1)" || true
+    grep -q "Current balance" <<<"$COLAB_USAGE" || die "Colab 登入失效或查不到點數。先在終端機跑一次 colab usage 完成登入"
+    log "Colab 點數：$(grep -E 'Current balance|Active assignments' <<<"$COLAB_USAGE" | tr '\n' ' ')"
+    COLAB_SETTINGS="$HOME/.config/colab-cli/settings.json"
+    if [[ -f "$COLAB_SETTINGS" ]] && [[ "$(jq -r '.enable_update_check' "$COLAB_SETTINGS" 2>/dev/null)" != false ]]; then
+        jq '.enable_update_check = false' "$COLAB_SETTINGS" >"$COLAB_SETTINGS.tmp" && mv "$COLAB_SETTINGS.tmp" "$COLAB_SETTINGS" \
+            && log "已關掉 Colab CLI 自動檢查更新（新版提示會印進 SSH 通道）；手動更新：colab update"
+    fi
+elif [[ "$PROVIDER" == vast ]]; then
     command -v "${VAST_LIB_CLI:-vastai}" >/dev/null || die "Vast.ai 需要 vastai CLI（pip install vastai）"
     vast_lib_load_api_key || die "找不到 Vast.ai 金鑰：設 VAST_API_KEY 或建立 $(vast_lib_api_key_file_hint)"
 else
@@ -479,7 +600,19 @@ try_offer_rows() {
     return 1
 }
 
-if [[ "$PROVIDER" == vast ]]; then
+if [[ "$PROVIDER" == colab ]]; then
+    # 沒庫存或點數不足時 colab new 回非 0；回 0 但沒印 READY 也當失敗。回應不明時依名字回查，有就認領（trap 會砍）。
+    COLAB_OUT="$("$COLAB_BIN" new -s "$LABEL" --gpu "$GPU" </dev/null 2>&1)" || true
+    if grep -q "Session READY" <<<"$COLAB_OUT"; then
+        INSTANCE_ID="$LABEL"
+    else
+        if colab_listed "$LABEL"; then
+            INSTANCE_ID="$LABEL"
+            log "⚠️  colab new 回應看不懂但清單裡有 ${LABEL}，認領後砍掉"
+        fi
+        die "Colab 開機失敗（${GPU}）：$(tr '\n' ' ' <<<"$COLAB_OUT" | cut -c1-300)"
+    fi
+elif [[ "$PROVIDER" == vast ]]; then
     ENV_STR="-p ${PORT}:${PORT}"
     [[ -n "${HF_TOKEN:-}" ]] && ENV_STR="$ENV_STR -e HF_TOKEN=${HF_TOKEN}"
 
@@ -549,6 +682,37 @@ else
 fi
 printf '%s\n' "$INSTANCE_ID" >"$RUN_DIR/instance.id"
 log "已開機 ${INSTANCE_ID}（開始計費）"
+if [[ "$PROVIDER" == colab ]]; then
+    colab_setup_ssh
+    for _ in $(seq 1 20); do
+        colab_master_ensure && break
+        sleep 6
+    done
+    colab_master_ensure || die "Colab SSH 常駐連線建不起來"
+    colab_keepalive_start
+    log "Colab 常駐連線就緒，端點走本機埠轉送 127.0.0.1:${COLAB_LOCAL_PORT} → 遠端 :${PORT}"
+    # vLLM 版本跟 Vast／RunPod 用的映像對齊（映像 tag 去掉 v）；另開 venv，不碰 Colab 內建的 torch。
+    COLAB_VLLM_VERSION="${CLOUD_LLM_COLAB_VLLM_VERSION:-${IMAGE##*:v}}"
+    # 開機腳本走 stdin 上去，不在本機落盤（內含 --api-key）。結束時把離開碼寫進 boot.rc，
+    # 「伺服器死了沒」只看這個檔，不查進程（pgrep 會抓到查詢自己，bookcast 08-31 教訓）。
+    {
+        printf 'set -e\ncd /workspace\n'
+        [[ -n "${HF_TOKEN:-}" ]] && printf 'export HF_TOKEN=%q\n' "$HF_TOKEN"
+        printf 'python3 -m pip install -q uv\n'
+        printf 'uv venv -q /workspace/vllm-venv\n'
+        printf 'uv pip install -q --python /workspace/vllm-venv/bin/python %q --torch-backend=auto\n' "vllm==${COLAB_VLLM_VERSION}"
+        # venv 的 bin 要進 PATH：vLLM 暖機最後會用 subprocess 找 ninja 現場編譯 kernel，
+        # 只用絕對路徑跑 vllm 時 ninja 不在 PATH（2026-10-12 首跑 FileNotFoundError: 'ninja'）
+        printf 'export PATH=/workspace/vllm-venv/bin:$PATH\n'
+        printf 'echo SERVER_START\n'
+        printf 'exec /workspace/vllm-venv/bin/vllm serve'
+        printf ' %q' "${SERVER_ARGS[@]}"
+        printf '\n'
+    } | colab_ssh 60 'mkdir -p /workspace && umask 077 && cat > /workspace/boot.sh' || die "上傳 Colab 開機腳本失敗"
+    colab_ssh 60 'cd /workspace && rm -f boot.rc boot.log && ( nohup setsid bash -c "bash boot.sh > boot.log 2>&1; echo \$? > boot.rc" > /dev/null 2>&1 < /dev/null & )' \
+        || die "啟動 Colab 開機腳本失敗"
+    log "Colab：背景安裝 vLLM ${COLAB_VLLM_VERSION} 並啟動伺服器"
+fi
 if [[ "$PROVIDER" == vast ]]; then
     if capture_machine_identity; then
         machine_memory_record created ""
@@ -567,7 +731,17 @@ while :; do
         [[ "$PROVIDER" == vast ]] && MACHINE_FAILURE_CLASS=boot_wait_timeout
         die "等了 ${BOOT_WAIT_MIN} 分鐘伺服器還沒就緒，已砍機（映像＋模型載入太慢，換一張報價或調 CLOUD_LLM_BOOT_WAIT_MIN）"
     fi
-    if [[ "$PROVIDER" == vast ]]; then
+    if [[ "$PROVIDER" == colab ]]; then
+        HOST=127.0.0.1; HPORT="$COLAB_LOCAL_PORT"
+        lrc=0; colab_listed "$INSTANCE_ID" || lrc=$?
+        [[ $lrc -eq 1 ]] && die "Colab 機器 ${INSTANCE_ID} 已不在清單（被回收？）"
+        status="$(colab_ssh 30 'if [ -f /workspace/boot.rc ]; then echo "exited:$(cat /workspace/boot.rc)"; elif grep -q SERVER_START /workspace/boot.log 2>/dev/null; then echo serving; else echo installing; fi' 2>/dev/null || echo "?")"
+        if [[ "$status" == exited:* ]]; then
+            colab_ssh 30 'tail -20 /workspace/boot.log' 2>/dev/null | sed 's/^/[cloud-llm]   遠端: /' >&2 || true
+            die "Colab 上的 vLLM 開機腳本結束了（${status}），伺服器沒起來；完整 log 會拉回 run 目錄的 colab-boot.log"
+        fi
+        colab_master_ensure || true
+    elif [[ "$PROVIDER" == vast ]]; then
         record="$(vast_lib_instance_record "$INSTANCE_ID" 2>/dev/null || echo "")"
         # 空紀錄用 null 當預設：${var:-{}} 會被 } 截斷成壞 JSON（09-04 實測 status 印成「?」加換行）
         status="$(jq -r '(.actual_status // "null") | ascii_downcase' <<<"${record:-null}" 2>/dev/null || echo "?")"
@@ -661,7 +835,7 @@ else
     # 沒真機驗過）——這裡不去實作它，但警告要印在 if 外面：讓 RunPod 至少
     # 明講「沒有實效上限、沿用全部候選」，不能因為分支結構就悄悄跳過警告，
     # 那樣會變成靜默降級，跟這整段功能想避免的事一樣。
-    log "⚠️  RunPod 沒有讀取就緒摘要的機制，探針候選不設實效上限（沿用全部候選）"
+    log "⚠️  $([[ "$PROVIDER" == colab ]] && echo Colab || echo RunPod) 沒有讀取就緒摘要的機制，探針候選不設實效上限（沿用全部候選）"
 fi
 
 # ---------- 自適應併發探針 ----------
