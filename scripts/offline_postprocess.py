@@ -62,6 +62,15 @@ _TRIGGER_EXCLUSIONS = frozenset("疱雇霉晒苧洼")
 # TWVariants table: it also contains valid Traditional variants such as 羣 and 祕.
 _EXTRA_SIMPLIFIED_TRIGGERS = frozenset("着")
 
+# 价、后、余 are their own Traditional candidates (皇后、余光中), so the trigger set
+# skips them and 价值／成功后／多余 survived a 2026-10-13 book. s2tw's phrase table
+# knows the legitimate words, so these are judged one position at a time: a key
+# counts only where s2tw rewrites that exact position. Not the whole one-to-many
+# set: s2tw also rewrites surnames (范先生→範先生、余華→餘華) and ordinary Taiwan
+# prose (平台→平臺、核准→核準). 余 is reported by the audit but never auto-fixed.
+AMBIGUOUS_SIMPLIFIED_KEYS = frozenset("价后余")
+_AMBIGUOUS_AUTOFIX = frozenset("价后")
+
 # Even in a triggered sentence, s2tw may mis-resolve one-to-many characters such
 # as 干. Keep the existing narrow term shields to reduce collateral damage.
 _PROTECTED_TERMS = (
@@ -126,6 +135,35 @@ def _simplified_triggers(cc) -> frozenset[str] | None:
     return _SIMPLIFIED_TRIGGERS
 
 
+def ambiguous_simplified_fixes(text: str) -> list[tuple[int, str, str]]:
+    """(offset, char, Traditional form) for 价/后/余-style keys s2tw rewrites in context."""
+    keys = AMBIGUOUS_SIMPLIFIED_KEYS
+    cc = _converter() if text and any(ch in keys for ch in text) else None
+    if not cc:
+        return []
+    fixes = []
+    offset = 0
+    for line in text.splitlines(keepends=True):
+        if any(ch in keys for ch in line):
+            converted = cc.convert(line)
+            if len(converted) == len(line):  # phrase rewrites that change length: leave alone
+                fixes.extend(
+                    (offset + i, a, b)
+                    for i, (a, b) in enumerate(zip(line, converted))
+                    if a in keys and a != b
+                )
+        offset += len(line)
+    return fixes
+
+
+def _fix_ambiguous_simplified(text: str) -> str:
+    chars = list(text)
+    for i, a, b in ambiguous_simplified_fixes(text):
+        if a in _AMBIGUOUS_AUTOFIX:
+            chars[i] = b
+    return "".join(chars)
+
+
 def _convert_triggered_sentence(sentence: str, cc, triggers: frozenset[str]) -> str:
     if not any(ch in triggers for ch in sentence):
         return sentence
@@ -154,10 +192,10 @@ def to_traditional(text: str) -> str:
     triggers = _simplified_triggers(cc)
     if not triggers:
         return text
-    return "".join(
+    return _fix_ambiguous_simplified("".join(
         _convert_triggered_sentence(sentence, cc, triggers)
         for sentence in _SENTENCE_BOUNDARY.split(text)
-    )
+    ))
 
 
 # --- character-name coherence -------------------------------------------------
@@ -547,6 +585,15 @@ def translate_header_titles(book_dir: Path, manifest: dict, provider) -> int:
     if not pending:
         return 0
     marked = "\n".join(f"[[T{i + 1}]] {title}" for i, (_, title) in enumerate(pending))
+    # Titles skipped the term table and drifted from the body (2026-10-13: 微創新 in
+    # the ToC, 迷你創新 in the text), so feed the same fixed renderings here.
+    try:
+        from . import dispatch
+    except ImportError:  # pragma: no cover - script-style import
+        import dispatch  # type: ignore
+    terms = dispatch.select_terms_for_text(
+        dispatch.load_fixed_terms(book_dir), "\n".join(title for _, title in pending)
+    )
     prompt = (
         "Translate each book chapter/section title into 台灣繁體中文 "
         "(Taiwan Traditional Chinese).\n"
@@ -554,7 +601,9 @@ def translate_header_titles(book_dir: Path, manifest: dict, provider) -> int:
         "'Introduction' as '導論', 'Index' as '索引'; translate the subtitle after "
         "the colon faithfully and concisely; keep the format '第N章：中文副標'.\n"
         "Echo every marker exactly, one per line, then the translation:\n"
-        "[[T1]] <translation>\n[[T2]] <translation>\nOutput only the marker lines.\n\n"
+        "[[T1]] <translation>\n[[T2]] <translation>\nOutput only the marker lines.\n"
+        + dispatch.format_fixed_terms(terms)
+        + "\n\n"
         + marked
     )
     try:
@@ -583,8 +632,12 @@ def translate_header_titles(book_dir: Path, manifest: dict, provider) -> int:
             zh_by_index = {i: re.sub(r"^\[\[T\d+\]\]\s*", "", ln) for i, ln in enumerate(lines)}
 
     added = 0
-    for idx, (idref, _english) in enumerate(pending):
+    for idx, (idref, english) in enumerate(pending):
         zh = to_traditional(zh_by_index.get(idx, "").strip())
+        # The model renumbered "Chapter 8" as 第14章 once; the number is not its call.
+        number = re.match(r"\s*chapter\s+(\d+)\b", english, re.IGNORECASE)
+        if number:
+            zh = re.sub(r"^第\s*\d+\s*章", f"第{number.group(1)}章", zh)
         if zh:
             nav[idref] = zh
             added += 1

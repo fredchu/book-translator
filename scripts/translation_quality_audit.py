@@ -15,12 +15,14 @@ try:
     from scripts.dispatch import contains_model_token_leak
     from scripts.epub_reader import EPUBReader
     from scripts.glossary import resolve_register
+    from scripts.offline_postprocess import ambiguous_simplified_fixes
     from scripts.paragraph_classification import reasoned_source_only_entries
 except ModuleNotFoundError:  # pragma: no cover - direct script execution path
     from audit_result import AuditResult
     from dispatch import contains_model_token_leak
     from epub_reader import EPUBReader
     from glossary import resolve_register
+    from offline_postprocess import ambiguous_simplified_fixes
     from paragraph_classification import reasoned_source_only_entries
 
 BANNED_PATTERNS = [
@@ -283,10 +285,11 @@ def _clean(text: str) -> str:
 
 
 def _offending_simplified_chinese_chars(text: str) -> str:
+    # 价/后/余-style keys are judged in context, so short targets count too.
+    chars = list(dict.fromkeys(char for _i, char, _zh in ambiguous_simplified_fixes(text or "")))
     if len(_HAN_RE.findall(text or "")) < 8:
-        return ""
-    seen: set[str] = set()
-    chars: list[str] = []
+        return "".join(chars)
+    seen: set[str] = set(chars)
     for char in text:
         if char in SIMPLIFIED_CHINESE_CHARS and char not in seen:
             seen.add(char)

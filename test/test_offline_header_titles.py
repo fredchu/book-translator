@@ -110,3 +110,52 @@ def test_audit_contains_han_guard_exempts_inline_bilingual() -> None:
     # must not be flagged as an untranslated source-only paragraph.
     assert tqa._contains_han("Dedication ｜ 獻辭") is True
     assert tqa._contains_han("Dedication") is False
+
+
+class _FixedReplyProvider(_MarkerEchoProvider):
+    def __init__(self, reply: str) -> None:
+        super().__init__()
+        self.reply = reply
+
+    def translate(self, prompt, *, request_id=None, system=None, log_dir=None):
+        self.calls.append(prompt)
+        from providers.base import ProviderResult
+
+        return ProviderResult(raw_text=self.reply, model="mock", latency_ms=1, retries=0, metadata={})
+
+
+def test_translate_header_titles_feeds_term_table(tmp_path: Path) -> None:
+    html = _HEADER_CHAPTER.replace("The Meaning of Meaning", "Minivation and Feature Shock")
+    book_dir = _make_book(tmp_path, html, "x007_c001", "item_007")
+    (book_dir / "spec_terms.json").write_text(
+        json.dumps({"terms": {"minivation": "迷你創新", "feature shock": "功能過載", "undead": "殭屍產品"}}),
+        encoding="utf-8",
+    )
+    manifest = json.loads((book_dir / "manifest.json").read_text(encoding="utf-8"))
+    provider = _MarkerEchoProvider()
+    op.translate_header_titles(book_dir, manifest, provider)
+    assert "minivation＝迷你創新" in provider.calls[0]
+    assert "feature shock＝功能過載" in provider.calls[0]
+    assert "殭屍產品" not in provider.calls[0]  # only terms the titles use
+
+
+def test_translate_header_titles_keeps_source_chapter_number(tmp_path: Path) -> None:
+    html = _HEADER_CHAPTER.replace("Chapter 1", "Chapter 8")
+    book_dir = _make_book(tmp_path, html, "x008_c008", "item_008")
+    manifest = json.loads((book_dir / "manifest.json").read_text(encoding="utf-8"))
+    op.translate_header_titles(book_dir, manifest, _FixedReplyProvider("[[T1]] 第14章：意義的意義"))
+    extra = json.loads((book_dir / "translations_extra.json").read_text(encoding="utf-8"))
+    assert extra["nav_overrides"]["x008_c008"] == "第8章：意義的意義"
+
+
+def test_to_traditional_fixes_ambiguous_keys_in_context() -> None:
+    assert op.to_traditional("服務的价值。\n得成功后，已將") == "服務的價值。\n得成功後，已將"
+    # 余 is a surname (余華→餘華 under s2tw), so it is only reported, never rewritten.
+    for text in ("有過多余庫存", "余華與皇后都在平台上", "范先生的核准與干預", "後來的價值"):
+        assert op.to_traditional(text) == text
+
+
+def test_audit_flags_ambiguous_simplified_even_in_short_target() -> None:
+    assert tqa._offending_simplified_chinese_chars("价值") == "价"
+    assert tqa._offending_simplified_chinese_chars("有過多余庫存") == "余"
+    assert tqa._offending_simplified_chinese_chars("皇后") == ""
