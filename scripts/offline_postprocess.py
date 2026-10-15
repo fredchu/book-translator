@@ -63,13 +63,13 @@ _TRIGGER_EXCLUSIONS = frozenset("疱雇霉晒苧洼")
 _EXTRA_SIMPLIFIED_TRIGGERS = frozenset("着")
 
 # 价、后、余 are their own Traditional candidates (皇后、余光中), so the trigger set
-# skips them and 价值／成功后／多余 survived a 2026-10-13 book. s2tw's phrase table
+# skips them and 价值／成功后／多余 survived a 2026-10-13 book (一种 on 2026-10-15). s2tw's phrase table
 # knows the legitimate words, so these are judged one position at a time: a key
 # counts only where s2tw rewrites that exact position. Not the whole one-to-many
 # set: s2tw also rewrites surnames (范先生→範先生、余華→餘華) and ordinary Taiwan
 # prose (平台→平臺、核准→核準). 余 is reported by the audit but never auto-fixed.
-AMBIGUOUS_SIMPLIFIED_KEYS = frozenset("价后余")
-_AMBIGUOUS_AUTOFIX = frozenset("价后")
+AMBIGUOUS_SIMPLIFIED_KEYS = frozenset("价后余种")
+_AMBIGUOUS_AUTOFIX = frozenset("价后种")
 
 # Even in a triggered sentence, s2tw may mis-resolve one-to-many characters such
 # as 干. Keep the existing narrow term shields to reduce collateral damage.

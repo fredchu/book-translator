@@ -197,10 +197,6 @@ def main(argv: list[str] | None = None) -> int:
     return 0 if passed else 1
 
 
-if __name__ == "__main__":
-    raise SystemExit(main())
-
-
 # The pre-2026-09-09 universe: only Han-free English of at least this length was
 # ever checked. Anything shorter is newly in scope and reports amber, not red.
 # Sourced from paragraph_classification so the two do not drift apart.
@@ -215,3 +211,7 @@ def audit(*args, **kwargs):
     """Back-compat two-tuple contract: (passed, failures)."""
     passed, failures, _warnings = _audit_with_warnings(*args, **kwargs)
     return passed, failures
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -136,11 +136,12 @@ def test_to_traditional_sentence_gated_fixtures(source: str, expected: str) -> N
     assert offline_postprocess.to_traditional(source) == expected
 
 
-def test_to_traditional_known_ambiguous_character_miss() -> None:
-    """种 is also a Traditional surname, so the accepted ~3% miss stays visible."""
+def test_to_traditional_fixes_ambiguous_zhong() -> None:
+    """种 leaked as 一种／多种 (2026-10-15). The rare surname (种師道) is rewritten too; accepted."""
     pytest.importorskip("opencc")
 
-    assert offline_postprocess.to_traditional("某种程度上") == "某种程度上"
+    assert offline_postprocess.to_traditional("某种程度上") == "某種程度上"
+    assert offline_postprocess.to_traditional("种師道是宋朝名將。") == "種師道是宋朝名將。"
 
 
 def test_simplified_trigger_definition_rejects_ambiguous_traditional() -> None:
