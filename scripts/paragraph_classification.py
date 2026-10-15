@@ -40,6 +40,7 @@ def is_english_content(text: str) -> bool:
 # book's filename hardcoded into a shared classifier.
 _TOKEN_SPLIT_RE = re.compile(r"[^a-z0-9]+|(?<=[a-z])(?=[0-9])|(?<=[0-9])(?=[a-z])")
 _PREPOSITIONS = ("on", "about", "for", "to", "from", "with")
+_CALIBRE_INDEX_RE = re.compile(r"index(?:_split_\d+)?")
 
 
 def _page_tokens(stem: str) -> set[str]:
@@ -67,13 +68,15 @@ def untranslated_reason(path: str, node, text: str) -> str | None:
         cls == "bib" or cls.startswith("bib-") for cls in classes
     ):
         return "bibliography"
-    if (_has_token(tokens, ("index", "indexes")) and stem != "index") or any(
+    if (_has_token(tokens, ("index", "indexes")) and not _CALIBRE_INDEX_RE.fullmatch(stem)) or any(
         re.fullmatch(r"index\d*", cls) or re.fullmatch(r"ind\d+a?", cls) for cls in classes
     ):
         # `index.xhtml` alone is a book's opening page, the way index.html is on
         # a website; a real back-of-book index carries a position prefix
         # ("87_Index"). Every misread here weakens the gate, so require the
-        # extra token.
+        # extra token. Calibre splits every page of a converted book into
+        # `index_split_NNN.html` (Protocols, 2026-10-15: all 4,410 paragraphs read
+        # as index), so that shape is a body page too.
         return "index"
     if _has_token(tokens, ("notes", "endnotes", "endnote", "footnotes")) and not _has_token(
         tokens, _PREPOSITIONS

@@ -34,6 +34,8 @@ def test_untranslated_reason_handles_opaque_notes_page_identifier_and_non_latin(
     # Substring matching produced four false exemptions, all weakening the gate.
     assert untranslated_reason("OEBPS/preferences.xhtml", node, "Long note") is None
     assert untranslated_reason("OEBPS/index.xhtml", node, "Long note") is None
+    # Calibre names every page of a converted book index_split_NNN (Protocols, 2026-10-15).
+    assert untranslated_reason("index_split_026.html", node, "Long note") is None
     assert untranslated_reason("OEBPS/notes_on_contributors.xhtml", node, "Long note") is None
     # ...without breaking the real pages.
     assert untranslated_reason("OEBPS/86_Bibliography.xhtml", node, "Long note") == "bibliography"

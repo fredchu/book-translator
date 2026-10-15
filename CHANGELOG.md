@@ -1,6 +1,10 @@
 ## Unreleased
 
 ### Fixes
+- **Calibre 轉出的書整本被當成索引**（2026-10-15，*Protocols*）：Calibre 把每一頁命名成
+  `index_split_NNN.html`，檔名分類器看到「index」就把 4,410 段全判成索引。術語表核對因此認為 189 條
+  候選全不在正文；翻完的覆蓋率稽核也會把沒翻到的段落當索引放過。`index_split_NNN` 現在跟 `index`
+  一樣視為正文頁。
 - **章名翻譯沒套術語表，還會把章號翻錯**（2026-10-13，*Monetizing Innovation*）：`translate_header_titles`
   的提示沒帶 `spec_terms.json`，目錄寫「微創新」「捆綁銷售」，正文卻是「迷你創新」「組合銷售」；
   還把 Chapter 8 寫成「第14章」。現在提示帶上章名實際用到的術語（同正文的 `select_terms_for_text`），
