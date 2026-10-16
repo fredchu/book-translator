@@ -123,18 +123,22 @@ def patch_toc_ncx(ncx_xml: str, entries: list[dict]) -> str:
     if not entry_by_filename:
         return ncx_xml
     soup = BeautifulSoup(ncx_xml, "xml")
+    def target_filename(navpoint) -> str:
+        content = navpoint.find("content", recursive=False)
+        src = str(content.get("src") or "") if content is not None else ""
+        return posixpath.basename(unquote(src.split("#", 1)[0].split("?", 1)[0]))
+
     navpoints_by_filename: dict[str, dict[str, list]] = {}
     for navpoint in soup.find_all("navPoint"):
-        if navpoint.find_parent("navPoint") is not None:
-            continue
-        content = navpoint.find("content", recursive=False)
-        if content is None:
-            continue
-        src = str(content.get("src") or "")
-        src_without_fragment = src.split("#", 1)[0]
-        filename = posixpath.basename(unquote(src_without_fragment.split("?", 1)[0]))
+        filename = target_filename(navpoint)
         if not filename:
             continue
+        # Same-file descendants are subsection labels, even when the matching
+        # ancestor is not the immediate parent. Different-file chapters qualify.
+        if any(target_filename(parent) == filename for parent in navpoint.find_parents("navPoint")):
+            continue
+        content = navpoint.find("content", recursive=False)
+        src = str(content.get("src") or "")
         bucket = navpoints_by_filename.setdefault(filename, {"whole_file": [], "fragment": []})
         bucket["fragment" if "#" in src else "whole_file"].append(navpoint)
 

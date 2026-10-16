@@ -109,6 +109,75 @@ def test_patch_toc_ncx_direct_child_only():
     assert soup.find("navPoint", id="section").find("navLabel", recursive=False).text == "Section Anchor"
 
 
+def test_patch_toc_ncx_nested_different_files_and_all_ancestors():
+    ncx = """<ncx><navMap>
+<navPoint id="part"><navLabel><text>Old Part</text></navLabel><content src="Text/part.xhtml"/>
+  <navPoint id="chapter"><navLabel><text>Old Chapter</text></navLabel><content src="Text/chapter%20one.xhtml?view=1"/>
+    <navPoint id="section"><navLabel><text>Section Anchor</text></navLabel><content src="Text/chapter one.xhtml#section"/></navPoint>
+    <navPoint id="part-again"><navLabel><text>Part Anchor</text></navLabel><content src="Text/part.xhtml?view=2#anchor"/></navPoint>
+    <navPoint id="appendix"><navLabel><text>Old Appendix</text></navLabel><content src="Text/appendix.xhtml"/></navPoint>
+  </navPoint>
+</navPoint>
+<navPoint id="group"><navLabel><text>Group</text></navLabel>
+  <navPoint id="no-target"><navLabel><text>No Target</text></navLabel><content/>
+    <navPoint id="chapter-again"><navLabel><text>Old Chapter Again</text></navLabel><content src="Text/chapter%20one.xhtml"/></navPoint>
+  </navPoint>
+</navPoint>
+</navMap></ncx>"""
+    entries = [
+        {
+            "id": key, "original_idref": key, "original_path": f"OPS/Text/{filename}",
+            "first_heading": heading, "output_strategy": "translate",
+            "_translations_extra": {"nav_overrides": {key: zh}},
+        }
+        for key, filename, heading, zh in (
+            ("part", "part.xhtml", "PART I", "第一部"),
+            ("chapter", "chapter one.xhtml", "Chapter 1", "第一章"),
+            ("appendix", "appendix.xhtml", "Appendix", "附錄"),
+        )
+    ]
+
+    soup = BeautifulSoup(patch_toc_ncx(ncx, entries), "xml")
+
+    assert {
+        point["id"]: point.find("navLabel", recursive=False).text
+        for point in soup.find_all("navPoint")
+    } == {
+        "part": "PART I ｜ 第一部",
+        "chapter": "Chapter 1 ｜ 第一章",
+        "section": "Section Anchor",
+        "part-again": "Part Anchor",
+        "appendix": "Appendix ｜ 附錄",
+        "group": "Group",
+        "no-target": "No Target",
+        "chapter-again": "Chapter 1 ｜ 第一章",
+    }
+
+
+def test_patch_toc_ncx_nested_candidates_keep_whole_file_and_fragment_priority():
+    entries = [{
+        "id": "chapter", "original_idref": "chapter", "original_path": "OPS/Text/chapter.xhtml",
+        "first_heading": "Chapter 1", "output_strategy": "translate",
+        "_translations_extra": {"nav_overrides": {"chapter": "第一章"}},
+    }]
+    fragment = '<navPoint id="fragment"><navLabel><text>Anchor</text></navLabel><content src="Text/chapter.xhtml#start"/></navPoint>'
+    second_fragment = '<navPoint id="second-fragment"><navLabel><text>Second Anchor</text></navLabel><content src="Text/chapter.xhtml#second"/></navPoint>'
+    whole = '<navPoint id="whole"><navLabel><text>Old</text></navLabel><content src="Text/chapter.xhtml"/></navPoint>'
+    for children, expected in (
+        (fragment + whole, {"fragment": "Anchor", "whole": "Chapter 1 ｜ 第一章"}),
+        (whole + fragment, {"whole": "Chapter 1 ｜ 第一章", "fragment": "Anchor"}),
+        (fragment + second_fragment, {"fragment": "Chapter 1 ｜ 第一章", "second-fragment": "Second Anchor"}),
+    ):
+        ncx = f'''<ncx><navMap><navPoint id="part"><navLabel><text>Part</text></navLabel>
+<content src="Text/part.xhtml"/>{children}</navPoint></navMap></ncx>'''
+
+        soup = BeautifulSoup(patch_toc_ncx(ncx, entries), "xml")
+
+        for point_id, label in expected.items():
+            assert soup.find("navPoint", id=point_id).find("navLabel", recursive=False).text == label
+        assert soup.find("navPoint", id="part").find("navLabel", recursive=False).text == "Part"
+
+
 def test_nav_path_and_source_ncx_path_read_source_archive(tmp_path: Path):
     epub = tmp_path / "book.epub"
     with zipfile.ZipFile(epub, "w") as z:
